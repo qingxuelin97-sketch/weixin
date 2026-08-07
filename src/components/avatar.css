@@ -9,11 +9,13 @@
   flex: none;
   user-select: none;
 }
+/* Group grid: white backing with a fine hairline edge (device style), sub-tiles gapped. */
 .avatar--group {
   display: grid;
-  gap: 1px;
-  background: var(--color-hairline);
-  padding: 1px;
+  gap: 2px;
+  background: var(--color-cell-bg);
+  padding: 2px;
+  box-shadow: inset 0 0 0 0.5px var(--color-hairline);
 }
 .avatar__cell {
   display: flex;

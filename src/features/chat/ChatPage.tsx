@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { IconBack, IconMore, IconVoice, IconEmoji, IconPlus } from '../../components/icons';
+import {
+  IconBack,
+  IconMore,
+  IconVoiceCircle,
+  IconMicSmall,
+  IconEmoji,
+  IconPlus,
+} from '../../components/icons';
 import { MessageBubble } from './MessageBubble';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
@@ -17,6 +24,9 @@ export function ChatPage() {
   const conv = useAppStore((s) => s.conversationById(convId));
   const messages = useAppStore((s) => s.messagesFor(convId));
   const contactById = useAppStore((s) => s.contactById);
+  const totalUnread = useAppStore((s) =>
+    s.conversations.reduce((n, c) => n + (c.id === convId || c.isMuted ? 0 : c.unreadCount), 0),
+  );
   const composer = useComposerPanel();
   const [draft, setDraft] = useState('');
 
@@ -31,17 +41,35 @@ export function ChatPage() {
     );
   }
 
+  const isGroup = conv.type === 'group';
+
   return (
     <div className="chat-page" onClick={() => composer.mode !== 'none' && composer.closeAll()}>
       <header className="navbar chat-nav">
-        <button className="navbar__left navbar__btn" aria-label="返回" onClick={() => navigate(-1)}>
-          <IconBack />
-        </button>
+        <div className="navbar__left">
+          <button className="navbar__btn chat-nav__back" aria-label="返回" onClick={() => navigate(-1)}>
+            <IconBack />
+            {totalUnread > 0 && (
+              <span className="chat-nav__unread">{totalUnread > 99 ? '99+' : totalUnread}</span>
+            )}
+          </button>
+        </div>
         <div className="navbar__title chat-nav__title">{conv.title}</div>
-        <button className="navbar__right navbar__btn" aria-label="更多">
-          <IconMore />
-        </button>
+        <div className="navbar__right">
+          <button className="navbar__btn" aria-label="更多">
+            <IconMore />
+          </button>
+        </div>
       </header>
+
+      {isGroup && conv.announcement && (
+        <div className="group-announce hairline-bottom" onClick={(e) => e.stopPropagation()}>
+          <span className="group-announce__icon" aria-hidden>
+            💬
+          </span>
+          <span className="group-announce__text">{conv.announcement}</span>
+        </div>
+      )}
 
       <div
         className="chat-page__scroll"
@@ -60,6 +88,7 @@ export function ChatPage() {
                 msg={row.msg}
                 sender={contactById(row.msg.senderId)}
                 isSelf={row.msg.senderId === 'self'}
+                showNickname={isGroup}
               />
             ),
           )}
@@ -73,17 +102,22 @@ export function ChatPage() {
       >
         <div className="composer__bar">
           <button className="composer__icon" aria-label="语音">
-            <IconVoice />
+            <IconVoiceCircle />
           </button>
-          <textarea
-            ref={composer.inputRef}
-            className="composer__input"
-            rows={1}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onFocus={composer.openKeyboard}
-            placeholder=""
-          />
+          <div className="composer__pill">
+            <textarea
+              ref={composer.inputRef}
+              className="composer__input"
+              rows={1}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onFocus={composer.openKeyboard}
+              placeholder=""
+            />
+            <button className="composer__mic" aria-label="语音输入">
+              <IconMicSmall />
+            </button>
+          </div>
           <button className="composer__icon" aria-label="表情" onClick={composer.toggleEmoji}>
             <IconEmoji />
           </button>

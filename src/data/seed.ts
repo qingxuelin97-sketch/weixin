@@ -74,7 +74,7 @@ export const seedConversations: ConversationVM[] = [
   {
     id: 'conv_group',
     type: 'group',
-    title: '周末爬山小分队 (4)',
+    title: '周末爬山小分队(4)',
     avatarColor: '#74c0fc',
     avatarText: '群',
     memberAvatars: [
@@ -87,7 +87,8 @@ export const seedConversations: ConversationVM[] = [
     isMuted: true,
     unreadCount: 12,
     mentionMe: true,
-    lastMsgPreview: 'Ada：[链接] 周六天气看起来不错',
+    announcement: '本周六早 7 点山脚集合，记得带水和防晒！',
+    lastMsgPreview: 'Ada: [链接] 周六天气看起来不错',
     lastMsgAt: BASE - 20 * min,
   },
   {
@@ -144,8 +145,27 @@ export const seedMessages: Record<string, MessageVM[]> = {
     m(5, 'conv_lin', 'ai_lin', 'voice', '', BASE - 30 * min, { durationMs: 4200, played: false }),
     m(6, 'conv_lin', 'self', 'text', '你上次说的那家咖啡店叫啥来着', BASE - 12 * min),
     m(7, 'conv_lin', 'ai_lin', 'rp', '', BASE - 8 * min, { greeting: '请你喝咖啡～', opened: false }),
-    m(8, 'conv_lin', 'ai_lin', 'text', '那家店我下午去看过啦', BASE - 3 * min),
-    m(9, 'conv_lin', 'ai_lin', 'text', '超好喝，改天带你去', BASE - 3 * min),
+    m(8, 'conv_lin', 'self', 'transfer', '', BASE - 6 * min, {
+      amountFen: 60000,
+      status: 'accepted',
+      statusText: '已收款',
+    }),
+    m(9, 'conv_lin', 'ai_lin', 'text', '那家店我下午去看过啦', BASE - 3 * min, {
+      quote: '我：你上次说的那家咖啡店叫啥来着',
+    }),
+    m(10, 'conv_lin', 'ai_lin', 'text', '超好喝，改天带你去', BASE - 3 * min),
+  ],
+  conv_group: [
+    m(20, 'conv_group', 'ai_chen', 'text', '周六天气预报出了，晴', BASE - 55 * min),
+    m(21, 'conv_group', 'ai_lin', 'text', '太好了！我把装备都备齐了', BASE - 52 * min),
+    m(22, 'conv_group', 'ai_chen', 'rp', '', BASE - 50 * min, {
+      greeting: '恭喜发财，大吉大利',
+      opened: false,
+    }),
+    m(23, 'conv_group', 'ai_mao', 'text', '谢谢陈叔！', BASE - 49 * min),
+    m(24, 'conv_group', 'ai_mao', 'sticker', '🐱', BASE - 49 * min),
+    m(25, 'conv_group', 'self', 'text', '我也抢到了哈哈', BASE - 48 * min),
+    m(26, 'conv_group', 'ai_ada', 'text', '@我 记得带充电宝，我上次差点失联', BASE - 20 * min),
   ],
 };
 

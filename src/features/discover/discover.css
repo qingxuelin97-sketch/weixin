@@ -10,16 +10,15 @@
   align-items: center;
   gap: 14px;
   padding: 0 16px;
-  height: 54px;
+  height: 56px;
   background: var(--color-cell-bg);
 }
 .discover__row:active {
   background: var(--color-cell-bg-pressed);
 }
-.discover__icon {
+.discover__svg {
   width: 26px;
   height: 26px;
-  border-radius: 6px;
   flex: none;
 }
 .discover__label {
@@ -27,12 +26,38 @@
   font-size: var(--fs-cell-title);
   color: var(--color-text-primary);
 }
-.discover__badge {
-  width: 8px;
-  height: 8px;
+/* Numeric badge on a row (e.g. 视频号 62) */
+.discover__num-badge {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--color-badge);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-badge);
+  line-height: 20px;
+  text-align: center;
+}
+/* 朋友圈 row: friend's avatar thumbnail + red dot */
+.discover__avatar-dot {
+  position: relative;
+  width: 34px;
+  height: 34px;
+}
+.discover__mini-avatar {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--avatar-radius);
+  background: var(--color-hairline);
+}
+.discover__reddot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--color-badge);
-  margin-right: 4px;
 }
 .discover__chevron {
   color: var(--color-text-placeholder);

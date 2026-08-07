@@ -1,0 +1,11 @@
+import { chromium } from '@playwright/test';
+import { readdirSync } from 'node:fs';
+const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
+const dir = readdirSync(root).find(d => d.startsWith('chromium-'));
+const b = await chromium.launch({ executablePath: `${root}/${dir}/chrome-linux/chrome` });
+const p = await b.newPage({ viewport: { width: 390, height: 844 } });
+p.on('console', m => { if (m.type()==='error') console.log('CONSOLE ERROR:', m.text()); });
+p.on('pageerror', e => console.log('PAGE ERROR:', e.message));
+await p.goto('http://localhost:4173/#/contacts');
+await p.waitForTimeout(500);
+await b.close();

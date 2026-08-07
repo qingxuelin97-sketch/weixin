@@ -16,12 +16,16 @@ interface AppState {
   conversationById: (id: string) => ConversationVM | undefined;
 }
 
+// Stable empty-array constant so `messagesFor` on an empty conversation never
+// returns a fresh reference (which would loop useSyncExternalStore — React #185).
+const EMPTY_MESSAGES: MessageVM[] = [];
+
 export const useAppStore = create<AppState>((_set, get) => ({
   contacts: seedContacts,
   conversations: [...seedConversations].sort(sortConversations),
   messages: seedMessages,
   contactById: (id) => get().contacts.find((cc) => cc.id === id),
-  messagesFor: (convId) => get().messages[convId] ?? [],
+  messagesFor: (convId) => get().messages[convId] ?? EMPTY_MESSAGES,
   conversationById: (id) => get().conversations.find((cc) => cc.id === id),
 }));
 

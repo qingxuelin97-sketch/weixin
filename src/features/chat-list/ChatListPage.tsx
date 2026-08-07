@@ -14,11 +14,12 @@ const NOW = 1_754_500_000_000;
 export function ChatListPage() {
   const conversations = useAppStore((s) => s.conversations);
   const navigate = useNavigate();
+  const totalUnread = conversations.reduce((n, c) => n + (c.isMuted ? 0 : c.unreadCount), 0);
 
   return (
     <>
       <NavBar
-        title="微信"
+        title={totalUnread > 0 ? `微信(${totalUnread})` : '微信'}
         right={
           <>
             <button className="navbar__btn" aria-label="搜索">
@@ -44,6 +45,8 @@ export function ChatListPage() {
 
 function ConversationRow({ conv, onOpen }: { conv: ConversationVM; onOpen: () => void }) {
   const badge = conv.unreadCount > 0;
+  // Muted conversations show a small red dot instead of a numeric badge (device behavior).
+  const dotOnly = conv.isMuted;
   return (
     <div
       className={`conv-row hairline-bottom${conv.isPinned ? ' conv-row--pinned' : ''}`}
@@ -53,8 +56,8 @@ function ConversationRow({ conv, onOpen }: { conv: ConversationVM; onOpen: () =>
       <div className="conv-row__avatar">
         <Avatar color={conv.avatarColor} text={conv.avatarText} size={48} members={conv.memberAvatars} />
         {badge && (
-          <span className={`conv-row__badge${conv.isMuted ? ' conv-row__badge--dot' : ''}`}>
-            {conv.isMuted ? '' : conv.unreadCount > 99 ? '99+' : conv.unreadCount}
+          <span className={`conv-row__badge${dotOnly ? ' conv-row__badge--dot' : ''}`}>
+            {dotOnly ? '' : conv.unreadCount > 99 ? '99+' : conv.unreadCount}
           </span>
         )}
       </div>

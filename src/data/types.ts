@@ -44,6 +44,8 @@ export interface ConversationVM {
   unreadCount: number;
   mentionMe: boolean;
   draft?: string;
+  /** Group announcement pinned bar text (group chats only). */
+  announcement?: string;
   lastMsgPreview: string;
   lastMsgAt: number;
 }

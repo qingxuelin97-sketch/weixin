@@ -11,6 +11,37 @@
   overflow: hidden;
 }
 
+/* Error boundary fallback */
+.error-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  background: var(--color-page-bg);
+}
+.error-screen__title {
+  font-size: 17px;
+  color: var(--color-text-primary);
+}
+.error-screen__msg {
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.error-screen__btn {
+  padding: 8px 20px;
+  border-radius: 5px;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-sub);
+}
+
 /* Nav bar (WeChat: #EDEDED, centered 17px title, no bottom hairline).
    Title is absolutely centered so a long title never shifts it off-center, and
    side buttons float above it — matching WeChat and avoiding grid-track squeeze. */

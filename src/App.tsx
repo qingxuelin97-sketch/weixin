@@ -1,4 +1,5 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { ErrorBoundary } from './app/ErrorBoundary';
 import { TabScaffold } from './app/TabScaffold';
 import { ChatListPage } from './features/chat-list/ChatListPage';
 import { ContactsPage } from './features/contacts/ContactsPage';
@@ -15,6 +16,7 @@ export function App() {
   return (
     <HashRouter>
       <div className="app-shell">
+        <ErrorBoundary>
         <Routes>
           <Route element={<TabScaffold />}>
             <Route path="/" element={<Navigate to="/chats" replace />} />
@@ -26,6 +28,7 @@ export function App() {
           <Route path="/chat/:convId" element={<ChatPage />} />
           <Route path="*" element={<Navigate to="/chats" replace />} />
         </Routes>
+        </ErrorBoundary>
       </div>
     </HashRouter>
   );

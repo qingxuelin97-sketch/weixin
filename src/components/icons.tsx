@@ -8,46 +8,60 @@ interface IconProps {
   active?: boolean;
 }
 
-/** Tab 1: 微信 — speech bubble (WeChat's is a filled rounded bubble with a tail dot). */
+/** Tab 1: 微信 — two overlapping round speech bubbles (device style). */
 export function IconChats({ size = 27, active }: IconProps) {
+  if (active) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden>
+        {/* big bubble */}
+        <path d="M11.5 4C6.3 4 2.5 7.4 2.5 11.6c0 2.3 1.2 4.3 3.2 5.7l-.8 2.9 3.3-1.6c1 .3 2.1.4 3.3.4 5.2 0 9-3.4 9-7.4S16.7 4 11.5 4z" fill="currentColor" />
+        {/* small bubble, knocked out */}
+        <path
+          d="M19.6 11.2c3.4.5 5.9 2.8 5.9 5.6 0 1.7-1 3.3-2.4 4.3l.6 2.3-2.6-1.3c-.8.2-1.6.3-2.5.3-3.9 0-7-2.5-7-5.7 0-.5.1-1 .2-1.4"
+          fill="currentColor"
+          stroke="var(--color-tabbar-bg)"
+          strokeWidth="1.4"
+        />
+      </svg>
+    );
+  }
   return (
     <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden>
-      {active ? (
-        <path
-          d="M14 4.5c-6 0-10.5 4-10.5 9 0 2.7 1.6 5.1 4.1 6.7L6.8 23l3.6-1.7c1.1.3 2.3.5 3.6.5 6 0 10.5-4 10.5-9s-4.5-9.3-10.5-9.3z"
-          fill="currentColor"
-        />
-      ) : (
-        <path
-          d="M14 5.2c-5.6 0-10 3.8-10 8.3 0 2.6 1.5 4.9 3.9 6.4l-.9 2.6 3.2-1.6c1.2.4 2.5.6 3.8.6 5.6 0 10-3.8 10-8.4S19.6 5.2 14 5.2z"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          fill="none"
-        />
-      )}
+      <path
+        d="M11.5 4.6c-4.8 0-8.4 3.1-8.4 6.9 0 2.1 1.1 4 3 5.3l-.7 2.5 2.9-1.4c1 .3 2 .4 3.2.4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <path
+        d="M18.7 11.7c3.5 0 6.3 2.3 6.3 5.2 0 1.6-.9 3-2.2 4l.6 2.1-2.4-1.2c-.7.2-1.5.3-2.3.3-3.5 0-6.3-2.3-6.3-5.2s2.8-5.2 6.3-5.2z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        fill="none"
+      />
     </svg>
   );
 }
 
-/** Tab 2: 通讯录 — two-person contacts glyph. */
+/** Tab 2: 通讯录 — person with contact-list lines to the right (device style). */
 export function IconContacts({ size = 27, active }: IconProps) {
   const s = active ? 'currentColor' : 'none';
   const st = active ? 'none' : 'currentColor';
   return (
     <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden>
-      <circle cx="11" cy="10" r="4" fill={s} stroke={st} strokeWidth="1.6" />
+      <circle cx="11" cy="9.5" r="4.2" fill={s} stroke={st} strokeWidth="1.6" />
       <path
-        d="M4 22c0-4 3.1-6.5 7-6.5s7 2.5 7 6.5"
+        d="M3.5 22.5c0-4.2 3.3-7 7.5-7s7.5 2.8 7.5 7"
         fill={s}
         stroke={st}
         strokeWidth="1.6"
         strokeLinecap="round"
       />
       <path
-        d="M18 8.5c2.4.2 4 2 4 4.2 0 1.5-.8 2.8-2 3.5 2.6.7 4 2.9 4 5.8"
+        d="M20.5 8h4M21.5 12.5h3M22.5 17h2"
         stroke="currentColor"
-        strokeWidth="1.6"
-        fill="none"
+        strokeWidth="1.7"
         strokeLinecap="round"
       />
     </svg>
@@ -129,14 +143,44 @@ export function IconMore({ size = 24 }: IconProps) {
   );
 }
 
-/** Voice/keyboard toggle in the input bar. */
-export function IconVoice({ size = 26 }: IconProps) {
+/**
+ * Voice toggle in the input bar — current WeChat style: a circle containing
+ * sound-wave arcs (not a microphone). Calibrated against device screenshot.
+ */
+export function IconVoiceCircle({ size = 30 }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden>
-      <rect x="10.5" y="5" width="7" height="12" rx="3.5" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M7 13a7 7 0 0 0 14 0M14 20v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden>
+      <circle cx="16" cy="16" r="13" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M13.5 12.5a5 5 0 0 1 0 7"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M17.5 10.5a8 8 0 0 1 0 11"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <circle cx="11" cy="16" r="1.2" fill="currentColor" />
     </svg>
   );
+}
+
+/** Small microphone inside the input pill (voice-to-text entry). */
+export function IconMicSmall({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="9" y="3.5" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 12a6 6 0 0 0 12 0M12 18v2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** Legacy alias kept for any remaining call sites. */
+export function IconVoice({ size = 26 }: IconProps) {
+  return <IconVoiceCircle size={size} />;
 }
 
 /** Emoji face toggle. */

@@ -10,16 +10,35 @@
  */
 
 :root {
-  /* ---- Raw palette (WeChat-calibrated; never referenced directly by components) ---- */
+  /* ---- Raw palette (calibrated against the user's real-device screenshots via
+       pixel sampling, 2026-08. The device build renders some values differently
+       from commonly-cited WeChat hex codes — the REAL DEVICE WINS.) ---- */
   --wx-green: #07c160; /* brand green: send button, selected tab, confirm */
   --wx-green-pressed: #06ad56;
-  --wx-bubble-self: #95ec69; /* my chat bubble — BLACK text, not white */
-  --wx-bubble-self-pressed: #86d75f;
-  --wx-red: #fa5151; /* unread dot / badge */
+  --wx-bubble-self: #aaea7a; /* my chat bubble (sampled) — BLACK text, not white */
+  --wx-bubble-self-pressed: #98d76c;
+  --wx-red: #e75e58; /* unread dot / badge (sampled from device) */
   --wx-link-blue: #576b95; /* nicknames in moments, in-app links */
-  --wx-gold: #fa9d3b; /* money amounts, red-packet accents */
-  --wx-rp-red: #f25b44; /* red-packet bubble base */
+  --wx-gold: #fa9d3b; /* money amounts */
+  --wx-rp-orange: #fa9c3c; /* red-packet / transfer bubble, pending state (sampled) */
+  --wx-rp-orange-dim: #fdcd9c; /* red-packet / transfer bubble, claimed state (sampled) */
+  --wx-rp-envelope: #e24848; /* red-packet envelope icon red (sampled) */
+  --wx-rp-envelope-hi: #fa5251; /* envelope highlight red (sampled) */
+  --wx-rp-coin: #fed136; /* gold coin on envelope (sampled) */
   --wx-rp-red-deep: #e05c44; /* open-packet fullscreen */
+  --wx-quote-gray: #e1e1e1; /* quoted-reply block background (sampled) */
+  --wx-fn-orange: #f5a623; /* contacts function icon: new friends / chat-only */
+  --wx-fn-blue: #3a7af0; /* contacts function icon: tags */
+  --wx-fn-deep-blue: #2b5fd9; /* contacts function icon: official accounts */
+  --wx-fn-light-blue: #4aa0f5; /* service accounts */
+  /* Discover-page line-icon colors (multi-hue, from device screenshot) */
+  --wx-dc-red: #e85e51;
+  --wx-dc-orange: #f5a623;
+  --wx-dc-yellow: #f0b431;
+  --wx-dc-green: #43c463;
+  --wx-dc-blue: #4a8af0;
+  --wx-dc-purple: #6f6af0;
+  --wx-dc-gray: #5b6a92;
 
   --wx-white: #ffffff;
   --wx-black: #000000;
@@ -76,10 +95,13 @@
   --color-tabbar-icon: #7a7a7a;
   --color-tabbar-icon-active: var(--wx-green);
 
-  --color-rp-bubble: var(--wx-rp-red);
-  --color-rp-bubble-deep: var(--wx-rp-red-deep);
-  --color-rp-icon: #ffd9a0;
+  --color-money-bubble: var(--wx-rp-orange); /* rp/transfer pending */
+  --color-money-bubble-dim: var(--wx-rp-orange-dim); /* rp/transfer claimed */
+  --color-rp-envelope: var(--wx-rp-envelope);
+  --color-rp-envelope-hi: var(--wx-rp-envelope-hi);
+  --color-rp-coin: var(--wx-rp-coin);
   --color-rp-open-bg: var(--wx-rp-red-deep);
+  --color-quote-block: var(--wx-quote-gray);
   --color-overlay: rgba(0, 0, 0, 0.5);
   --color-menu-bg: #4c4c4c; /* long-press dark menu */
   --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */

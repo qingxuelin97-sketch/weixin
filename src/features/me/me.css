@@ -3,9 +3,9 @@
 }
 .me__header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 16px;
-  padding: 24px 16px 20px;
+  padding: 32px 24px 24px 24px;
   background: var(--color-cell-bg);
   margin-bottom: 8px;
 }
@@ -14,15 +14,51 @@
   min-width: 0;
 }
 .me__name {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: var(--fw-medium);
   color: var(--color-text-primary);
 }
-.me__wxid {
+.me__wxid-row {
   margin-top: 8px;
+  display: flex;
+  align-items: center;
+}
+.me__wxid {
   font-size: var(--fs-preview);
   color: var(--color-text-secondary);
 }
+/* "＋ 状态" / "朋友圈" capsule buttons under the wxid (device style). */
+.me__pills {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+}
+.me__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 15px;
+  border: 0.5px solid var(--color-hairline);
+  background: var(--color-cell-bg);
+  color: var(--color-text-primary);
+  font-size: var(--fs-small-gray);
+}
+.me__pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-badge);
+}
+.me__right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+}
+
 .me__group {
   background: var(--color-cell-bg);
   margin-bottom: 8px;
@@ -32,16 +68,27 @@
   align-items: center;
   gap: 14px;
   padding: 0 16px;
-  height: 52px;
+  height: 56px;
   background: var(--color-cell-bg);
+  position: relative;
 }
 .me__row:active {
   background: var(--color-cell-bg-pressed);
 }
-.me__icon {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+/* Divider starts at the label edge (56px in), device style. */
+.me__row--divided::after {
+  content: '';
+  position: absolute;
+  left: 56px;
+  right: 0;
+  bottom: 0;
+  height: var(--hairline-width);
+  background: var(--color-hairline);
+  transform: scaleY(0.5);
+}
+.me__svg {
+  width: 25px;
+  height: 25px;
   flex: none;
 }
 .me__label {
@@ -52,8 +99,4 @@
 .me__chevron {
   color: var(--color-text-placeholder);
   font-size: 20px;
-}
-.me__qrcode {
-  display: flex;
-  align-items: center;
 }

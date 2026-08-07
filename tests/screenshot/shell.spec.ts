@@ -24,6 +24,12 @@ test('single chat page', async ({ page }) => {
   await expect(page).toHaveScreenshot('chat-single.png', { fullPage: false });
 });
 
+test('group chat page', async ({ page }) => {
+  await page.goto('/#/chat/conv_group');
+  await settle(page);
+  await expect(page).toHaveScreenshot('chat-group.png', { fullPage: false });
+});
+
 test('contacts page', async ({ page }) => {
   await page.goto('/#/contacts');
   await settle(page);
