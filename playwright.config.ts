@@ -34,8 +34,15 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : 'list',
   expect: {
     toHaveScreenshot: {
-      // Small threshold absorbs sub-pixel font hinting; real regressions are larger.
-      maxDiffPixelRatio: 0.01,
+      // Tight on purpose. Goldens are saved CSS-scaled (390×844 ≈ 329k px), so the
+      // old 1% ratio allowed ~3.3k differing pixels — a changed word (~100px) hid
+      // under it completely, which is exactly the regression these exist to catch.
+      // `threshold` is the per-pixel color tolerance; the 0.2 default discounts
+      // anti-aliased glyph edges, so it has to come down too or text changes slip by.
+      // Rendering inside one container is deterministic, so this is stable; the CI
+      // screenshot job stays advisory for cross-environment font differences.
+      threshold: 0.1,
+      maxDiffPixels: 40,
     },
   },
   use: {

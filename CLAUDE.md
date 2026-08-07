@@ -80,6 +80,12 @@ src/
 - **zustand selector 禁止返回新数组/对象**（如 `s.contacts.filter(...)`）：
   `useSyncExternalStore` 每次拿到新引用会无限重渲染 → 生产构建白屏（React #185）。
   正确做法：选稳定引用后在组件内派生；空集合用模块级常量。
+- **golden 截图阈值别放松**：`toHaveScreenshot` 的 golden 是 **CSS 像素**尺寸（390×844≈33 万像素），
+  `maxDiffPixelRatio: 0.01` 等于放过 3300 个像素——**一个改掉的词（约 100 像素）完全藏得住**，
+  曾导致改了群标题却没被回归网抓到。另外 `threshold`（单像素颜色容差）默认 0.2 会把文字抗锯齿
+  边缘算作"没差别"，必须一起调低。现用 `threshold: 0.1 + maxDiffPixels: 40`，同容器内渲染确定性，
+  连跑不飘。
+- **`idb.ts` 每加一个 store 必须 `DB_VERSION` +1**，否则 `onupgradeneeded` 不触发，新 store 不存在。
 
 ## 4. 每个 feature 一份 spec
 
