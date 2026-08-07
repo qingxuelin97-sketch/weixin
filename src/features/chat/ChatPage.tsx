@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   IconBack,
@@ -13,9 +13,12 @@ import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
 import { useAppStore } from '../../store/appStore';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
-import type { MessageVM } from '../../data/types';
+import { sendUserMessage } from '../../ai/engine';
+import { repo } from '../../db/repo';
+import type { MessageVM, NsfwTierVM } from '../../data/types';
 import './chat.css';
 
+// Fixed clock for deterministic golden screenshots; live sends use Date.now().
 const NOW = 1_754_500_000_000;
 
 export function ChatPage() {
@@ -24,14 +27,57 @@ export function ChatPage() {
   const conv = useAppStore((s) => s.conversationById(convId));
   const messages = useAppStore((s) => s.messagesFor(convId));
   const contactById = useAppStore((s) => s.contactById);
+  const personaFor = useAppStore((s) => s.personaFor);
+  const appendMessage = useAppStore((s) => s.appendMessage);
+  const updateMessage = useAppStore((s) => s.updateMessage);
+  const setTyping = useAppStore((s) => s.setTyping);
+  const isTyping = useAppStore((s) => Boolean(s.typing[convId]));
   const totalUnread = useAppStore((s) =>
     s.conversations.reduce((n, c) => n + (c.id === convId || c.isMuted ? 0 : c.unreadCount), 0),
   );
   const composer = useComposerPanel();
   const [draft, setDraft] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Interleave time bars (WeChat shows a centered time when the gap > 5 min).
   const rows = useMemo(() => withTimeBars(messages), [messages]);
+
+  // Keep the view pinned to the newest message as bubbles arrive.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [rows.length, isTyping, composer.bottomInset]);
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || !conv) return;
+    setDraft('');
+    const peerId = conv.peerId;
+    const peer = peerId ? contactById(peerId) : undefined;
+    const persona = peerId ? personaFor(peerId) : undefined;
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+
+    if (!peer || !persona) {
+      // Group chats (and personas not yet configured) land in M3; just record the
+      // user's own message rather than silently dropping it.
+      await appendMessage({
+        convId,
+        senderId: 'self',
+        type: 'text',
+        content: text,
+        status: 'sent',
+        createdAt: Date.now(),
+      });
+      return;
+    }
+
+    await sendUserMessage(convId, text, peer, persona, globalTier, {
+      appendMessage,
+      updateMessage,
+      setTyping,
+      now: () => Date.now(),
+    });
+  };
 
   if (!conv) {
     return (
@@ -54,7 +100,9 @@ export function ChatPage() {
             )}
           </button>
         </div>
-        <div className="navbar__title chat-nav__title">{conv.title}</div>
+        <div className="navbar__title chat-nav__title">
+          {isTyping ? '对方正在输入…' : conv.title}
+        </div>
         <div className="navbar__right">
           <button className="navbar__btn" aria-label="更多">
             <IconMore />
@@ -72,6 +120,7 @@ export function ChatPage() {
       )}
 
       <div
+        ref={scrollRef}
         className="chat-page__scroll"
         style={{ paddingBottom: composer.bottomInset }}
         onClick={(e) => e.stopPropagation()}
@@ -112,6 +161,12 @@ export function ChatPage() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onFocus={composer.openKeyboard}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
               placeholder=""
             />
             <button className="composer__mic" aria-label="语音输入">
@@ -122,7 +177,7 @@ export function ChatPage() {
             <IconEmoji />
           </button>
           {draft.trim() ? (
-            <button className="composer__send" onClick={() => setDraft('')}>
+            <button className="composer__send" onClick={() => void send()}>
               发送
             </button>
           ) : (

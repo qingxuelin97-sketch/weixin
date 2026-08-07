@@ -49,3 +49,50 @@ export interface ConversationVM {
   lastMsgPreview: string;
   lastMsgAt: number;
 }
+
+/** NSFW tier for an agent/conversation. */
+export type NsfwTierVM = 'off' | 'ambiguous' | 'full';
+
+/** AI persona card (editable). Mirrors src/db/schema.ts personas, VM-shaped. */
+export interface PersonaVM {
+  contactId: string;
+  core: string;
+  speechStyle?: string;
+  fewShots: string[]; // 3-5 exemplar short messages
+  catchphrases: string[];
+  activeHours: Array<[number, number]>; // e.g. [[9, 23]]
+  proactivity: number; // 0..1
+  typingCpm: number;
+  heartbeatBaseMin: number;
+  modelChat?: string; // provider:model, null → global default
+  temperature: number;
+  nsfwPermit: boolean;
+  nsfwStyleSamples?: string[];
+  greeting?: string;
+}
+
+/** Extracted long-term memory fact. */
+export interface MemoryFactVM {
+  id: string;
+  subjectId: string; // whose memory (an AI contactId)
+  fact: string;
+  importance: number; // 1..5
+  sensitivity: 'normal' | 'sensitive' | 'nsfw';
+  evidenceMsgIds: number[];
+  status: 'pending' | 'confirmed' | 'archived';
+  isPinned: boolean;
+  createdAt: number;
+  lastRefAt?: number;
+}
+
+/** Configured LLM provider slot (the real key lives in secure storage, not here). */
+export interface ProviderVM {
+  id: string;
+  kind: 'deepseek' | 'minimax' | 'zen' | 'custom';
+  label: string;
+  baseUrl: string;
+  fallbackBaseUrl?: string;
+  keyAlias: string; // handle into keystore
+  models: string[];
+  enabled: boolean;
+}

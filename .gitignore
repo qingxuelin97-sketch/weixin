@@ -46,3 +46,6 @@ npm-debug.log*
 *.db
 *.db-shm
 *.db-wal
+
+# --- User-supplied notification sound (personal, not redistributed) ---
+public/sounds/message.*

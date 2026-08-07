@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
@@ -86,6 +87,7 @@ const GROUPS: Array<Array<{ key: string; label: string }>> = [
 
 export function MePage() {
   const me = useAppStore((s) => s.contactById('self'));
+  const navigate = useNavigate();
   return (
     <>
       <NavBar title="" />
@@ -113,7 +115,11 @@ export function MePage() {
         {GROUPS.map((group, i) => (
           <div key={i} className="me__group">
             {group.map((e, j) => (
-              <div key={e.key} className={`me__row${j < group.length - 1 ? ' me__row--divided' : ''}`}>
+              <div
+                key={e.key}
+                className={`me__row${j < group.length - 1 ? ' me__row--divided' : ''}`}
+                onClick={() => e.key === 'settings' && navigate('/settings')}
+              >
                 <MIcon kind={e.key} />
                 <span className="me__label">{e.label}</span>
                 <span className="me__chevron">›</span>

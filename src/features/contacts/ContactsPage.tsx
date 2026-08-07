@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
 import { IconPlus, IconSearch } from '../../components/icons';
@@ -71,6 +72,7 @@ function FnGlyph({ kind }: { kind: string }) {
 const INDEX_RAIL = ['↑', '☆', 'A', 'C', 'L', 'M', '#'];
 
 export function ContactsPage() {
+  const navigate = useNavigate();
   // Select the STABLE array reference, then derive — a selector that returns a
   // fresh array (`.filter`) each call makes useSyncExternalStore loop (React #185).
   const allContacts = useAppStore((s) => s.contacts);
@@ -108,7 +110,13 @@ export function ContactsPage() {
           <div className="contacts__group">
             <div className="contacts__index">星标朋友</div>
             {starred.map((cc) => (
-              <ContactRow key={cc.id} name={cc.remark ?? cc.name} color={cc.avatarColor} text={cc.avatarText} />
+              <ContactRow
+                key={cc.id}
+                name={cc.remark ?? cc.name}
+                color={cc.avatarColor}
+                text={cc.avatarText}
+                onClick={() => navigate(`/persona/${cc.id}`)}
+              />
             ))}
           </div>
         )}
@@ -116,7 +124,13 @@ export function ContactsPage() {
           <div key={letter} className="contacts__group">
             <div className="contacts__index">{letter}</div>
             {list.map((cc) => (
-              <ContactRow key={cc.id} name={cc.remark ?? cc.name} color={cc.avatarColor} text={cc.avatarText} />
+              <ContactRow
+                key={cc.id}
+                name={cc.remark ?? cc.name}
+                color={cc.avatarColor}
+                text={cc.avatarText}
+                onClick={() => navigate(`/persona/${cc.id}`)}
+              />
             ))}
           </div>
         ))}
@@ -131,9 +145,19 @@ export function ContactsPage() {
   );
 }
 
-function ContactRow({ name, color, text }: { name: string; color: string; text: string }) {
+function ContactRow({
+  name,
+  color,
+  text,
+  onClick,
+}: {
+  name: string;
+  color: string;
+  text: string;
+  onClick?: () => void;
+}) {
   return (
-    <div className="contacts__row">
+    <div className="contacts__row" onClick={onClick}>
       <Avatar color={color} text={text} size={40} />
       <span className="contacts__name hairline-bottom contacts__cell">{name}</span>
     </div>

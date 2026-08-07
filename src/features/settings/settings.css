@@ -1,0 +1,213 @@
+.settings {
+  background: var(--color-page-bg);
+  padding-bottom: 40px;
+}
+.settings__group {
+  background: var(--color-cell-bg);
+  margin-top: 8px;
+}
+.settings__group-title {
+  padding: 16px 16px 6px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.settings__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 10px 16px;
+  background: var(--color-cell-bg);
+  position: relative;
+}
+.settings__row:active {
+  background: var(--color-cell-bg-pressed);
+}
+.settings__row--divided::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 0;
+  bottom: 0;
+  height: var(--hairline-width);
+  background: var(--color-hairline);
+  transform: scaleY(0.5);
+}
+.settings__label {
+  flex: 1;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.settings__value {
+  font-size: var(--fs-preview);
+  color: var(--color-text-secondary);
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings__chevron {
+  color: var(--color-text-placeholder);
+  font-size: 20px;
+}
+
+/* Form fields */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  background: var(--color-cell-bg);
+  position: relative;
+}
+.field--divided::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 0;
+  bottom: 0;
+  height: var(--hairline-width);
+  background: var(--color-hairline);
+  transform: scaleY(0.5);
+}
+.field__label {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.field__input,
+.field__textarea {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  background: none;
+  width: 100%;
+}
+.field__textarea {
+  min-height: 60px;
+  resize: vertical;
+  line-height: 1.4;
+}
+.field__hint {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-placeholder);
+}
+
+/* Primary action button */
+.btn-primary {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 20px 16px 0;
+  height: 46px;
+  border-radius: 6px;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-title);
+}
+.btn-primary:active {
+  background: var(--color-brand-pressed);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+}
+.btn-ghost {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 10px 16px 0;
+  height: 44px;
+  border-radius: 6px;
+  border: 0.5px solid var(--color-hairline);
+  background: var(--color-cell-bg);
+  color: var(--color-text-primary);
+  font-size: var(--fs-cell-sub);
+}
+
+/* Segmented control (NSFW tier, etc.) */
+.segmented {
+  display: flex;
+  margin: 0 16px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 0.5px solid var(--color-hairline);
+}
+.segmented__item {
+  flex: 1;
+  padding: 10px 0;
+  text-align: center;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+  background: var(--color-cell-bg);
+}
+.segmented__item--active {
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+
+/* Provider card */
+.provider-card {
+  margin: 8px 16px 0;
+  background: var(--color-cell-bg);
+  border-radius: 8px;
+  padding: 14px;
+}
+.provider-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.provider-card__name {
+  font-size: var(--fs-cell-title);
+  font-weight: var(--fw-medium);
+}
+.provider-card__status {
+  font-size: var(--fs-small-gray);
+}
+.provider-card__status--ok {
+  color: var(--color-brand);
+}
+.provider-card__status--off {
+  color: var(--color-text-placeholder);
+}
+.provider-card__meta {
+  margin-top: 6px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+.test-result {
+  margin: 10px 16px 0;
+  font-size: var(--fs-small-gray);
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--color-system-msg-bg);
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+.test-result--ok {
+  color: var(--color-brand);
+}
+
+/* Toggle switch */
+.switch {
+  width: 46px;
+  height: 28px;
+  border-radius: 14px;
+  background: var(--color-hairline);
+  position: relative;
+  transition: background var(--dur-fast);
+  flex: none;
+}
+.switch--on {
+  background: var(--color-brand);
+}
+.switch__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-cell-bg);
+  transition: transform var(--dur-fast);
+}
+.switch--on .switch__knob {
+  transform: translateX(18px);
+}
