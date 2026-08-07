@@ -1,0 +1,40 @@
+.discover {
+  background: var(--color-page-bg);
+}
+.discover__group {
+  background: var(--color-cell-bg);
+  margin-bottom: 8px;
+}
+.discover__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  height: 54px;
+  background: var(--color-cell-bg);
+}
+.discover__row:active {
+  background: var(--color-cell-bg-pressed);
+}
+.discover__icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  flex: none;
+}
+.discover__label {
+  flex: 1;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.discover__badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-badge);
+  margin-right: 4px;
+}
+.discover__chevron {
+  color: var(--color-text-placeholder);
+  font-size: 20px;
+}

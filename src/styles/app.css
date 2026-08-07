@@ -1,0 +1,122 @@
+/* App shell layout. The whole app is a fixed-viewport phone frame. */
+.app-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-page-bg);
+  /* On desktop dev, center a phone-width column so screenshots match the device. */
+  max-width: 480px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+/* Nav bar (WeChat: #EDEDED, centered 17px title, no bottom hairline).
+   Title is absolutely centered so a long title never shifts it off-center, and
+   side buttons float above it — matching WeChat and avoiding grid-track squeeze. */
+.navbar {
+  flex: none;
+  height: calc(var(--nav-height) + var(--safe-top));
+  padding-top: var(--safe-top);
+  background: var(--color-nav-bg);
+  position: relative;
+  z-index: 10;
+}
+.navbar__title {
+  position: absolute;
+  left: 50%;
+  top: var(--safe-top);
+  height: var(--nav-height);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  max-width: 62%;
+  font-size: var(--fs-nav-title);
+  font-weight: var(--fw-medium);
+  color: var(--color-nav-title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.navbar__left,
+.navbar__right {
+  position: absolute;
+  top: var(--safe-top);
+  height: var(--nav-height);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 14px;
+}
+.navbar__left {
+  left: 0;
+}
+.navbar__right {
+  right: 0;
+}
+.navbar__btn {
+  display: flex;
+  align-items: center;
+  color: var(--color-text-primary);
+}
+
+/* Page body fills the space between nav and tabbar. */
+.page-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--color-page-bg);
+}
+
+/* TabBar */
+.tabbar {
+  flex: none;
+  height: calc(var(--tabbar-height) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  background: var(--color-tabbar-bg);
+  display: flex;
+  position: relative;
+}
+.tabbar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--hairline-width);
+  background: var(--color-hairline);
+  transform: scaleY(0.5);
+  transform-origin: top;
+}
+.tabbar__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  position: relative;
+  color: var(--color-tabbar-icon);
+}
+.tabbar__item--active {
+  color: var(--color-tabbar-icon-active);
+}
+.tabbar__label {
+  font-size: 10px;
+  line-height: 1;
+}
+.tabbar__badge {
+  position: absolute;
+  top: 2px;
+  left: calc(50% + 6px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--color-badge);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-badge);
+  line-height: 18px;
+  text-align: center;
+}

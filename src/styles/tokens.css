@@ -1,0 +1,127 @@
+/**
+ * Semantic design tokens — the SINGLE source of truth for all colors, type, and
+ * metrics. This is the ONLY file allowed to declare raw color literals
+ * (enforced by scripts/check-no-hardcoded-colors.mjs).
+ *
+ * Baseline: WeChat mainland Android 8.0.x, light theme. Values calibrated against
+ * user real-device screenshots (see specs/design-tokens.md for the calibration log).
+ * V3 dark mode = redefine this token layer under a [data-theme="dark"] block; no
+ * component code changes.
+ */
+
+:root {
+  /* ---- Raw palette (WeChat-calibrated; never referenced directly by components) ---- */
+  --wx-green: #07c160; /* brand green: send button, selected tab, confirm */
+  --wx-green-pressed: #06ad56;
+  --wx-bubble-self: #95ec69; /* my chat bubble — BLACK text, not white */
+  --wx-bubble-self-pressed: #86d75f;
+  --wx-red: #fa5151; /* unread dot / badge */
+  --wx-link-blue: #576b95; /* nicknames in moments, in-app links */
+  --wx-gold: #fa9d3b; /* money amounts, red-packet accents */
+  --wx-rp-red: #f25b44; /* red-packet bubble base */
+  --wx-rp-red-deep: #e05c44; /* open-packet fullscreen */
+
+  --wx-white: #ffffff;
+  --wx-black: #000000;
+  --wx-ink: #191919; /* primary text */
+  --wx-ink-2: #333333;
+  --wx-gray-6: #888888; /* secondary text */
+  --wx-gray-5: #999999; /* message preview text */
+  --wx-gray-4: #b2b2b2; /* placeholder */
+  --wx-gray-3: #c8c8c8;
+  --wx-hairline: #d9d9d9; /* 1px separators */
+  --wx-page: #ededed; /* page & nav background (NOT white) */
+  --wx-page-pressed: #dedede;
+  --wx-cell: #ffffff; /* white cell background */
+  --wx-cell-pressed: #ececec;
+  --wx-pinned: #f2f2f2; /* pinned conversation row bg */
+  --wx-input-bar: #f7f7f7; /* chat input toolbar / tabbar bg */
+  --wx-panel: #ededed; /* +panel / emoji panel bg */
+
+  /* ---- Semantic aliases (components reference ONLY these) ---- */
+  --color-page-bg: var(--wx-page);
+  --color-nav-bg: var(--wx-page);
+  --color-nav-title: var(--wx-ink);
+  --color-cell-bg: var(--wx-cell);
+  --color-cell-bg-pressed: var(--wx-cell-pressed);
+  --color-pinned-bg: var(--wx-pinned);
+  --color-hairline: var(--wx-hairline);
+
+  --color-text-primary: var(--wx-ink);
+  --color-text-secondary: var(--wx-gray-6);
+  --color-text-preview: var(--wx-gray-5);
+  --color-text-placeholder: var(--wx-gray-4);
+  --color-text-timestamp: var(--wx-gray-5);
+  --color-text-on-brand: var(--wx-white);
+
+  --color-brand: var(--wx-green);
+  --color-brand-pressed: var(--wx-green-pressed);
+  --color-badge: var(--wx-red);
+  --color-link: var(--wx-link-blue);
+  --color-money: var(--wx-gold);
+
+  --color-bubble-self: var(--wx-bubble-self);
+  --color-bubble-self-pressed: var(--wx-bubble-self-pressed);
+  --color-bubble-self-text: var(--wx-ink); /* KEY: black text on green */
+  --color-bubble-other: var(--wx-white);
+  --color-bubble-other-pressed: var(--wx-cell-pressed);
+  --color-bubble-other-text: var(--wx-ink);
+  --color-chat-bg: var(--wx-page);
+  --color-system-msg: var(--wx-gray-6); /* centered gray "撤回/时间" line */
+
+  --color-input-bar-bg: var(--wx-input-bar);
+  --color-input-field-bg: var(--wx-white);
+  --color-panel-bg: var(--wx-panel);
+  --color-tabbar-bg: var(--wx-input-bar);
+  --color-tabbar-icon: #7a7a7a;
+  --color-tabbar-icon-active: var(--wx-green);
+
+  --color-rp-bubble: var(--wx-rp-red);
+  --color-rp-bubble-deep: var(--wx-rp-red-deep);
+  --color-rp-icon: #ffd9a0;
+  --color-rp-open-bg: var(--wx-rp-red-deep);
+  --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-menu-bg: #4c4c4c; /* long-press dark menu */
+  --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */
+  --color-on-color-divider: rgba(255, 255, 255, 0.2); /* hairline on a colored surface */
+  --color-on-color-fill: rgba(255, 255, 255, 0.25); /* translucent chip on a colored surface */
+
+  /* ---- Typography (dp == px at baseline; system CJK black, no bundled font) ---- */
+  --font-sans:
+    system-ui, -apple-system, 'PingFang SC', 'MiSans', 'HarmonyOS Sans SC', 'Noto Sans SC',
+    'Microsoft YaHei', sans-serif;
+  --fs-nav-title: 17px;
+  --fs-bubble: 17px;
+  --fs-name: 17px;
+  --fs-cell-title: 17px;
+  --fs-cell-sub: 14px;
+  --fs-preview: 14px;
+  --fs-moment-name: 17px;
+  --fs-moment-body: 17px;
+  --fs-comment: 15px;
+  --fs-timestamp: 12px;
+  --fs-small-gray: 13px;
+  --fs-badge: 11px;
+  --fw-regular: 400;
+  --fw-medium: 500; /* CJK never uses bold (700); medium is the heaviest */
+  --lh-body: 1.4;
+
+  /* ---- Metrics ---- */
+  --avatar-radius: 5px; /* KEY: WeChat avatars are rounded-square, NOT circle */
+  --avatar-size-cell: 48px;
+  --avatar-size-chat: 40px;
+  --avatar-size-profile: 64px;
+  --bubble-radius: 5px;
+  --nav-height: 44px;
+  --tabbar-height: 50px;
+  --cell-height: 60px;
+  --hairline-width: 0.5px;
+  --gap-page: 16px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* ---- Motion ---- */
+  --dur-fast: 120ms;
+  --dur-page: 280ms; /* right-in-left-out push transition */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}

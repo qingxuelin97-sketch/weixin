@@ -1,0 +1,24 @@
+.avatar {
+  border-radius: var(--avatar-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-on-brand);
+  font-weight: var(--fw-medium);
+  overflow: hidden;
+  flex: none;
+  user-select: none;
+}
+.avatar--group {
+  display: grid;
+  gap: 1px;
+  background: var(--color-hairline);
+  padding: 1px;
+}
+.avatar__cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-on-brand);
+  font-weight: var(--fw-regular);
+}
