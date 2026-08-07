@@ -22,7 +22,16 @@ const PLUS_ITEMS = [
  * The emoji / + panel. Its height is locked to the measured keyboard height by
  * the composer hook so swapping keyboard⇄panel never shifts the layout.
  */
-export function ComposerPanels({ mode, height }: { mode: ComposerMode; height: number }) {
+export function ComposerPanels({
+  mode,
+  height,
+  onAction,
+}: {
+  mode: ComposerMode;
+  height: number;
+  /** Fired when a + panel tile is tapped (e.g. 'redpacket' | 'transfer'). */
+  onAction?: (key: string) => void;
+}) {
   if (mode !== 'emoji' && mode !== 'plus') return null;
   return (
     <div className="composer-panel" style={{ height }}>
@@ -37,7 +46,7 @@ export function ComposerPanels({ mode, height }: { mode: ComposerMode; height: n
       ) : (
         <div className="plus-grid">
           {PLUS_ITEMS.map((it) => (
-            <div key={it.key} className="plus-grid__item">
+            <div key={it.key} className="plus-grid__item" onClick={() => onAction?.(it.key)}>
               <div className="plus-grid__icon" style={{ background: it.color }} />
               <span className="plus-grid__label">{it.label}</span>
             </div>

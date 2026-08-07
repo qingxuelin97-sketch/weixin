@@ -39,6 +39,8 @@ export interface ConversationVM {
   avatarColor: string;
   avatarText: string;
   memberAvatars?: Array<{ color: string; text: string }>; // group: composited 9-grid
+  /** Group membership (AI contactIds; the user is implicit). V1 caps at 4 AI. */
+  memberIds?: string[];
   isPinned: boolean;
   isMuted: boolean;
   unreadCount: number;
@@ -64,11 +66,62 @@ export interface PersonaVM {
   proactivity: number; // 0..1
   typingCpm: number;
   heartbeatBaseMin: number;
+  /** How fast this persona grabs red packets — gives grabbing a personality. */
+  grabSpeed?: 'fast' | 'mid' | 'slow';
   modelChat?: string; // provider:model, null → global default
+  /** MiniMax TTS voice id for this persona's voice messages. */
+  ttsVoice?: string;
   temperature: number;
   nsfwPermit: boolean;
   nsfwStyleSamples?: string[];
   greeting?: string;
+}
+
+/** A red packet (拼手气 or 普通). Shares are pre-split at creation for replayability. */
+export interface RedPacketVM {
+  id: string;
+  convId: string;
+  senderId: string;
+  totalFen: number;
+  count: number;
+  kind: 'lucky' | 'normal';
+  greeting: string;
+  /** Pre-computed shares (sums exactly to totalFen); claims consume them in order. */
+  sharesFen: number[];
+  status: 'active' | 'done' | 'expired';
+  createdAt: number;
+}
+
+export interface RpClaimVM {
+  id: string; // `${rpId}:${claimerId}`
+  rpId: string;
+  claimerId: string;
+  amountFen: number;
+  isBest: boolean;
+  claimedAt: number;
+}
+
+export interface TransferVM {
+  id: string;
+  convId: string;
+  fromId: string;
+  toId: string;
+  amountFen: number;
+  note?: string;
+  status: 'pending' | 'accepted' | 'returned' | 'expired';
+  acceptedAt?: number;
+  createdAt: number;
+}
+
+/** Wallet ledger entry. amountFen is signed; balanceAfterFen is denormalized. */
+export interface WalletTxVM {
+  id: string;
+  kind: 'rp_in' | 'rp_out' | 'transfer_in' | 'transfer_out' | 'adjust';
+  amountFen: number;
+  refId?: string;
+  title: string;
+  balanceAfterFen: number;
+  createdAt: number;
 }
 
 /** Extracted long-term memory fact. */

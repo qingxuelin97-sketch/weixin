@@ -10,7 +10,13 @@ import { ChatPage } from './features/chat/ChatPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ApiConfigPage } from './features/settings/ApiConfigPage';
 import { PersonaEditPage } from './features/settings/PersonaEditPage';
+import { RedPacketSendPage } from './features/money/RedPacketSendPage';
+import { RedPacketOpenPage } from './features/money/RedPacketOpenPage';
+import { RedPacketDetailPage } from './features/money/RedPacketDetailPage';
+import { TransferSendPage } from './features/money/TransferSendPage';
+import { WalletPage } from './features/money/WalletPage';
 import { useAppStore } from './store/appStore';
+import { useSchedulerRuntime } from './app/useSchedulerRuntime';
 
 /**
  * Navigation model: the four tabs share a persistent scaffold (nav + tabbar);
@@ -24,6 +30,9 @@ export function App() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  // Single time-evolution path: drains scheduled_actions once hydrated.
+  useSchedulerRuntime(hydrated);
 
   return (
     <HashRouter>
@@ -44,6 +53,11 @@ export function App() {
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/settings/api" element={<ApiConfigPage />} />
               <Route path="/persona/:contactId" element={<PersonaEditPage />} />
+              <Route path="/rp/send/:convId" element={<RedPacketSendPage />} />
+              <Route path="/rp/open/:rpId" element={<RedPacketOpenPage />} />
+              <Route path="/rp/:rpId" element={<RedPacketDetailPage />} />
+              <Route path="/transfer/:convId" element={<TransferSendPage />} />
+              <Route path="/wallet" element={<WalletPage />} />
               <Route path="*" element={<Navigate to="/chats" replace />} />
             </Routes>
           )}

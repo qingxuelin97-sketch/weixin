@@ -14,6 +14,10 @@ import type {
   PersonaVM,
   MemoryFactVM,
   ProviderVM,
+  RedPacketVM,
+  RpClaimVM,
+  TransferVM,
+  WalletTxVM,
 } from '../data/types';
 import {
   idbGetAll,
@@ -55,6 +59,16 @@ export interface Repo {
   deleteProvider(id: string): Promise<void>;
   getSetting<T>(key: string): Promise<T | undefined>;
   putSetting<T>(key: string, value: T): Promise<void>;
+
+  // money: red packets, claims, transfers, wallet ledger
+  getRedPacket(id: string): Promise<RedPacketVM | undefined>;
+  putRedPacket(rp: RedPacketVM): Promise<void>;
+  getClaims(rpId: string): Promise<RpClaimVM[]>;
+  putClaim(c: RpClaimVM): Promise<void>;
+  getTransfer(id: string): Promise<TransferVM | undefined>;
+  putTransfer(t: TransferVM): Promise<void>;
+  getWalletTxs(): Promise<WalletTxVM[]>;
+  putWalletTx(t: WalletTxVM): Promise<void>;
 
   isEmpty(): Promise<boolean>;
 }
@@ -128,6 +142,33 @@ export class IdbRepo implements Repo {
   }
   async putSetting<T>(key: string, value: T) {
     await idbPut('settings', { key, value });
+  }
+
+  async getRedPacket(id: string) {
+    return idbGet<RedPacketVM>('red_packets', id);
+  }
+  async putRedPacket(rp: RedPacketVM) {
+    await idbPut('red_packets', rp);
+  }
+  async getClaims(rpId: string) {
+    const all = await idbGetAll<RpClaimVM>('rp_claims');
+    return all.filter((c) => c.rpId === rpId).sort((a, b) => a.claimedAt - b.claimedAt);
+  }
+  async putClaim(c: RpClaimVM) {
+    await idbPut('rp_claims', c);
+  }
+  async getTransfer(id: string) {
+    return idbGet<TransferVM>('transfers', id);
+  }
+  async putTransfer(t: TransferVM) {
+    await idbPut('transfers', t);
+  }
+  async getWalletTxs() {
+    const all = await idbGetAll<WalletTxVM>('wallet_tx');
+    return all.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  async putWalletTx(t: WalletTxVM) {
+    await idbPut('wallet_tx', t);
   }
 
   async isEmpty() {

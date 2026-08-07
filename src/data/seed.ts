@@ -3,7 +3,8 @@
  * and chat page against real-device screenshots. Replaced by live SQLite in M2.
  * Timestamps are fixed offsets from a stable base so golden screenshots are stable.
  */
-import type { ContactVM, ConversationVM, MessageVM, PersonaVM } from './types';
+import type { ContactVM, ConversationVM, MessageVM, PersonaVM, RedPacketVM } from './types';
+import { splitLuckyPacket } from '../lib/money';
 
 // Stable base time (no Date.now) so screenshot goldens never drift.
 const BASE = 1_754_500_000_000; // ~2025-08
@@ -68,6 +69,7 @@ export const seedPersonas: PersonaVM[] = [
     proactivity: 0.6,
     typingCpm: 320,
     heartbeatBaseMin: 180,
+    grabSpeed: 'mid',
     temperature: 0.85,
     nsfwPermit: false,
     greeting: '嘿，忙完啦？',
@@ -82,6 +84,7 @@ export const seedPersonas: PersonaVM[] = [
     proactivity: 0.35,
     typingCpm: 200,
     heartbeatBaseMin: 360,
+    grabSpeed: 'slow',
     temperature: 0.7,
     nsfwPermit: false,
     greeting: '在忙吗？',
@@ -96,9 +99,25 @@ export const seedPersonas: PersonaVM[] = [
     proactivity: 0.45,
     typingCpm: 380,
     heartbeatBaseMin: 300,
+    grabSpeed: 'fast',
     temperature: 0.8,
     nsfwPermit: false,
     greeting: '哟，还醒着？',
+  },
+  {
+    contactId: 'ai_mao',
+    core: '大学生，话痨、情绪外放、爱玩梗和发表情包，追星追剧样样不落，嘴上没个正形但很讲义气。',
+    speechStyle: '语气夸张、爱刷屏、大量语气词和叠字',
+    fewShots: ['啊啊啊啊啊', '好耶！', '笑死我了哈哈哈哈', '我先冲了'],
+    catchphrases: ['绝了', '好耶', '救命'],
+    activeHours: [[11, 26]],
+    proactivity: 0.8,
+    typingCpm: 420,
+    heartbeatBaseMin: 150,
+    grabSpeed: 'fast',
+    temperature: 0.95,
+    nsfwPermit: false,
+    greeting: '在干嘛在干嘛',
   },
 ];
 
@@ -120,7 +139,8 @@ export const seedConversations: ConversationVM[] = [
   {
     id: 'conv_group',
     type: 'group',
-    title: '周末爬山小分队(4)',
+    title: '周末爬山小分队(5)',
+    memberIds: ['ai_lin', 'ai_chen', 'ai_ada', 'ai_mao'],
     avatarColor: '#74c0fc',
     avatarText: '群',
     memberAvatars: [
@@ -182,6 +202,37 @@ export const seedConversations: ConversationVM[] = [
   },
 ];
 
+/**
+ * Real red-packet entities behind the seeded bubbles, so a fresh install has
+ * something tappable (open → coin flip → detail with the luck crown).
+ */
+export const seedRedPackets: RedPacketVM[] = [
+  {
+    id: 'rp_seed_lin',
+    convId: 'conv_lin',
+    senderId: 'ai_lin',
+    totalFen: 1800,
+    count: 1,
+    kind: 'lucky',
+    greeting: '请你喝咖啡～',
+    sharesFen: splitLuckyPacket(1800, 1, 'rp_seed_lin'),
+    status: 'active',
+    createdAt: BASE - 8 * min,
+  },
+  {
+    id: 'rp_seed_group',
+    convId: 'conv_group',
+    senderId: 'ai_chen',
+    totalFen: 6600,
+    count: 4,
+    kind: 'lucky',
+    greeting: '恭喜发财，大吉大利',
+    sharesFen: splitLuckyPacket(6600, 4, 'rp_seed_group'),
+    status: 'active',
+    createdAt: BASE - 50 * min,
+  },
+];
+
 export const seedMessages: Record<string, MessageVM[]> = {
   conv_lin: [
     m(1, 'conv_lin', 'ai_lin', 'text', '在吗', BASE - 40 * min),
@@ -190,7 +241,11 @@ export const seedMessages: Record<string, MessageVM[]> = {
     m(4, 'conv_lin', 'ai_lin', 'text', '我也是哈哈', BASE - 38 * min),
     m(5, 'conv_lin', 'ai_lin', 'voice', '', BASE - 30 * min, { durationMs: 4200, played: false }),
     m(6, 'conv_lin', 'self', 'text', '你上次说的那家咖啡店叫啥来着', BASE - 12 * min),
-    m(7, 'conv_lin', 'ai_lin', 'rp', '', BASE - 8 * min, { greeting: '请你喝咖啡～', opened: false }),
+    m(7, 'conv_lin', 'ai_lin', 'rp', '', BASE - 8 * min, {
+      rpId: 'rp_seed_lin',
+      greeting: '请你喝咖啡～',
+      opened: false,
+    }),
     m(8, 'conv_lin', 'self', 'transfer', '', BASE - 6 * min, {
       amountFen: 60000,
       status: 'accepted',
@@ -205,6 +260,7 @@ export const seedMessages: Record<string, MessageVM[]> = {
     m(20, 'conv_group', 'ai_chen', 'text', '周六天气预报出了，晴', BASE - 55 * min),
     m(21, 'conv_group', 'ai_lin', 'text', '太好了！我把装备都备齐了', BASE - 52 * min),
     m(22, 'conv_group', 'ai_chen', 'rp', '', BASE - 50 * min, {
+      rpId: 'rp_seed_group',
       greeting: '恭喜发财，大吉大利',
       opened: false,
     }),

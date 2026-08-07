@@ -5,7 +5,13 @@
  */
 import { create } from 'zustand';
 import type { ContactVM, ConversationVM, MessageVM, PersonaVM } from '../data/types';
-import { seedContacts, seedConversations, seedMessages, seedPersonas } from '../data/seed';
+import {
+  seedContacts,
+  seedConversations,
+  seedMessages,
+  seedPersonas,
+  seedRedPackets,
+} from '../data/seed';
 import { repo, IdbRepo } from '../db/repo';
 
 interface AppState {
@@ -35,6 +41,9 @@ interface AppState {
 
 const EMPTY_MESSAGES: MessageVM[] = [];
 
+// Fixed timestamp for seeded rows so first-run state is deterministic.
+const SEED_BASE = 1_754_500_000_000;
+
 export const useAppStore = create<AppState>((set, get) => ({
   hydrated: false,
   contacts: [],
@@ -61,6 +70,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         personas: seedPersonas,
         conversations: seedConversations,
         messages: seedMsgs,
+      });
+      // Real packet entities behind the seeded bubbles, so they're tappable.
+      for (const rp of seedRedPackets) await repo.putRedPacket(rp);
+      // Opening wallet balance so red packets / transfers have something to move.
+      await repo.putWalletTx({
+        id: 'wtx_seed',
+        kind: 'adjust',
+        amountFen: 128_800,
+        title: '零钱初始余额',
+        balanceAfterFen: 128_800,
+        createdAt: SEED_BASE,
       });
     }
     const [contacts, conversations] = await Promise.all([

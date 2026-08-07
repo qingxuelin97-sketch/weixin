@@ -1,0 +1,306 @@
+/* ---- Red packet send / transfer send forms ---- */
+.money-page {
+  background: var(--color-page-bg);
+  min-height: 100%;
+}
+.money-form {
+  background: var(--color-cell-bg);
+  margin-top: 8px;
+}
+.money-form__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  position: relative;
+  min-height: 56px;
+}
+.money-form__row + .money-form__row::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 0;
+  top: 0;
+  height: var(--hairline-width);
+  background: var(--color-hairline);
+  transform: scaleY(0.5);
+}
+.money-form__label {
+  flex: none;
+  width: 72px;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.money-form__input {
+  flex: 1;
+  font-size: var(--fs-cell-title);
+  text-align: right;
+  color: var(--color-text-primary);
+}
+.money-form__input--amount {
+  font-size: 30px;
+  font-weight: var(--fw-medium);
+}
+.money-form__unit {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-secondary);
+}
+
+/* Big amount display block */
+.amount-display {
+  background: var(--color-cell-bg);
+  padding: 26px 16px 22px;
+  text-align: center;
+  margin-top: 8px;
+}
+.amount-display__label {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.amount-display__value {
+  margin-top: 8px;
+  font-size: 40px;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+}
+.money-hint {
+  padding: 12px 16px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+.money-error {
+  padding: 8px 16px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-badge);
+  text-align: center;
+}
+
+/* Orange money CTA (send red packet / transfer) */
+.btn-money {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 24px 16px 0;
+  height: 48px;
+  border-radius: 6px;
+  background: var(--color-money-bubble);
+  color: var(--color-text-on-brand);
+  font-size: 17px;
+}
+.btn-money:disabled {
+  opacity: 0.45;
+}
+
+/* ---- Open-packet full-screen overlay ---- */
+.rp-open {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--color-rp-open-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--color-text-on-brand);
+}
+.rp-open__close {
+  align-self: flex-start;
+  padding: 16px;
+  font-size: 22px;
+  color: var(--color-rp-coin);
+}
+.rp-open__sender {
+  margin-top: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.rp-open__name {
+  font-size: var(--fs-cell-title);
+  color: var(--color-rp-coin);
+}
+.rp-open__greeting {
+  margin-top: 18px;
+  font-size: 20px;
+  color: var(--color-rp-coin);
+}
+/* Gold coin with 開; flips on tap. */
+.rp-open__coin {
+  margin-top: 56px;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: var(--color-rp-coin);
+  color: var(--color-rp-envelope);
+  font-size: 40px;
+  font-weight: var(--fw-medium);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-style: preserve-3d;
+}
+.rp-open__coin--flip {
+  animation: rp-coin-flip 900ms var(--ease-standard) forwards;
+}
+@keyframes rp-coin-flip {
+  0% {
+    transform: rotateY(0deg) scale(1);
+  }
+  70% {
+    transform: rotateY(1080deg) scale(1.05);
+  }
+  100% {
+    transform: rotateY(1080deg) scale(0.2);
+    opacity: 0;
+  }
+}
+.rp-open__expired {
+  margin-top: 56px;
+  font-size: var(--fs-cell-title);
+  color: var(--color-rp-coin);
+  opacity: 0.85;
+}
+
+/* ---- Red packet detail ---- */
+.rp-detail {
+  background: var(--color-cell-bg);
+  min-height: 100%;
+}
+.rp-detail__head {
+  padding: 30px 16px 22px;
+  text-align: center;
+  border-bottom: var(--hairline-width) solid var(--color-hairline);
+}
+.rp-detail__from {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-secondary);
+}
+.rp-detail__greeting {
+  margin-top: 6px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-placeholder);
+}
+.rp-detail__amount {
+  margin-top: 18px;
+  font-size: 38px;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+}
+.rp-detail__stored {
+  margin-top: 8px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.rp-detail__summary {
+  padding: 12px 16px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.rp-claim {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  position: relative;
+}
+.rp-claim::after {
+  content: '';
+  position: absolute;
+  left: 60px;
+  right: 0;
+  bottom: 0;
+  height: var(--hairline-width);
+  background: var(--color-hairline);
+  transform: scaleY(0.5);
+}
+.rp-claim__main {
+  flex: 1;
+  min-width: 0;
+}
+.rp-claim__name {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.rp-claim__time {
+  margin-top: 3px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-placeholder);
+}
+.rp-claim__amount {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.rp-claim__best {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-money);
+}
+
+/* ---- Wallet ---- */
+.wallet__balance {
+  background: var(--color-cell-bg);
+  padding: 32px 16px;
+  text-align: center;
+}
+.wallet__label {
+  font-size: var(--fs-preview);
+  color: var(--color-text-secondary);
+}
+.wallet__value {
+  margin-top: 10px;
+  font-size: 44px;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+}
+.wallet__list {
+  background: var(--color-cell-bg);
+  margin-top: 8px;
+}
+.wallet__title {
+  padding: 12px 16px 6px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.wallet__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  position: relative;
+}
+.wallet__row::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 0;
+  bottom: 0;
+  height: var(--hairline-width);
+  background: var(--color-hairline);
+  transform: scaleY(0.5);
+}
+.wallet__row-title {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.wallet__row-time {
+  margin-top: 4px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-placeholder);
+}
+.wallet__amount {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.wallet__amount--in {
+  color: var(--color-brand);
+}
+.wallet__empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--color-text-placeholder);
+  font-size: var(--fs-preview);
+}

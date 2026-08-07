@@ -75,7 +75,7 @@ function MIcon({ kind }: { kind: string }) {
 }
 
 const GROUPS: Array<Array<{ key: string; label: string }>> = [
-  [{ key: 'service', label: '服务' }],
+  [{ key: 'service', label: '服务（零钱）' }],
   [
     { key: 'fav', label: '收藏' },
     { key: 'album', label: '朋友圈' },
@@ -118,7 +118,10 @@ export function MePage() {
               <div
                 key={e.key}
                 className={`me__row${j < group.length - 1 ? ' me__row--divided' : ''}`}
-                onClick={() => e.key === 'settings' && navigate('/settings')}
+                onClick={() => {
+                  if (e.key === 'settings') navigate('/settings');
+                  else if (e.key === 'service') navigate('/wallet');
+                }}
               >
                 <MIcon kind={e.key} />
                 <span className="me__label">{e.label}</span>

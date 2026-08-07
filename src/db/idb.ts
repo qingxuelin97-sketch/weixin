@@ -9,7 +9,8 @@
  */
 
 const DB_NAME = 'weixin-ai';
-const DB_VERSION = 1;
+// v2 adds the money stores (red packets / claims / transfers / wallet ledger).
+const DB_VERSION = 2;
 
 export interface StoreDef {
   name: string;
@@ -33,6 +34,11 @@ export const STORES: StoreDef[] = [
   { name: 'scheduled_actions', keyPath: 'id', indexes: [{ name: 'byStatus', keyPath: 'status' }] },
   { name: 'providers', keyPath: 'id' },
   { name: 'settings', keyPath: 'key' },
+  // --- money (v2) ---
+  { name: 'red_packets', keyPath: 'id' },
+  { name: 'rp_claims', keyPath: 'id', indexes: [{ name: 'byRp', keyPath: 'rpId' }] },
+  { name: 'transfers', keyPath: 'id' },
+  { name: 'wallet_tx', keyPath: 'id' },
 ];
 
 let dbPromise: Promise<IDBDatabase> | null = null;

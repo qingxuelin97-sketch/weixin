@@ -8,10 +8,12 @@ interface Props {
   isSelf: boolean;
   /** Group chats show the sender's nickname above the bubble for others' messages. */
   showNickname?: boolean;
+  /** Tapping a red-packet / transfer bubble. */
+  onMoneyTap?: (msg: MessageVM) => void;
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap }: Props) {
   if (msg.type === 'system' || msg.isRecalled) {
     const text = msg.isRecalled
       ? isSelf
@@ -32,7 +34,12 @@ export function MessageBubble({ msg, sender, isSelf, showNickname }: Props) {
         {showNickname && !isSelf && (
           <div className="msg-row__nick">{sender?.remark ?? sender?.name ?? ''}</div>
         )}
-        <div className="msg-row__body">
+        <div
+          className="msg-row__body"
+          onClick={
+            msg.type === 'rp' || msg.type === 'transfer' ? () => onMoneyTap?.(msg) : undefined
+          }
+        >
           <BubbleContent msg={msg} isSelf={isSelf} />
         </div>
         {msg.meta?.quote != null && (

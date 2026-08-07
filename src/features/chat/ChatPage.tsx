@@ -14,6 +14,9 @@ import { useComposerPanel } from './useComposerPanel';
 import { useAppStore } from '../../store/appStore';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
 import { sendUserMessage } from '../../ai/engine';
+import { sendGroupMessage } from '../../ai/group-engine';
+import { acceptTransfer } from '../../ai/money-service';
+import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
 import './chat.css';
@@ -52,14 +55,25 @@ export function ChatPage() {
     const text = draft.trim();
     if (!text || !conv) return;
     setDraft('');
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+
+    // Group: the director stages a cast; single: one persona replies.
+    if (conv.type === 'group') {
+      const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
+        const c = contactById(id);
+        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
+      });
+      await sendGroupMessage(conv, text, members, globalTier, hooks, contactById);
+      return;
+    }
+
     const peerId = conv.peerId;
     const peer = peerId ? contactById(peerId) : undefined;
     const persona = peerId ? personaFor(peerId) : undefined;
-    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
 
     if (!peer || !persona) {
-      // Group chats (and personas not yet configured) land in M3; just record the
-      // user's own message rather than silently dropping it.
+      // No persona card configured yet — record the user's message rather than drop it.
       await appendMessage({
         convId,
         senderId: 'self',
@@ -71,12 +85,27 @@ export function ChatPage() {
       return;
     }
 
-    await sendUserMessage(convId, text, peer, persona, globalTier, {
-      appendMessage,
-      updateMessage,
-      setTyping,
-      now: () => Date.now(),
-    });
+    await sendUserMessage(convId, text, peer, persona, globalTier, hooks);
+  };
+
+  /** Red packet → open/detail; a pending transfer from the peer → accept it. */
+  const onMoneyTap = (msg: MessageVM) => {
+    if (msg.type === 'rp') {
+      const rpId = msg.meta?.rpId as string | undefined;
+      if (rpId) navigate(`/rp/open/${rpId}`);
+      return;
+    }
+    if (msg.type === 'transfer') {
+      const transferId = msg.meta?.transferId as string | undefined;
+      const status = msg.meta?.status as string | undefined;
+      if (transferId && status === 'pending' && msg.senderId !== 'self') {
+        void acceptTransfer(transferId, {
+          appendMessage,
+          updateMessage,
+          now: () => Date.now(),
+        });
+      }
+    }
   };
 
   if (!conv) {
@@ -138,6 +167,7 @@ export function ChatPage() {
                 sender={contactById(row.msg.senderId)}
                 isSelf={row.msg.senderId === 'self'}
                 showNickname={isGroup}
+                onMoneyTap={onMoneyTap}
               />
             ),
           )}
@@ -186,7 +216,14 @@ export function ChatPage() {
             </button>
           )}
         </div>
-        <ComposerPanels mode={composer.mode} height={composer.panelHeight} />
+        <ComposerPanels
+          mode={composer.mode}
+          height={composer.panelHeight}
+          onAction={(key) => {
+            if (key === 'redpacket') navigate(`/rp/send/${convId}`);
+            else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
+          }}
+        />
       </div>
     </div>
   );

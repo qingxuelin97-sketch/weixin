@@ -48,6 +48,30 @@ test('me page', async ({ page }) => {
   await expect(page).toHaveScreenshot('me.png', { fullPage: false });
 });
 
+test('red packet send page', async ({ page }) => {
+  await page.goto('/#/rp/send/conv_group');
+  await settle(page);
+  await expect(page).toHaveScreenshot('rp-send.png', { fullPage: false });
+});
+
+test('red packet open overlay', async ({ page }) => {
+  await page.goto('/#/rp/open/rp_seed_group');
+  await settle(page);
+  await expect(page).toHaveScreenshot('rp-open.png', { fullPage: false });
+});
+
+test('transfer send page', async ({ page }) => {
+  await page.goto('/#/transfer/conv_lin');
+  await settle(page);
+  await expect(page).toHaveScreenshot('transfer-send.png', { fullPage: false });
+});
+
+test('wallet page', async ({ page }) => {
+  await page.goto('/#/wallet');
+  await settle(page);
+  await expect(page).toHaveScreenshot('wallet.png', { fullPage: false });
+});
+
 test('composer: emoji panel open (keyboard⇄panel prototype)', async ({ page }) => {
   await page.goto('/#/chat/conv_lin');
   await settle(page);
