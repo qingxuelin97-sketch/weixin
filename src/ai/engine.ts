@@ -15,6 +15,8 @@ import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
 import type { GenerateContext, NsfwTier } from '../llm/router';
 import { playMessageSound } from '../lib/sound';
+import { ensureVoiceAudio } from '../lib/voice';
+import { DEFAULT_VOICE } from '../llm/tts';
 import { repo } from '../db/repo';
 
 export interface EngineHooks {
@@ -154,7 +156,7 @@ export async function sendUserMessage(
         senderId: peer.id,
         type: bubbleToMsgType(b),
         content: b.content,
-        ...(b.type === 'voice' ? { meta: { durationMs: estimateVoiceMs(b.content), emotion: b.emotion, played: false } } : {}),
+        ...(b.type === 'voice' ? { meta: await voiceMeta(b.content, persona, b.emotion, tier) } : {}),
         status: 'sent',
         createdAt: hooks.now(),
       });
@@ -190,6 +192,31 @@ function bubbleToMsgType(b: Bubble): MessageVM['type'] {
 /** Rough voice length from text so the voice bar shows a plausible duration. */
 function estimateVoiceMs(text: string): number {
   return Math.min(Math.max(text.length * 220, 1000), 60000);
+}
+
+/**
+ * Build a voice bubble's meta, synthesizing real audio when MiniMax TTS is
+ * configured. Without it we still post the bubble (estimated length, no audio) —
+ * a missing voice must never break the message flow.
+ *
+ * NSFW-full turns never reach here with explicit text: the caller gates it,
+ * because MiniMax's mainland endpoint audits input.
+ */
+export async function voiceMeta(
+  text: string,
+  persona: PersonaVM,
+  emotion?: string,
+  tier: NsfwTier = 'off',
+): Promise<Record<string, unknown>> {
+  // HARD RULE: full-tier text is never sent to MiniMax (mainland input auditing).
+  // The bubble still posts, just without audio. See specs/nsfw.md.
+  if (tier === 'full') {
+    return { durationMs: estimateVoiceMs(text), emotion, played: false, ttsSkipped: 'nsfw' };
+  }
+  const audio = await ensureVoiceAudio(text, persona.ttsVoice ?? DEFAULT_VOICE, emotion);
+  return audio
+    ? { durationMs: audio.durationMs, audioKey: audio.key, emotion, played: false }
+    : { durationMs: estimateVoiceMs(text), emotion, played: false };
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

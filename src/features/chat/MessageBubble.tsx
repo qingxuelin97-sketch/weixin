@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Avatar } from '../../components/Avatar';
 import { fenToYuan } from '../../lib/money';
+import { playVoice } from '../../lib/voice';
 import type { MessageVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -55,6 +57,47 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap }:
   );
 }
 
+/**
+ * Voice bubble: width tracks the real audio duration, tap plays it, the unread
+ * red dot clears on first play, and long-press-style "转文字" reveals the text
+ * (free and exact, since we synthesized the audio from that text).
+ */
+function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
+  const durMs = (msg.meta?.durationMs as number) ?? 2000;
+  const audioKey = msg.meta?.audioKey as string | undefined;
+  const dur = Math.max(1, Math.round(durMs / 1000));
+  const width = Math.min(60 + dur * 8, 180);
+  const [played, setPlayed] = useState(Boolean(msg.meta?.played));
+  const [playing, setPlaying] = useState(false);
+  const [showText, setShowText] = useState(false);
+
+  const onTap = async () => {
+    setPlayed(true);
+    if (!audioKey) return; // no audio (TTS unconfigured) — bubble still behaves
+    setPlaying(true);
+    const ok = await playVoice(audioKey, () => setPlaying(false));
+    if (!ok) setPlaying(false);
+  };
+
+  return (
+    <div className="voice-wrap">
+      <div
+        className={`bubble bubble--${isSelf ? 'self' : 'other'} bubble--voice`}
+        style={{ width }}
+        onClick={onTap}
+        onDoubleClick={() => setShowText((v) => !v)}
+      >
+        <span className={`voice-waves${playing ? ' voice-waves--playing' : ''}`} aria-hidden>
+          <i /> <i /> <i />
+        </span>
+        <span className="voice-dur">{dur}″</span>
+        {!played && !isSelf && <span className="voice-unplayed" />}
+      </div>
+      {showText && <div className="voice-text">{msg.content}</div>}
+    </div>
+  );
+}
+
 function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
   const side = isSelf ? 'self' : 'other';
   switch (msg.type) {
@@ -65,19 +108,8 @@ function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
       // Stickers render bare (no bubble background), like real WeChat.
       return <div className="msg-sticker">{msg.content || '🙂'}</div>;
 
-    case 'voice': {
-      const dur = Math.round(((msg.meta?.durationMs as number) ?? 2000) / 1000);
-      const width = Math.min(60 + dur * 8, 180);
-      return (
-        <div className={`bubble bubble--${side} bubble--voice`} style={{ width }}>
-          <span className={`voice-waves${isSelf ? ' voice-waves--flip' : ''}`} aria-hidden>
-            <i /> <i /> <i />
-          </span>
-          <span className="voice-dur">{dur}″</span>
-          {!msg.meta?.played && !isSelf && <span className="voice-unplayed" />}
-        </div>
-      );
-    }
+    case 'voice':
+      return <VoiceBubble msg={msg} isSelf={isSelf} />;
 
     case 'rp': {
       // States: unopened (bright orange) / opened-by-me / fully-claimed (dim orange).

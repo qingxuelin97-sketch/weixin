@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
+import { VOICE_OPTIONS, DEFAULT_VOICE } from '../../llm/tts';
 import type { PersonaVM } from '../../data/types';
 import './settings.css';
 
@@ -123,6 +124,37 @@ export function PersonaEditPage() {
                 if (m) set('activeHours', [[Number(m[1]), Number(m[2])]]);
               }}
             />
+          </div>
+        </div>
+
+        <div className="settings__group">
+          <div className="field field--divided">
+            <span className="field__label">语音音色（MiniMax TTS）</span>
+            <select
+              className="field__input"
+              value={p.ttsVoice ?? DEFAULT_VOICE}
+              onChange={(e) => set('ttsVoice', e.target.value)}
+            >
+              {VOICE_OPTIONS.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <span className="field__label">抢红包速度</span>
+            <div className="segmented" style={{ margin: 0 }}>
+              {(['fast', 'mid', 'slow'] as const).map((s) => (
+                <div
+                  key={s}
+                  className={`segmented__item${(p.grabSpeed ?? 'mid') === s ? ' segmented__item--active' : ''}`}
+                  onClick={() => set('grabSpeed', s)}
+                >
+                  {s === 'fast' ? '手快' : s === 'mid' ? '一般' : '手慢'}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 

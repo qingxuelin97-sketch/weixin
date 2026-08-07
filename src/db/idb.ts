@@ -9,8 +9,8 @@
  */
 
 const DB_NAME = 'weixin-ai';
-// v2 adds the money stores (red packets / claims / transfers / wallet ledger).
-const DB_VERSION = 2;
+// v2 adds the money stores; v3 adds the TTS audio cache.
+const DB_VERSION = 3;
 
 export interface StoreDef {
   name: string;
@@ -39,6 +39,8 @@ export const STORES: StoreDef[] = [
   { name: 'rp_claims', keyPath: 'id', indexes: [{ name: 'byRp', keyPath: 'rpId' }] },
   { name: 'transfers', keyPath: 'id' },
   { name: 'wallet_tx', keyPath: 'id' },
+  // Content-addressed TTS audio cache (key = hash of voice+text+params).
+  { name: 'tts_cache', keyPath: 'key' },
 ];
 
 let dbPromise: Promise<IDBDatabase> | null = null;

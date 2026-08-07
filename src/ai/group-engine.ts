@@ -12,7 +12,7 @@ import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
 import { assembleSystemPrompt } from './prompt';
 import { selectFactsForInjection } from './memory';
-import { effectiveTier, type EngineHooks } from './engine';
+import { effectiveTier, voiceMeta, type EngineHooks } from './engine';
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
 import { playMessageSound } from '../lib/sound';
@@ -126,7 +126,7 @@ export async function sendGroupMessage(
           type: b.type === 'sticker' ? 'sticker' : b.type === 'voice' ? 'voice' : 'text',
           content: b.content,
           ...(b.type === 'voice'
-            ? { meta: { durationMs: Math.min(b.content.length * 220, 60000), played: false } }
+            ? { meta: await voiceMeta(b.content, persona, b.emotion, effectiveTier(globalTier, persona.nsfwPermit)) }
             : {}),
           status: 'sent',
           createdAt: hooks.now(),

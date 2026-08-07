@@ -218,6 +218,39 @@
 .voice-dur {
   font-size: var(--fs-cell-sub);
 }
+/* Bars animate only while the clip is actually playing. */
+.voice-waves--playing i {
+  animation: voice-pulse 900ms ease-in-out infinite;
+}
+.voice-waves--playing i:nth-child(2) {
+  animation-delay: 150ms;
+}
+.voice-waves--playing i:nth-child(3) {
+  animation-delay: 300ms;
+}
+@keyframes voice-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.voice-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+/* "转文字": the exact source text, no ASR needed. */
+.voice-text {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--color-cell-bg);
+  color: var(--color-text-primary);
+  font-size: var(--fs-cell-sub);
+  line-height: 1.4;
+}
 .voice-unplayed {
   width: 8px;
   height: 8px;

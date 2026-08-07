@@ -36,10 +36,11 @@ src/
   llm/          LLM 适配层：types(契约) / http(传输) / openai-compatible(基类)
                 / presets(三家预设) / bubbles(多气泡解析) / router(路由+降级)
                 / service(配置→Provider/Router 的接线)
-  ai/           AI 业务纯逻辑：prompt(分层组装) / engine(单聊拟真) / memory(打分+抽取)
-                / heartbeat(排期) / 后续 director/simulate
-  lib/          通用纯函数：money(钱+种子随机) / time(时间戳) / sound(提示音)
-                / keystore(密钥加密存储)
+  ai/           AI 业务纯逻辑：prompt(分层组装) / engine(单聊) / group-engine(群聊)
+                / director(调度决策) / memory(打分+抽取) / heartbeat(排期)
+                / scheduler(唯一时间演化路径) / money-service(红包转账编排)
+  lib/          通用纯函数：money(钱+种子随机) / wallet(红包/账本规则) / time(时间戳)
+                / sound(提示音) / voice(TTS 缓存+播放) / keystore(密钥加密存储)
   data/         UI 视图模型类型 + 种子数据（占位色豁免颜色检查）
   store/        zustand 状态（由 Repo 水合 + 写穿，选择器签名稳定）
   components/   通用 UI：Avatar / NavBar / SubNav / icons(手写 SVG，零 PNG)
@@ -84,7 +85,7 @@ src/
 
 改动某 feature 前，读 `specs/<feature>.md`（验收清单 + 设计要点 + 已知坑）。新增 feature
 先写 spec 再写码。现有：design-tokens / data-schema / llm-provider / composer / nsfw /
-chat-engine / build-distribution / story-gm（V3 预埋设计）。
+chat-engine / group-director / money / build-distribution / story-gm（V3 预埋设计）。
 
 ## 5. 工程护栏
 
