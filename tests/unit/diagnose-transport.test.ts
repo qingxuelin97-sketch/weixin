@@ -90,11 +90,14 @@ describe('diagnoseProvider transport labelling', () => {
     expect(text).toContain('HTTP 401');
   });
 
-  it('on native, keeps the original "App 的问题" verdict', async () => {
+  it('on native, a reachable host with both channels failing names the fallback bridge', async () => {
     native = true;
     const text = (await diagnoseProvider(vm)).join('\n');
-    expect(text).toContain('原生通道（App 发请求走的路）');
-    expect(text).toContain('是 App 的问题');
+    // Transport policy since the device verdict: fetch-first with bridge
+    // fallback — stage ② covers both, so the verdict names the broken
+    // fallback channel instead of a blanket "App 的问题".
+    expect(text).toContain('实际请求通道（网页优先→原生兜底）');
+    expect(text).toContain('原生兜底通道在本机是坏的');
   });
 
   it('on native, a working catalog does not trigger any transport verdict', async () => {
