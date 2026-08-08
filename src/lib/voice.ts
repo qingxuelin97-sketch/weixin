@@ -48,27 +48,42 @@ export function audioKey(text: string, voiceId: string, emotion?: string): strin
  * Get (or synthesize and cache) the audio for a line.
  * @returns the cache key and real duration, or null when TTS isn't configured.
  */
-export async function ensureVoiceAudio(
+/**
+ * In-flight dedup: the engine prefetches while playback awaits the same line —
+ * without this the cache-miss window (synthesis is a multi-second round trip)
+ * fires a SECOND paid synthesize() for identical text. Same key → same promise.
+ */
+const inFlight = new Map<string, Promise<{ key: string; durationMs: number } | null>>();
+
+export function ensureVoiceAudio(
   text: string,
   voiceId = DEFAULT_VOICE,
   emotion?: string,
 ): Promise<{ key: string; durationMs: number } | null> {
   const key = audioKey(text, voiceId, emotion);
-  const hit = await idbGet<CachedAudio>('tts_cache', key);
-  if (hit) return { key, durationMs: hit.durationMs };
+  const pending = inFlight.get(key);
+  if (pending) return pending;
 
-  if (!(await isTtsAvailable())) return null;
-  try {
-    const res = await synthesize({ text, voiceId, emotion });
-    const blob = new Blob([res.audio], { type: 'audio/mpeg' });
-    // Trust the API's duration; fall back to a length estimate if it's missing.
-    const durationMs = res.durationMs || Math.min(text.length * 220, 60_000);
-    await idbPut('tts_cache', { key, blob, durationMs, createdAt: Date.now() } satisfies CachedAudio);
-    void trimTtsCache(); // fire-and-forget eviction keeps the store bounded
-    return { key, durationMs };
-  } catch {
-    return null; // silent bubble beats a broken message flow
-  }
+  const p = (async (): Promise<{ key: string; durationMs: number } | null> => {
+    const hit = await idbGet<CachedAudio>('tts_cache', key);
+    if (hit) return { key, durationMs: hit.durationMs };
+
+    if (!(await isTtsAvailable())) return null;
+    try {
+      const res = await synthesize({ text, voiceId, emotion });
+      const blob = new Blob([res.audio], { type: 'audio/mpeg' });
+      // Trust the API's duration; fall back to a length estimate if it's missing.
+      const durationMs = res.durationMs || Math.min(text.length * 220, 60_000);
+      await idbPut('tts_cache', { key, blob, durationMs, createdAt: Date.now() } satisfies CachedAudio);
+      void trimTtsCache(); // fire-and-forget eviction keeps the store bounded
+      return { key, durationMs };
+    } catch {
+      return null; // silent bubble beats a broken message flow
+    }
+  })().finally(() => inFlight.delete(key));
+
+  inFlight.set(key, p);
+  return p;
 }
 
 let current: HTMLAudioElement | null = null;

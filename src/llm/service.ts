@@ -5,6 +5,7 @@
  */
 import type { ChatProvider } from './types';
 import { makeProvider, PRESETS } from './presets';
+import type { OpenAiCompatibleProvider } from './openai-compatible';
 import { LlmRouter, type RoutingPolicy, type RouteRequest, type RoutePlan, type Role } from './router';
 import type { ProviderVM } from '../data/types';
 import { getSecret } from '../lib/keystore';
@@ -187,10 +188,12 @@ export async function hasUsableProvider(): Promise<boolean> {
  * UI can tell "couldn't fetch" apart from "fetched these".
  */
 export async function fetchModels(vm: ProviderVM): Promise<string[]> {
-  const ids = await buildProvider(vm).listModels();
-  // listModels falls back to cfg defaults on failure; treat that echo as "no data".
-  if (ids.length === vm.models.length && ids.every((x, i) => x === vm.models[i])) return [];
-  return ids;
+  const provider = buildProvider(vm);
+  // listModelsLive answers null on failure — a successful fetch that happens to
+  // equal the stored list is still a success (the old contents-comparison hack
+  // reported a false error on every re-pull after the first).
+  const live = await (provider as OpenAiCompatibleProvider).listModelsLive?.();
+  return live ?? [];
 }
 
 /** Quick connectivity probe used by the API config page's "测试连接" button. */

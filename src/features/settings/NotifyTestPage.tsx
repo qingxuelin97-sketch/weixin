@@ -12,6 +12,7 @@ import {
   requestPermission,
   scheduleNotifications,
   notificationId,
+  cancelNotifyTest,
   type ScheduledNotification,
 } from '../../lib/notify';
 import './settings.css';
@@ -54,6 +55,8 @@ export function NotifyTestPage() {
     setBusy(true);
     setStatus(null);
     try {
+      // A restart must not inherit ghost rounds from an abandoned earlier test.
+      await cancelNotifyTest();
       const granted = await requestPermission();
       if (!granted) {
         setStatus('通知权限未授予——请先在系统设置里允许本应用通知');
@@ -101,6 +104,7 @@ export function NotifyTestPage() {
   };
 
   const reset = () => {
+    void cancelNotifyTest(); // still-pending rounds must die with the record
     saveRecord(null);
     setRecord(null);
     setStatus(null);

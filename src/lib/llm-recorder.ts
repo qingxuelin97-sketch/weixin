@@ -59,8 +59,25 @@ export function clearRecordings(): void {
   storage()?.removeItem(DATA_KEY);
 }
 
+/**
+ * Containment (CLAUDE.md hidden-conversation rule): AI↔AI hidden-DM traffic
+ * must never reach a user-visible surface, and the recording export IS one.
+ * The provider tap has no conversation identity, so the DM runner brackets its
+ * calls with this counter and the tap drops everything inside the window.
+ * (A concurrent user chat inside that window is skipped too — an acceptable
+ * loss; leaking a hidden DM is not.)
+ */
+let suppressDepth = 0;
+export function beginRecordingSuppression(): void {
+  suppressDepth++;
+}
+export function endRecordingSuppression(): void {
+  suppressDepth = Math.max(0, suppressDepth - 1);
+}
+
 /** No-op unless the user turned recording on — zero cost on the hot path. */
 export function recordLlmExchange(entry: Omit<LlmExchange, 'at'>): void {
+  if (suppressDepth > 0) return;
   if (!isRecordingEnabled()) return;
   const s = storage();
   if (!s) return;

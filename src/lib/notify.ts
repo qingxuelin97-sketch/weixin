@@ -161,6 +161,22 @@ export async function scheduleNotifications(
 export const NOTIFY_TEST_IDS = [1, 2, 3].map((i) => notificationId(`notify_test_${i}`));
 
 /**
+ * Cancel any still-pending self-test rounds. The exemption above means the
+ * regular foreground rebuild never touches them — so abandoning or restarting
+ * a test MUST cancel explicitly, or ghost rounds fire minutes later and
+ * corrupt the next test's self-reported result.
+ */
+export async function cancelNotifyTest(): Promise<void> {
+  const plugin = await nativePlugin();
+  if (!plugin) return;
+  try {
+    await plugin.cancel({ notifications: NOTIFY_TEST_IDS.map((id) => ({ id })) });
+  } catch {
+    /* nothing pending */
+  }
+}
+
+/**
  * Drop every pending notification. Called on foreground: anything still queued
  * was written against a world state the user has now moved past, so it gets
  * rebuilt from scratch rather than left to fire something stale.

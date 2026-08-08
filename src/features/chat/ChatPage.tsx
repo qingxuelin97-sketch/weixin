@@ -178,20 +178,26 @@ export function ChatPage() {
     }
   };
 
-  /** Ordered image refs of this conversation, so the viewer can page through. */
-  const imageRefs = useMemo(
-    () =>
-      rows
-        .filter((r) => r.kind !== 'time')
-        .map((r) => (r as { msg: MessageVM }).msg)
-        .filter((m) => m.type === 'image' && !m.isRecalled && m.content)
-        .map((m) => m.content as string),
-    [rows],
-  );
+  /**
+   * Ordered image refs + a per-message position map. The map (not indexOf on
+   * the ref) picks the viewer's start: two messages can legitimately share one
+   * ref (re-sent library photo), and indexOf would open at the first one.
+   */
+  const { imageRefs, imageIndexByMsgId } = useMemo(() => {
+    const refs: string[] = [];
+    const byId = new Map<number, number>();
+    for (const r of rows) {
+      if (r.kind === 'time') continue;
+      const m = (r as { msg: MessageVM }).msg;
+      if (m.type !== 'image' || m.isRecalled || !m.content) continue;
+      byId.set(m.id, refs.length);
+      refs.push(m.content);
+    }
+    return { imageRefs: refs, imageIndexByMsgId: byId };
+  }, [rows]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const onImageTap = (msg: MessageVM) => {
-    const idx = imageRefs.indexOf(msg.content ?? '');
-    setViewerIndex(idx >= 0 ? idx : 0);
+    setViewerIndex(imageIndexByMsgId.get(msg.id) ?? 0);
   };
 
   /** Red packet → open/detail; a pending transfer from the peer → accept it. */

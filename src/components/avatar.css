@@ -16,6 +16,13 @@
   background: var(--color-cell-bg);
   padding: 2px;
   box-shadow: inset 0 0 0 0.5px var(--color-hairline);
+  /* Equal rows regardless of cell content: an <img> cell would otherwise size
+     its auto row from the photo's intrinsic aspect ratio and shear the grid. */
+  grid-auto-rows: 1fr;
+}
+.avatar--group .avatar__img {
+  min-height: 0;
+  min-width: 0;
 }
 .avatar__cell {
   display: flex;

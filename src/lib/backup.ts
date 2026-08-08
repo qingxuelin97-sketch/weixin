@@ -135,6 +135,12 @@ export async function exportBackup(
         tts_cache: '语音缓存可按原文重新合成，不占备份体积',
         'providers.apiKey': 'API key 只存在设备安全存储，永不导出',
         'settings.__crypto_master': '本机加密主密钥不可迁移，恢复时保留本机的',
+        // "No silent omissions": a user choice is still an omission the restore
+        // UI must be able to explain — dangling avatar/image refs otherwise
+        // read as data loss.
+        ...(includeMedia
+          ? {}
+          : { media: '按导出时的选择未包含素材图片；头像与图片消息恢复后将显示占位' }),
       },
       appVersion,
     },

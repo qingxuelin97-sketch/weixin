@@ -225,21 +225,31 @@ export class OpenAiCompatibleProvider implements ChatProvider {
    * Falls back to the configured defaults when the route is missing or errors.
    */
   async listModels(): Promise<string[]> {
+    const live = await this.listModelsLive();
+    return live ?? this.cfg.defaultModels ?? [];
+  }
+
+  /**
+   * The live catalog only: null means "could not fetch" — callers that need to
+   * distinguish success-that-matches-current-config from failure (the config
+   * page's 拉取模型列表) use this instead of inferring from list contents.
+   */
+  async listModelsLive(): Promise<string[] | null> {
     try {
       const key = await this.cfg.getKey();
-      if (!key) return this.cfg.defaultModels ?? [];
+      if (!key) return null;
       const res = await httpJson({
         url: `${this.cfg.baseUrl.replace(/\/$/, '')}/models`,
         method: 'GET',
         headers: { Authorization: `Bearer ${key}`, ...this.cfg.extraHeaders },
         timeoutMs: 15_000,
       });
-      if (res.status >= 400) return this.cfg.defaultModels ?? [];
+      if (res.status >= 400) return null;
       const data = (res.data as { data?: Array<{ id?: string }> })?.data;
       const ids = (data ?? []).map((m) => m.id).filter((x): x is string => typeof x === 'string' && !!x);
-      return ids.length ? ids : (this.cfg.defaultModels ?? []);
+      return ids.length ? ids : null;
     } catch {
-      return this.cfg.defaultModels ?? [];
+      return null;
     }
   }
 

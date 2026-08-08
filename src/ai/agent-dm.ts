@@ -22,6 +22,7 @@ import type {
   PersonaVM,
 } from '../data/types';
 import { seededRng } from '../lib/money';
+import { beginRecordingSuppression, endRecordingSuppression } from '../lib/llm-recorder';
 import { isActiveAt } from './heartbeat';
 
 const HOUR = 3_600_000;
@@ -311,11 +312,16 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
   if (!topic) return false;
 
   let script: DmScript | null;
+  // Hidden-DM containment: the LLM recording tap must never capture this
+  // prompt/reply — the export surface would leak the gossip verbatim.
+  beginRecordingSuppression();
   try {
     const raw = await deps.complete(buildDmPrompt(aName, pa, bName, pb, topic), `dm:${dmId}`);
     script = parseDmScript(raw);
   } catch {
     return false;
+  } finally {
+    endRecordingSuppression();
   }
   if (!script) return false;
 
