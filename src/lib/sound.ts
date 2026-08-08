@@ -135,6 +135,48 @@ function synthChime(c: AudioContext): void {
 }
 
 /**
+ * Ringback tone while dialing (中国标准: 450Hz, 1s 响 4s 停). Returns a stop
+ * function; the caller owns the lifecycle (stop on answer/hangup/unmount).
+ * Respects the message-sound setting — a silenced app should not suddenly ring.
+ */
+export function startRingback(): () => void {
+  if (!isMessageSoundEnabled()) return () => {};
+  const c = ctx();
+  if (!c) return () => {};
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const burst = async () => {
+    if (stopped) return;
+    try {
+      if (c.state === 'suspended') await c.resume();
+      const now = c.currentTime;
+      const osc = c.createOscillator();
+      const g = c.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 450;
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
+      g.gain.setValueAtTime(0.18, now + 0.9);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 1.0);
+      osc.connect(g);
+      g.connect(c.destination);
+      osc.start(now);
+      osc.stop(now + 1.05);
+    } catch {
+      /* audio unavailable; stay silent */
+    }
+    if (!stopped) timer = setTimeout(() => void burst(), 5000);
+  };
+  void burst();
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+
+/**
  * Play the incoming-message notification sound (respects the enabled setting).
  *
  * @param at the message's timestamp: pass it so materialized HISTORY (offline

@@ -24,6 +24,35 @@ export interface ProviderConfig {
   /** Extra headers (e.g. MiniMax group id). */
   extraHeaders?: Record<string, string>;
   defaultModels?: string[];
+  /**
+   * Called when the bad_model self-heal fetched a fresh catalog, so the caller
+   * can persist it (service wires this to putProvider + invalidateRouter).
+   */
+  onCatalogRefresh?: (models: string[], picked: string) => void;
+}
+
+/** Per-provider cooldown so a broken catalog can't cause a refresh storm. */
+const HEAL_LAST_ATTEMPT = new Map<string, number>();
+const HEAL_COOLDOWN_MS = 10 * 60_000;
+
+/** Test hook: clear the heal cooldown between cases. */
+export function resetHealCooldown(): void {
+  HEAL_LAST_ATTEMPT.clear();
+}
+
+/** Replacement heuristic: longest shared prefix with the stale id, else first. */
+export function closestModel(stale: string, ids: string[]): string {
+  let best = ids[0];
+  let bestLen = -1;
+  for (const id of ids) {
+    let n = 0;
+    while (n < stale.length && n < id.length && stale[n] === id[n]) n++;
+    if (n > bestLen) {
+      bestLen = n;
+      best = id;
+    }
+  }
+  return best;
 }
 
 interface OpenAiChoice {
@@ -96,7 +125,38 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     return new LlmError('unknown', msg, n, this.id);
   }
 
+  /**
+   * Catalog self-heal: Zen rotates ids weekly (live-measured), and a stale id
+   * fails EVERY call until the user manually re-pulls the list. On bad_model,
+   * fetch the live catalog once (cooldown-guarded), swap to the closest current
+   * id, retry, and hand the fresh list upward for persistence — the hardcoded
+   * STALE_DEFAULT_MODELS migration table stops growing from here.
+   */
   async complete(opts: GenerateOptions): Promise<CompletionResult> {
+    try {
+      return await this.completeOnce(opts);
+    } catch (e) {
+      if (!(e instanceof LlmError) || e.kind !== 'bad_model') throw e;
+      const healed = await this.healModel(opts.model);
+      if (!healed) throw e;
+      return this.completeOnce({ ...opts, model: healed });
+    }
+  }
+
+  private async healModel(stale: string): Promise<string | null> {
+    const now = Date.now();
+    if (now - (HEAL_LAST_ATTEMPT.get(this.id) ?? 0) < HEAL_COOLDOWN_MS) return null;
+    HEAL_LAST_ATTEMPT.set(this.id, now);
+    const ids = await this.listModels();
+    // listModels falls back to the configured defaults on failure — those still
+    // contain the stale id, which correctly reads as "nothing fresher known".
+    if (ids.length === 0 || ids.includes(stale)) return null;
+    const picked = closestModel(stale, ids);
+    this.cfg.onCatalogRefresh?.(ids, picked);
+    return picked;
+  }
+
+  protected async completeOnce(opts: GenerateOptions): Promise<CompletionResult> {
     const key = await this.cfg.getKey();
     if (!key) throw new LlmError('auth', `no API key for provider ${this.id}`, 401, this.id);
     const headers = { Authorization: `Bearer ${key}`, ...this.cfg.extraHeaders };
@@ -186,9 +246,10 @@ export class OpenAiCompatibleProvider implements ChatProvider {
   protected httpStatusToError(status: number, msg: string): LlmError {
     // A retired model id must NOT read as an auth failure: Zen answers 401 with
     // "Model X is not supported" (live-verified), and kind:'auth' would both
-    // mislead the user ("bad key") and abort the fallback ladder.
+    // mislead the user ("bad key") and abort the fallback ladder. bad_model
+    // additionally triggers the catalog self-heal below.
     if (/model\b.*\b(not supported|not found|does not exist)|ModelError/i.test(msg))
-      return new LlmError('unknown', msg, status, this.id);
+      return new LlmError('bad_model', msg, status, this.id);
     if (status === 401 || status === 403) return new LlmError('auth', msg, status, this.id);
     if (status === 429) return new LlmError('rate_limit', msg, status, this.id);
     if (status >= 500) return new LlmError('server', msg, status, this.id);

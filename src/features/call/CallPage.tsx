@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
+import { startRingback } from '../../lib/sound';
 import './call.css';
 
 type Phase = 'dialing' | 'active' | 'ended';
@@ -31,11 +32,16 @@ export function CallPage() {
   // nothing here persists or replays, so the scheduler rule doesn't apply.
   useEffect(() => {
     if (phase !== 'dialing') return;
+    // A silent dial reads as broken — ringback runs exactly while dialing.
+    const stopRing = startRingback();
     const t = setTimeout(() => {
       connectedAt.current = Date.now();
       setPhase('active');
     }, 3000 + Math.random() * 3000);
-    return () => clearTimeout(t);
+    return () => {
+      stopRing();
+      clearTimeout(t);
+    };
   }, [phase]);
 
   useEffect(() => {

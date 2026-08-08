@@ -74,6 +74,7 @@ export type LlmErrorKind =
   | 'network'
   | 'content_filter' // provider refused on policy grounds
   | 'bad_response' // unparseable / schema mismatch after repair
+  | 'bad_model' // model id no longer in the provider's catalog (Zen rotates weekly)
   | 'server' // 5xx
   | 'unknown';
 

@@ -5,8 +5,26 @@
  * — resending the same line costs nothing. Playback is a single shared element so
  * a new voice message stops the previous one, like the real app.
  */
-import { idbGet, idbPut } from '../db/idb';
+import { idbGet, idbPut, idbGetAll, idbDelete } from '../db/idb';
 import { synthesize, isTtsAvailable, DEFAULT_VOICE } from '../llm/tts';
+
+/**
+ * Cache ceiling. The store only ever grew (every voice line ≈ tens of KB of
+ * MP3, forever); past the cap the oldest clips are evicted — they re-synthesize
+ * from text on demand, so eviction costs money-later rather than space-now.
+ */
+const TTS_CACHE_MAX = 200;
+
+export async function trimTtsCache(max = TTS_CACHE_MAX): Promise<void> {
+  try {
+    const rows = await idbGetAll<CachedAudio>('tts_cache');
+    if (rows.length <= max) return;
+    rows.sort((a, b) => a.createdAt - b.createdAt);
+    for (const row of rows.slice(0, rows.length - max)) await idbDelete('tts_cache', row.key);
+  } catch {
+    /* eviction is best-effort */
+  }
+}
 
 interface CachedAudio {
   key: string;
@@ -46,6 +64,7 @@ export async function ensureVoiceAudio(
     // Trust the API's duration; fall back to a length estimate if it's missing.
     const durationMs = res.durationMs || Math.min(text.length * 220, 60_000);
     await idbPut('tts_cache', { key, blob, durationMs, createdAt: Date.now() } satisfies CachedAudio);
+    void trimTtsCache(); // fire-and-forget eviction keeps the store bounded
     return { key, durationMs };
   } catch {
     return null; // silent bubble beats a broken message flow

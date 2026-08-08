@@ -182,6 +182,13 @@ async function generateAndPlay(
     }
     if (ctrl.signal.aborted) return;
 
+    // Prefetch voice synthesis in parallel while earlier bubbles play — the
+    // awaited voiceMeta at append time then hits the content-addressed cache
+    // instead of serializing a TTS round-trip into every gap.
+    for (const b of bubbles) {
+      if (b.type === 'voice') void voiceMeta(b.content, persona, b.emotion, tier).catch(() => {});
+    }
+
     for (let i = 0; i < bubbles.length; i++) {
       const b = bubbles[i];
       // Budgeted pacing: the LLM's real latency (2-8s on free reasoning models)
