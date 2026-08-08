@@ -25,6 +25,19 @@ import {
 } from '../data/seed';
 import { repo, IdbRepo } from '../db/repo';
 import { registerMedia } from '../data/media-registry';
+import { recordRelEvent } from '../ai/relationship';
+
+/** A like warms the (liker, author) edge — fire-and-forget, never blocks UI. */
+async function relEventForLike(momentId: string, likerId: string, now: number): Promise<void> {
+  try {
+    const moment = await repo.getMoment(momentId);
+    if (moment && moment.authorId !== likerId) {
+      await recordRelEvent(moment.authorId, likerId, 'moment_liked', now);
+    }
+  } catch {
+    /* bookkeeping only */
+  }
+}
 
 interface AppState {
   hydrated: boolean;
@@ -331,11 +344,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({
       momentLikes: { ...s.momentLikes, [momentId]: [...(s.momentLikes[momentId] ?? []), like] },
     }));
+    void relEventForLike(momentId, contactId, now);
     return true;
   },
 
   applyLike: async (like) => {
     await repo.putLike(like);
+    void relEventForLike(like.momentId, like.contactId, like.createdAt);
     set((s) => {
       const cur = s.momentLikes[like.momentId] ?? [];
       if (cur.some((l) => l.id === like.id)) return s;

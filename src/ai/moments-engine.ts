@@ -19,6 +19,7 @@ import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
 import { pickImages } from '../data/moments-images';
 import { isActiveAt } from './heartbeat';
+import { getAllEdges, pairKey, effectiveAffinity } from './relationship';
 import { repo } from '../db/repo';
 
 const MINUTE = 60_000;
@@ -135,7 +136,11 @@ export function nextMomentAt(persona: PersonaVM, from: number): number | null {
 export async function collectReactors(
   contacts: ContactVM[],
   personaFor: (id: string) => PersonaVM | undefined,
+  now?: number,
 ): Promise<ReactorInfo[]> {
+  // Live relationship edges (M-D1): a friend you've warmed up to likes your
+  // posts more often than their static card said they would.
+  const edges = now != null ? await getAllEdges(now) : {};
   const out: ReactorInfo[] = [];
   for (const c of contacts) {
     if (c.type !== 'ai') continue;
@@ -145,7 +150,7 @@ export async function collectReactors(
       contactId: c.id,
       likeRate: p.likeRate,
       commentRate: p.commentRate,
-      affinity: p.affinityInit,
+      affinity: effectiveAffinity(edges[pairKey('self', c.id)], p.affinityInit),
       activeHours: p.activeHours,
     });
   }

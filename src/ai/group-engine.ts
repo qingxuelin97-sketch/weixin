@@ -15,6 +15,7 @@ import { selectFactsForInjection } from './memory';
 import { effectiveTier, voiceMeta, preferredRoute, type EngineHooks } from './engine';
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
+import { getAllEdges, pairKey, recordRelEvent } from './relationship';
 import { playMessageSound } from '../lib/sound';
 import { moodOf } from '../lib/mood';
 import { repo } from '../db/repo';
@@ -72,13 +73,20 @@ export async function sendGroupMessage(
     let speakers = pre.speakers;
     if (pre.mode === 'director') {
       const router = await getRouter();
+      // Long-term group dynamics: last round's topic + who's grown close feed
+      // the casting decision — the group "remembers" instead of resetting.
+      const prevTopic = await repo.getSetting<string>(`topic:${convId}`);
+      const cliqueLine = await cliqueLineFor(members, nameOf, now);
       const decision = await callDirector(
         router,
-        { candidates: pre.candidates, recent, nameOf },
+        { candidates: pre.candidates, recent, nameOf, prevTopic, cliqueLine },
         convId,
         ctrl.signal,
       );
       if (ctrl.signal.aborted) return;
+      if (decision.topicState) {
+        void repo.putSetting(`topic:${convId}`, decision.topicState.slice(0, 60));
+      }
       if (decision.silence || decision.speakers.length === 0) return;
       speakers = decision.speakers;
     }
@@ -143,6 +151,13 @@ export async function sendGroupMessage(
           createdAt: hooks.now(),
         });
         playMessageSound(hooks.now());
+      }
+      // Relationship bookkeeping: speaking in the user's round is a light bond;
+      // a staged disagreement cools the actor→target edge (both fire-and-forget).
+      const { plan } = ordered[i];
+      void recordRelEvent('self', member.contactId, 'group_chat', hooks.now(), persona.affinityInit).catch(() => {});
+      if (plan.intent === 'disagree' && plan.target && plan.target !== 'user' && byId.has(plan.target)) {
+        void recordRelEvent(member.contactId, plan.target, 'teased', hooks.now()).catch(() => {});
       }
     }
   } finally {
@@ -246,6 +261,28 @@ function intentLabel(intent: SpeakerPlan['intent']): string {
       return '只发一个表情';
     default:
       return '回应';
+  }
+}
+
+/** "X和Y走得近" — social intel for the director, derived from live edges. */
+async function cliqueLineFor(
+  members: GroupMember[],
+  nameOf: (id: string) => string,
+  now: number,
+): Promise<string | undefined> {
+  try {
+    const edges = await getAllEdges(now);
+    const ids = members.map((m) => m.contactId);
+    const pairs: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const e = edges[pairKey(ids[i], ids[j])];
+        if (e && e.aff >= 65) pairs.push(`${nameOf(ids[i])}和${nameOf(ids[j])}走得近`);
+      }
+    }
+    return pairs.length ? pairs.slice(0, 2).join('；') : undefined;
+  } catch {
+    return undefined;
   }
 }
 

@@ -39,3 +39,28 @@ export function moodOf(contactId: string, ts: number): Mood {
   }
   return MOODS[0].mood;
 }
+
+/**
+ * Mood → behavior coupling (M-D1). The line above tells the MODEL how to act;
+ * these parameters make the APP act it too — typing speed and proactive pacing
+ * shift with the day's mood. Pure lookup: same day, same params (rule #4).
+ */
+export interface MoodParams {
+  /** Multiplier on typingCpm (higher = types faster). */
+  cpmMul: number;
+  /** Multiplier on proactive drive (scales heartbeat interval inversely). */
+  proactMul: number;
+}
+
+const MOOD_PARAMS: Record<Mood['key'], MoodParams> = {
+  calm: { cpmMul: 1.0, proactMul: 1.0 },
+  happy: { cpmMul: 1.1, proactMul: 1.15 },
+  annoyed: { cpmMul: 0.9, proactMul: 0.8 },
+  tired: { cpmMul: 0.8, proactMul: 0.7 },
+  excited: { cpmMul: 1.15, proactMul: 1.3 },
+  down: { cpmMul: 0.85, proactMul: 0.6 },
+};
+
+export function moodParams(key: Mood['key']): MoodParams {
+  return MOOD_PARAMS[key];
+}

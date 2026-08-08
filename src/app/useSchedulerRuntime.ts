@@ -18,6 +18,9 @@ import { claimRedPacket, acceptTransfer } from '../ai/money-service';
 import { sendProactiveMessage } from '../ai/engine';
 import { sendGroupProactiveMessage } from '../ai/group-engine';
 import { scheduleHeartbeat, shouldNudge } from '../ai/heartbeat';
+import { getEdge, effectiveAffinity, heartbeatAffinityMul } from '../ai/relationship';
+import { noteProactiveSent, getAgentState } from '../ai/agent-state';
+import { moodOf, moodParams } from '../lib/mood';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
@@ -92,9 +95,17 @@ export function useSchedulerRuntime(enabled: boolean): void {
         const nudge = payload.nudge === true;
         await sendProactiveMessage(convId, peer, persona, tier, hooks, at, { nudge });
       }
-      // Chain the next one so the rhythm continues.
+      // Anti-spam bookkeeping: two unanswered reaches in a row → 24h cooldown.
+      const state = await noteProactiveSent(contactId, Date.now());
+      // Chain the next one, paced by the live relationship + today's mood.
+      const now = Date.now();
+      const edge = await getEdge('self', contactId, now);
       const last = s.messagesFor(convId).at(-1)?.createdAt;
-      await scheduleHeartbeat(persona, convId, Date.now(), last);
+      await scheduleHeartbeat(persona, convId, now, last, {
+        affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
+        proactMul: moodParams(moodOf(contactId, now).key).proactMul,
+        notBefore: state.cooldownUntil || undefined,
+      });
     });
 
     // Flip a sent message to recalled (the send-then-recall drama's second act).
@@ -318,7 +329,13 @@ async function runForegroundPass(): Promise<void> {
     const persona = s.personaFor(conv.peerId);
     if (!persona) continue;
     if (!(await hasPendingFor('heartbeat', persona.contactId))) {
-      await scheduleHeartbeat(persona, conv.id, now, conv.lastMsgAt);
+      const edge = await getEdge('self', persona.contactId, now);
+      const state = await getAgentState(persona.contactId);
+      await scheduleHeartbeat(persona, conv.id, now, conv.lastMsgAt, {
+        affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
+        proactMul: moodParams(moodOf(persona.contactId, now).key).proactMul,
+        notBefore: state.cooldownUntil || undefined,
+      });
     }
     if (!(await hasPendingFor('moment_post', persona.contactId))) {
       await scheduleNextMoment(persona, now);

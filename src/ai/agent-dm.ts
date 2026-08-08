@@ -23,6 +23,7 @@ import type {
 } from '../data/types';
 import { seededRng } from '../lib/money';
 import { beginRecordingSuppression, endRecordingSuppression } from '../lib/llm-recorder';
+import { recordRelEvent } from './relationship';
 import { isActiveAt } from './heartbeat';
 
 const HOUR = 3_600_000;
@@ -357,6 +358,9 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
       await deps.putMemory(f);
     }
   }
+
+  // A shared DM session builds the pair's own bond.
+  void recordRelEvent(plan.a, plan.b, 'dm_gossip', deps.now()).catch(() => {});
 
   // Maybe spill a starter into the shared group, minutes-to-an-hour later.
   if (shouldSpillToGroup(dmId, plan.fireAt)) {

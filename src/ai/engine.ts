@@ -10,6 +10,8 @@
 import type { MessageVM, PersonaVM, ContactVM, NsfwTierVM } from '../data/types';
 import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
+import { getEdge, effectiveAffinity, relationTier, tierDirective, recordRelEvent } from './relationship';
+import { noteUserReplied } from './agent-state';
 import { assembleSystemPrompt, relationsForPrompt, type PersonaView } from './prompt';
 import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
@@ -19,7 +21,7 @@ import { ensureVoiceAudio } from '../lib/voice';
 import { DEFAULT_VOICE } from '../llm/tts';
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
-import { moodOf } from '../lib/mood';
+import { moodOf, moodParams } from '../lib/mood';
 import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 
@@ -94,6 +96,12 @@ export async function sendUserMessage(
     createdAt: hooks.now(),
   });
 
+  // Relationship + anti-spam bookkeeping: a reply warms the edge and resets
+  // the proactive-consec counter (forgiveness is immediate). Fire-and-forget —
+  // bookkeeping must never delay the visible reply.
+  void recordRelEvent('self', peer.id, 'user_reply', hooks.now(), persona.affinityInit).catch(() => {});
+  void noteUserReplied(peer.id).catch(() => {});
+
   // 2) Build context, 3) generate and play.
   await generateAndPlay(convId, peer, persona, globalTier, hooks, ctrl);
 }
@@ -130,15 +138,23 @@ async function generateAndPlay(
     const c = contacts.find((x) => x.id === id);
     return c ? (c.remark ?? c.name) : undefined;
   };
+  // Live relationship register: the evolved edge (not the static card) decides
+  // how familiar this conversation should FEEL. Appended inside the existing
+  // relations layer — never a new layer (prefix-cache discipline).
+  const edge = await getEdge('self', peer.id, hooks.now());
+  const aff = effectiveAffinity(edge, persona.affinityInit);
+  const relationsRec = relationsForPrompt(persona.relations, nameOf);
+  relationsRec['你们现在的熟络程度'] = tierDirective(relationTier(aff));
+  const mood = moodOf(peer.id, hooks.now());
   let system = assembleSystemPrompt({
     persona: toPersonaView(persona, peer.remark ?? peer.name),
-    relations: relationsForPrompt(persona.relations, nameOf),
+    relations: relationsRec,
     nsfwTier: tier,
     memory: memory.pinned.length || memory.topK.length ? memory : undefined,
     scene: {
       kind: 'single',
       now: new Date(hooks.now()),
-      moodLine: moodOf(peer.id, hooks.now()).line,
+      moodLine: mood.line,
     },
   });
   if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
@@ -195,8 +211,10 @@ async function generateAndPlay(
       // already elapsed behind the typing indicator. The first bubble only pays
       // the REMAINDER of its typing delay, so total wait ≈ max(real, simulated)
       // instead of their sum. Later bubbles pace normally — the model is "done
-      // thinking" by then and the gaps are pure typing rhythm.
-      const full = Math.min(typingDelay(b, persona.typingCpm), 6000);
+      // thinking" by then and the gaps are pure typing rhythm. Mood shifts the
+      // typing speed itself (tired types slower) — the app acts the mood, not
+      // just the prompt.
+      const full = Math.min(typingDelay(b, persona.typingCpm * moodParams(mood.key).cpmMul), 6000);
       const delay = i === 0 ? Math.max(250, full - (hooks.now() - tGenStart)) : full;
       await sleep(delay, ctrl.signal);
       if (ctrl.signal.aborted) return;

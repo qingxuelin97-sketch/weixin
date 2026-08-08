@@ -188,6 +188,10 @@ export interface DirectorContext {
   recent: MessageVM[];
   /** Display-name lookup for rendering the transcript. */
   nameOf: (senderId: string) => string;
+  /** Last round's topicState — the group remembers what it was talking about. */
+  prevTopic?: string;
+  /** One line of social intel, e.g. "小雨和阿哲走得近" (derived from edges). */
+  cliqueLine?: string;
 }
 
 /**
@@ -208,6 +212,12 @@ export async function callDirector(
     .slice(-20)
     .map((m) => `${ctx.nameOf(m.senderId)}: ${m.content ?? `[${m.type}]`}`)
     .join('\n');
+  const extras = [
+    ctx.prevTopic ? `【上次话题】${ctx.prevTopic}` : '',
+    ctx.cliqueLine ? `【关系】${ctx.cliqueLine}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   try {
     const res = await router.complete(
@@ -215,7 +225,10 @@ export async function callDirector(
       {
         messages: [
           { role: 'system', content: DIRECTOR_SYSTEM },
-          { role: 'user', content: `【成员】\n${roster}\n\n【最近对话】\n${transcript}` },
+          {
+            role: 'user',
+            content: `【成员】\n${roster}\n${extras ? `${extras}\n` : ''}\n【最近对话】\n${transcript}`,
+          },
         ],
         json: true,
         temperature: 0.6,

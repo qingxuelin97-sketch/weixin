@@ -36,7 +36,7 @@ export async function scheduleReactionsFor(
   personaFor: (id: string) => PersonaVM | undefined,
   now: number,
 ): Promise<void> {
-  const reactors = await collectReactors(contacts, personaFor);
+  const reactors = await collectReactors(contacts, personaFor, now);
   const planned = planReactions(moment.id, moment.authorId, moment.createdAt, reactors, 'react');
   for (const p of planned) {
     await enqueue({

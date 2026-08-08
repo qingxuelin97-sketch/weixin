@@ -28,17 +28,36 @@ export function isActiveAt(persona: PersonaVM, ts: number): boolean {
 }
 
 /**
+ * Behavior modifiers layered onto the base interval (M-D1): the relationship
+ * edge (closer → sooner), the day's mood (down → later), and the anti-spam
+ * cooldown floor. All inputs are deterministic, so replay stays exact.
+ */
+export interface HeartbeatMods {
+  /** From relationship.heartbeatAffinityMul — 1.0 at default affinity. */
+  affinityMul?: number;
+  /** From mood.moodParams().proactMul — divides the interval. */
+  proactMul?: number;
+  /** agent_state.cooldownUntil — never fire before this. */
+  notBefore?: number;
+}
+
+/**
  * Pick the next heartbeat time for a persona: an exponential-ish interval scaled
  * by proactivity, nudged forward until it lands inside an active window.
  * Deterministic for a given (personaId, dayBucket) seed.
  */
-export function nextHeartbeatAt(persona: PersonaVM, from: number): number {
+export function nextHeartbeatAt(persona: PersonaVM, from: number, mods: HeartbeatMods = {}): number {
   const dayBucket = Math.floor(from / 86_400_000);
   const rng = seededRng(`${persona.contactId}:${dayBucket}`);
   // Higher proactivity → shorter base interval.
-  const base = persona.heartbeatBaseMin * (1.6 - persona.proactivity); // minutes
+  const base =
+    persona.heartbeatBaseMin *
+    (1.6 - persona.proactivity) *
+    (mods.affinityMul ?? 1) /
+    (mods.proactMul ?? 1); // minutes
   const jitter = 0.5 + rng(); // 0.5..1.5
   let t = from + base * jitter * 60_000;
+  if (mods.notBefore && t < mods.notBefore) t = mods.notBefore;
   // Walk forward in hour steps until inside an active window (max 48 steps).
   for (let i = 0; i < 48 && !isActiveAt(persona, t); i++) t += 3_600_000;
   return Math.round(t);
@@ -72,8 +91,9 @@ export async function scheduleHeartbeat(
   convId: string,
   from: number,
   lastMsgAt?: number,
+  mods: HeartbeatMods = {},
 ): Promise<ScheduledAction> {
-  const fireAt = nextHeartbeatAt(persona, from);
+  const fireAt = nextHeartbeatAt(persona, from, mods);
   const body = canPreWriteGreeting(persona, lastMsgAt, fireAt) ? persona.greeting : undefined;
   return enqueue({
     kind: 'heartbeat',

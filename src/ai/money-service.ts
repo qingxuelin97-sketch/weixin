@@ -15,6 +15,7 @@ import { splitLuckyPacket } from '../lib/money';
 import { claimShare, isFullyClaimed, markBestLuck, appendTx, grabDelayMs } from '../lib/wallet';
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
+import { recordRelEvent } from './relationship';
 
 export interface MoneyHooks {
   appendMessage: (msg: Omit<MessageVM, 'id'>) => Promise<MessageVM>;
@@ -118,6 +119,11 @@ export async function claimRedPacket(
   if (claimerId === 'self') {
     await recordWalletTx('rp_in', claim.amountFen, '收到红包', rpId, now);
   }
+  // Receiving money warms the edge between sender and claimer (skip self-claims
+  // of one's own packet — that's bookkeeping, not a gesture).
+  if (claimerId !== rp.senderId) {
+    void recordRelEvent(rp.senderId, claimerId, 'rp_received', now).catch(() => {});
+  }
 
   // Once the last share is gone, settle "best luck" and close the packet.
   if (isFullyClaimed(rp, all)) {
@@ -207,6 +213,8 @@ export async function acceptTransfer(transferId: string, hooks: MoneyHooks): Pro
   if (t.toId === 'self') {
     await recordWalletTx('transfer_in', t.amountFen, t.note || '转账', t.id, now);
   }
+  // A completed transfer is a strong warm gesture between the two parties.
+  void recordRelEvent(t.fromId, t.toId, 'transfer_received', now).catch(() => {});
 
   const msgs = await repo.getMessages(t.convId, { limit: 200 });
   const target = msgs.find((m) => m.type === 'transfer' && m.meta?.transferId === t.id);
