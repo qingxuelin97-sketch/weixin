@@ -9,6 +9,8 @@ import { claimRedPacket, acceptTransfer } from '../ai/money-service';
 import { sendProactiveMessage } from '../ai/engine';
 import { scheduleHeartbeat } from '../ai/heartbeat';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
+import { runBackfill } from '../ai/backfill';
+import type { SimContact } from '../ai/simulate';
 import { repo } from '../db/repo';
 import { useAppStore } from '../store/appStore';
 import type { NsfwTierVM } from '../data/types';
@@ -99,11 +101,27 @@ export function useSchedulerRuntime(enabled: boolean): void {
 
     startScheduler();
 
-    // Seed each persona's first heartbeat and first Moments post. Without this
-    // neither feature ever fires — nothing else enqueues the initial action.
     void (async () => {
       const s = useAppStore.getState();
       const now = Date.now();
+
+      // 1) Backfill what "happened" while the app was closed. Runs first so the
+      //    fabricated past is queued before any future scheduling looks at it.
+      const singles = s.conversations.flatMap<SimContact>((c) => {
+        if (c.type !== 'single' || !c.peerId) return [];
+        const persona = s.personaFor(c.peerId);
+        if (!persona) return [];
+        return [{ contactId: c.peerId, convId: c.id, persona, lastMsgAt: c.lastMsgAt }];
+      });
+      try {
+        await runBackfill(now, { singles, groups: [] });
+      } catch {
+        // A failed backfill must never block startup — the app still works,
+        // it just doesn't show a fabricated absence this launch.
+      }
+
+      // 2) Seed each persona's first heartbeat and first Moments post. Without
+      //    this neither feature ever fires — nothing else enqueues the first one.
       for (const conv of s.conversations) {
         if (conv.type !== 'single' || !conv.peerId) continue;
         const persona = s.personaFor(conv.peerId);
