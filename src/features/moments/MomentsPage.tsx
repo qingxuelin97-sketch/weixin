@@ -12,6 +12,7 @@ import { useAppStore } from '../../store/appStore';
 import { Avatar } from '../../components/Avatar';
 import { IconBack } from '../../components/icons';
 import { MomentCard } from './MomentCard';
+import { useNow } from '../../lib/useNow';
 import type { MomentCommentVM } from '../../data/types';
 import './moments.css';
 
@@ -33,9 +34,7 @@ export function MomentsPage() {
   const toggleLike = useAppStore((s) => s.toggleLike);
   const addComment = useAppStore((s) => s.addComment);
 
-  // Freeze "now" for the lifetime of the view so relative times don't shift
-  // mid-scroll (and so screenshots are deterministic).
-  const [now] = useState(() => Date.now());
+  const now = useNow();
 
   useEffect(() => {
     void loadMoments();

@@ -33,6 +33,11 @@ interface AppState {
   personas: Record<string, PersonaVM>;
   /** Conversations currently showing "对方正在输入…". */
   typing: Record<string, boolean>;
+  /**
+   * The conversation the user is looking at right now. Messages arriving here
+   * don't count as unread; entering clears the badge. Null when off any chat.
+   */
+  activeConvId: string | null;
 
   /** Moments feed, newest first. Loaded lazily — the feed is not on the hot path. */
   moments: MomentVM[];
@@ -52,6 +57,8 @@ interface AppState {
 
   // lifecycle & mutations (write through to Repo)
   hydrate: () => Promise<void>;
+  /** Enter (id) / leave (null) a chat. Entering zeroes unreadCount + mentionMe. */
+  setActiveConv: (convId: string | null) => Promise<void>;
   appendMessage: (msg: Omit<MessageVM, 'id'>) => Promise<MessageVM>;
   updateMessage: (msg: MessageVM) => Promise<void>;
   patchConversation: (id: string, patch: Partial<ConversationVM>) => Promise<void>;
@@ -86,6 +93,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   messages: {},
   personas: {},
   typing: {},
+  activeConvId: null,
   moments: [],
   momentsLoaded: false,
   momentLikes: {},
@@ -150,16 +158,37 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ hydrated: true, contacts, conversations, messages, personas });
   },
 
+  setActiveConv: async (convId) => {
+    set({ activeConvId: convId });
+    if (!convId) return;
+    const conv = get().conversations.find((c) => c.id === convId);
+    if (conv && (conv.unreadCount > 0 || conv.mentionMe)) {
+      await get().patchConversation(convId, { unreadCount: 0, mentionMe: false });
+    }
+  },
+
   appendMessage: async (msg) => {
     const saved = await repo.addMessage(msg);
+    const s0 = get();
+    const conv = s0.conversations.find((c) => c.id === msg.convId);
     set((s) => ({
       messages: { ...s.messages, [msg.convId]: [...(s.messages[msg.convId] ?? []), saved] },
     }));
-    // Update the conversation preview + timestamp.
-    await get().patchConversation(msg.convId, {
-      lastMsgPreview: previewOf(saved),
+    // Update the conversation preview + timestamp, and maintain the unread badge:
+    // a peer message landing anywhere the user isn't looking counts as unread
+    // (hidden AI↔AI threads excluded — their badge must never surface anywhere).
+    const patch: Partial<ConversationVM> = {
+      lastMsgPreview: previewOf(saved, senderNameOf(s0.contacts, saved.senderId)),
       lastMsgAt: saved.createdAt,
-    });
+    };
+    if (msg.senderId === 'self') {
+      // Sending clears the draft — it became this message.
+      if (conv?.draft) patch.draft = undefined;
+    } else if (conv && !conv.isHidden && s0.activeConvId !== msg.convId) {
+      patch.unreadCount = conv.unreadCount + 1;
+      if (conv.type === 'group' && mentionsSelf(saved, s0.contacts)) patch.mentionMe = true;
+    }
+    await get().patchConversation(msg.convId, patch);
     return saved;
   },
 
@@ -171,6 +200,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         [msg.convId]: (s.messages[msg.convId] ?? []).map((m) => (m.id === msg.id ? msg : m)),
       },
     }));
+    // If the conversation tail changed shape (a recall, an edit), the list
+    // preview must follow — otherwise a recalled line keeps showing its text.
+    const s = get();
+    const rows = s.messages[msg.convId] ?? [];
+    if (rows.length && rows[rows.length - 1].id === msg.id) {
+      await get().patchConversation(msg.convId, {
+        lastMsgPreview: previewOf(msg, senderNameOf(s.contacts, msg.senderId)),
+      });
+    }
   },
 
   patchConversation: async (id, patch) => {
@@ -279,8 +317,24 @@ function sortConversations(a: ConversationVM, b: ConversationVM): number {
   return b.lastMsgAt - a.lastMsgAt;
 }
 
+function senderNameOf(contacts: ContactVM[], senderId: string): string | undefined {
+  const c = contacts.find((x) => x.id === senderId);
+  return c?.remark ?? c?.name;
+}
+
+/** Did this group message @-mention the user? Matches WeChat's plain-text @名字. */
+export function mentionsSelf(m: MessageVM, contacts: ContactVM[]): boolean {
+  if (m.type !== 'text' || !m.content) return false;
+  const self = contacts.find((c) => c.type === 'self');
+  const name = self?.name ?? '我';
+  return m.content.includes(`@${name}`) || m.content.includes('@所有人');
+}
+
 /** One-line preview text for the conversation list. */
-function previewOf(m: MessageVM): string {
+export function previewOf(m: MessageVM, senderName?: string): string {
+  if (m.isRecalled) {
+    return m.senderId === 'self' ? '你撤回了一条消息' : `"${senderName ?? '对方'}" 撤回了一条消息`;
+  }
   switch (m.type) {
     case 'text':
       return m.content ?? '';

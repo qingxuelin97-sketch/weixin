@@ -12,6 +12,16 @@ async function settle(page: import('@playwright/test').Page) {
   await page.waitForTimeout(150);
 }
 
+/**
+ * The app renders real wall-clock time (M-B fixed the frozen-clock bug), so
+ * golden determinism now lives here: pin Date at the seed-data epoch. Timers
+ * keep running — only Date.now()/new Date() are fixed.
+ */
+const SEED_EPOCH = 1_754_500_000_000; // ~2025-08-06, same base as src/data/seed.ts
+test.beforeEach(async ({ page }) => {
+  await page.clock.setFixedTime(SEED_EPOCH);
+});
+
 test('conversation list', async ({ page }) => {
   await page.goto('/#/chats');
   await settle(page);

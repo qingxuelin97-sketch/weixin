@@ -39,6 +39,8 @@ export interface GenerateOptions {
   json?: boolean;
   /** AbortSignal so a user's new message can hard-interrupt an in-flight turn. */
   signal?: AbortSignal;
+  /** Per-call deadline override (ms). Transport default applies when omitted. */
+  timeoutMs?: number;
 }
 
 /** Raw single-shot completion (used by director/memory extraction, not bubble playback). */

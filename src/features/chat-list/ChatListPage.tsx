@@ -8,9 +8,8 @@ import { useAppStore } from '../../store/appStore';
 import { listTimestamp } from '../../lib/time';
 import type { ConversationVM } from '../../data/types';
 import './chat-list.css';
+import { useNow } from '../../lib/useNow';
 
-// Fixed "now" for stable timestamps/screenshots in M1 (matches seed BASE).
-const NOW = 1_754_500_000_000;
 
 export function ChatListPage() {
   const all = useAppStore((s) => s.conversations);
@@ -47,6 +46,7 @@ export function ChatListPage() {
 }
 
 function ConversationRow({ conv, onOpen }: { conv: ConversationVM; onOpen: () => void }) {
+  const NOW = useNow();
   const badge = conv.unreadCount > 0;
   // Muted conversations show a small red dot instead of a numeric badge (device behavior).
   const dotOnly = conv.isMuted;

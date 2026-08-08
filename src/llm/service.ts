@@ -79,10 +79,27 @@ export function makePolicy(cfg: ResolvedConfig): RoutingPolicy {
   };
 }
 
-/** Build a router from the currently-persisted config. Rebuild after config edits. */
-export async function getRouter(): Promise<LlmRouter> {
-  const cfg = await loadConfig();
-  return new LlmRouter(makePolicy(cfg));
+let routerPromise: Promise<LlmRouter> | null = null;
+
+/**
+ * The app-wide router, built once from persisted config. A singleton is what
+ * makes the permissive-chain stickiness in LlmRouter actually stick — a fresh
+ * router per message forgets it (and re-reads config from IDB every turn).
+ */
+export function getRouter(): Promise<LlmRouter> {
+  if (!routerPromise) {
+    routerPromise = loadConfig().then((cfg) => new LlmRouter(makePolicy(cfg)));
+    // A failed load must not poison the cache forever.
+    routerPromise.catch(() => {
+      routerPromise = null;
+    });
+  }
+  return routerPromise;
+}
+
+/** Call after any provider/default/nsfw config edit so the next turn sees it. */
+export function invalidateRouter(): void {
+  routerPromise = null;
 }
 
 /** Whether at least one enabled provider has a stored key (i.e. chat can work). */
@@ -103,6 +120,8 @@ export async function testConnection(vm: ProviderVM): Promise<{ ok: boolean; mes
       messages: [{ role: 'user', content: '你好，请只回复"ok"两个字' }],
       maxTokens: 16,
       temperature: 0,
+      // A probe must answer fast or fail fast — never leave the button spinning.
+      timeoutMs: 15_000,
     });
     return { ok: true, message: res.text.slice(0, 40) || '连接成功' };
   } catch (e) {

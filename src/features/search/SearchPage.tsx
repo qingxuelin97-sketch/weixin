@@ -16,6 +16,7 @@ import { Avatar } from '../../components/Avatar';
 import { IconBack, IconSearch } from '../../components/icons';
 import { search, groupByKind, highlightParts, type SearchHit } from '../../lib/search';
 import { momentTimestamp } from '../../lib/time';
+import { useNow } from '../../lib/useNow';
 import './search.css';
 
 function Highlighted({ text, ranges }: { text: string; ranges: Array<[number, number]> }) {
@@ -44,7 +45,7 @@ export function SearchPage() {
   const moments = useAppStore((s) => s.moments);
   const loadMoments = useAppStore((s) => s.loadMoments);
   const contactById = useAppStore((s) => s.contactById);
-  const [now] = useState(() => Date.now());
+  const now = useNow();
 
   // Moments are loaded lazily elsewhere; searching them requires them present.
   useEffect(() => {

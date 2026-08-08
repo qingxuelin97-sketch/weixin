@@ -107,6 +107,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
           headers,
           body,
           signal: opts.signal,
+          timeoutMs: opts.timeoutMs,
         });
         if (res.status >= 400) {
           const errData = res.data as OpenAiResponse;

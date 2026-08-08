@@ -12,6 +12,8 @@
  * Callers get one number (`bottomInset`) and one `mode`; they never touch either source.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Keyboard } from '@capacitor/keyboard';
 
 export type ComposerMode = 'none' | 'keyboard' | 'emoji' | 'plus';
 
@@ -48,27 +50,51 @@ export function useComposerPanel(): ComposerState {
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
-  // --- Measure keyboard height (web via visualViewport) ---
+  // Shared reaction to a measured keyboard height, from either source below.
+  const applyKeyboardHeight = useCallback((kb: number) => {
+    setKeyboardH(kb);
+    if (kb > 120) {
+      // Lock panel height to the real keyboard so keyboard⇄panel never jumps.
+      setPanelHeight(kb);
+      try {
+        localStorage.setItem(PANEL_HEIGHT_KEY, String(kb));
+      } catch {
+        /* ignore */
+      }
+      if (modeRef.current !== 'keyboard') setMode('keyboard');
+    } else if (kb === 0 && modeRef.current === 'keyboard') {
+      // Keyboard dismissed by the OS (back gesture) with no panel open.
+      setMode('none');
+    }
+  }, []);
+
+  // --- Native: Capacitor Keyboard events. With resize:none the WebView viewport
+  // never changes, so visualViewport is silent on Android — these events are the
+  // ONLY height source there. (They were documented above since M1 and never
+  // wired; the input bar sat underneath the keyboard on every real device.)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let disposed = false;
+    const handles: Array<{ remove: () => Promise<void> }> = [];
+    void Keyboard.addListener('keyboardWillShow', (info) => {
+      if (!disposed) applyKeyboardHeight(Math.round(info.keyboardHeight));
+    }).then((h) => (disposed ? void h.remove() : handles.push(h)));
+    void Keyboard.addListener('keyboardWillHide', () => {
+      if (!disposed) applyKeyboardHeight(0);
+    }).then((h) => (disposed ? void h.remove() : handles.push(h)));
+    return () => {
+      disposed = true;
+      for (const h of handles) void h.remove();
+    };
+  }, [applyKeyboardHeight]);
+
+  // --- Web/WKWebView: the keyboard shrinks the visual viewport. ---
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     const onResize = () => {
       // Keyboard height ≈ layout viewport height − visual viewport height − offsetTop.
-      const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      setKeyboardH(kb);
-      if (kb > 120) {
-        // Lock panel height to the real keyboard so keyboard⇄panel never jumps.
-        setPanelHeight(kb);
-        try {
-          localStorage.setItem(PANEL_HEIGHT_KEY, String(kb));
-        } catch {
-          /* ignore */
-        }
-        if (modeRef.current !== 'keyboard') setMode('keyboard');
-      } else if (kb === 0 && modeRef.current === 'keyboard') {
-        // Keyboard dismissed by the OS (e.g. back gesture) with no panel open.
-        setMode('none');
-      }
+      applyKeyboardHeight(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
     };
     vv.addEventListener('resize', onResize);
     vv.addEventListener('scroll', onResize);
@@ -76,7 +102,7 @@ export function useComposerPanel(): ComposerState {
       vv.removeEventListener('resize', onResize);
       vv.removeEventListener('scroll', onResize);
     };
-  }, []);
+  }, [applyKeyboardHeight]);
 
   const openKeyboard = useCallback(() => {
     setMode('keyboard');

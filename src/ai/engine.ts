@@ -104,6 +104,7 @@ export async function sendUserMessage(
  * the only difference is whether a user message preceded it.
  *
  * @param extraDirective appended to the system prompt (e.g. "you're reaching out first")
+ * @param mode 'reply' answers a message the user just sent; 'proactive' opens cold
  */
 async function generateAndPlay(
   convId: string,
@@ -113,6 +114,7 @@ async function generateAndPlay(
   hooks: EngineHooks,
   ctrl: AbortController,
   extraDirective?: string,
+  mode: 'reply' | 'proactive' = 'reply',
 ): Promise<void> {
   const recent = await repo.getMessages(convId, { limit: RECENT_WINDOW });
   const facts = await repo.getMemory(peer.id);
@@ -149,10 +151,14 @@ async function generateAndPlay(
     })),
   ];
 
-  // Reading delay: a real person sees the message, thinks, THEN starts typing.
-  // Seeded on the newest message so replay is stable; abortable so a follow-up
-  // send from the user interrupts and restarts the exchange.
-  const readDelay = 1500 + seededRng(`read:${convId}:${recent.at(-1)?.id ?? 0}`)() * 6500;
+  // Pacing before 正在输入 lights up. A direct reply gets only a short "saw it"
+  // beat — the long think would read as the app hanging (real-device bug H4);
+  // the human thinking time overlaps the LLM latency behind the indicator
+  // instead of preceding it. Proactive openers keep the longer wind-up: nobody
+  // is staring at the screen waiting for those. Seeded on the newest message so
+  // replay is stable; abortable so a follow-up send interrupts cleanly.
+  const roll = seededRng(`read:${convId}:${recent.at(-1)?.id ?? 0}`)();
+  const readDelay = mode === 'reply' ? 300 + roll * 500 : 1500 + roll * 6500;
   await sleep(readDelay, ctrl.signal);
   if (ctrl.signal.aborted) return;
 
@@ -294,6 +300,7 @@ export async function sendProactiveMessage(
       (material ? `\n${material}\n` : '') +
       '找一个自然的由头开口，**不要**用"有什么可以帮你"这种客服口气，' +
       '就像真人突然想起朋友那样。1-2 条短消息即可。',
+    'proactive',
   );
 }
 

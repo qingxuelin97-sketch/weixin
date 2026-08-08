@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
 import { PRESETS } from '../../llm/presets';
-import { testConnection } from '../../llm/service';
+import { testConnection, invalidateRouter } from '../../llm/service';
 import { repo } from '../../db/repo';
 import { setSecret, hasSecret } from '../../lib/keystore';
 import type { ProviderVM } from '../../data/types';
@@ -48,6 +48,7 @@ export function ApiConfigPage() {
       await repo.putSetting('defaultProviderId', vm.id);
     }
     if (kind === 'zen') await repo.putSetting('nsfwProviderId', vm.id);
+    invalidateRouter();
     await reload();
     setEditing(vm);
     setKeyInput('');
@@ -66,21 +67,33 @@ export function ApiConfigPage() {
     if (!editing) return;
     setTesting(true);
     setTestMsg(null);
-    const r = await testConnection(editing);
-    setTesting(false);
-    setTestMsg({ ok: r.ok, text: r.message });
+    const t0 = performance.now();
+    try {
+      const r = await testConnection(editing);
+      const ms = Math.round(performance.now() - t0);
+      setTestMsg({ ok: r.ok, text: r.ok ? `${r.message}（${ms}ms）` : r.message });
+    } catch (e) {
+      // testConnection catches its own errors; this guards the button state
+      // against anything unexpected so it can never be stuck on 测试中….
+      setTestMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTesting(false);
+    }
   };
 
   const setAsDefault = async (id: string) => {
     await repo.putSetting('defaultProviderId', id);
+    invalidateRouter();
     await reload();
   };
   const setAsNsfw = async (id: string) => {
     await repo.putSetting('nsfwProviderId', id);
+    invalidateRouter();
     await reload();
   };
   const removeProvider = async (id: string) => {
     await repo.deleteProvider(id);
+    invalidateRouter();
     if (editing?.id === id) setEditing(null);
     await reload();
   };
@@ -135,7 +148,10 @@ export function ApiConfigPage() {
                 className="field__input"
                 value={editing.baseUrl}
                 onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })}
-                onBlur={() => repo.putProvider(editing)}
+                onBlur={() => {
+                  void repo.putProvider(editing);
+                  invalidateRouter();
+                }}
                 spellCheck={false}
               />
             </div>
@@ -145,7 +161,10 @@ export function ApiConfigPage() {
                 className="field__input"
                 value={editing.models.join(', ')}
                 onChange={(e) => setEditing({ ...editing, models: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-                onBlur={() => repo.putProvider(editing)}
+                onBlur={() => {
+                  void repo.putProvider(editing);
+                  invalidateRouter();
+                }}
                 spellCheck={false}
               />
             </div>

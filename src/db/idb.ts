@@ -74,8 +74,16 @@ export function openDB(): Promise<IDBDatabase> {
         }
       }
     };
+    // A stale tab/WebView holding the old version blocks the upgrade forever —
+    // without this handler every DB call (API test included) hangs silently.
+    req.onblocked = () =>
+      reject(new Error('数据库被其他页面占用，请关闭其他窗口后重试'));
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+  });
+  // A failed open must not cache the rejection forever (e.g. blocked once).
+  dbPromise.catch(() => {
+    dbPromise = null;
   });
   return dbPromise;
 }

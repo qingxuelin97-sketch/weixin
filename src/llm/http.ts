@@ -42,20 +42,24 @@ export async function httpJson(req: HttpRequest): Promise<HttpResponse> {
   const native = await nativeHttp();
 
   if (native) {
-    const timeout = withTimeout(timeoutMs, req.signal);
     try {
-      const res = await native.request({
-        url: req.url,
-        method: req.method ?? 'POST',
-        headers: { 'Content-Type': 'application/json', ...req.headers },
-        data: req.body,
-        connectTimeout: timeoutMs,
-        readTimeout: timeoutMs,
-      });
-      timeout.clear();
+      // The bridge cannot be aborted mid-flight, so the JS side must enforce the
+      // deadline itself: race the plugin promise against a real rejecting timer.
+      // Without this a hung native call awaits forever (the "测试永远卡着" bug).
+      const res = await raceDeadline(
+        native.request({
+          url: req.url,
+          method: req.method ?? 'POST',
+          headers: { 'Content-Type': 'application/json', ...req.headers },
+          data: req.body,
+          connectTimeout: timeoutMs,
+          readTimeout: timeoutMs,
+        }),
+        timeoutMs,
+        req.signal,
+      );
       return { status: res.status, data: res.data };
     } catch (e) {
-      timeout.clear();
       throw normalizeTransportError(e);
     }
   }
@@ -91,14 +95,34 @@ export async function httpJson(req: HttpRequest): Promise<HttpResponse> {
   }
 }
 
-function withTimeout(ms: number, signal?: AbortSignal) {
-  // Native bridge honors its own connect/read timeouts; this only guards the JS await.
-  const id = setTimeout(() => {
-    if (!signal?.aborted) {
-      // Native request cannot be aborted mid-flight from here; timeout surfaces on settle.
+/** Settle with the request, a timeout rejection, or an abort — whichever is first. */
+function raceDeadline<T>(p: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const timer = setTimeout(() => {
+      done();
+      reject(new LlmError('timeout', `request timed out after ${ms}ms`));
+    }, ms);
+    function onAbort() {
+      done();
+      reject(new LlmError('unknown', 'aborted'));
     }
-  }, ms);
-  return { clear: () => clearTimeout(id) };
+    signal?.addEventListener('abort', onAbort);
+    if (signal?.aborted) onAbort();
+    p.then(
+      (v) => {
+        done();
+        resolve(v);
+      },
+      (e) => {
+        done();
+        reject(e as Error);
+      },
+    );
+  });
 }
 
 function normalizeTransportError(e: unknown): LlmError {

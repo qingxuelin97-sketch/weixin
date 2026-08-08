@@ -21,11 +21,10 @@ import { repo } from '../../db/repo';
 import { canRecall } from '../../lib/recall';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
 import './chat.css';
-
-// Fixed clock for deterministic golden screenshots; live sends use Date.now().
-const NOW = 1_754_500_000_000;
+import { useNow } from '../../lib/useNow';
 
 export function ChatPage() {
+  const NOW = useNow();
   const { convId = '' } = useParams();
   const navigate = useNavigate();
   const conv = useAppStore((s) => s.conversationById(convId));
@@ -35,13 +34,33 @@ export function ChatPage() {
   const appendMessage = useAppStore((s) => s.appendMessage);
   const updateMessage = useAppStore((s) => s.updateMessage);
   const setTyping = useAppStore((s) => s.setTyping);
+  const setActiveConv = useAppStore((s) => s.setActiveConv);
+  const patchConversation = useAppStore((s) => s.patchConversation);
   const isTyping = useAppStore((s) => Boolean(s.typing[convId]));
+  // Being *in* this conversation zeroes its badge, so no per-conv exception here.
   const totalUnread = useAppStore((s) =>
-    s.conversations.reduce((n, c) => n + (c.id === convId || c.isMuted ? 0 : c.unreadCount), 0),
+    s.conversations.reduce((n, c) => n + (c.isMuted || c.isHidden ? 0 : c.unreadCount), 0),
   );
   const composer = useComposerPanel();
   const [draft, setDraft] = useState('');
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Presence: entering clears unread + mentions; leaving parks unsent text as
+  // the conversation's draft (route param changes don't remount this component).
+  // `hydrated` is a dep so a cold boot straight into a chat still gets both.
+  const hydrated = useAppStore((s) => s.hydrated);
+  useEffect(() => {
+    void setActiveConv(convId);
+    setDraft(useAppStore.getState().conversationById(convId)?.draft ?? '');
+    return () => {
+      void setActiveConv(null);
+      const text = draftRef.current.trim() || undefined;
+      const cur = useAppStore.getState().conversationById(convId);
+      if (cur && (cur.draft || undefined) !== text) void patchConversation(convId, { draft: text });
+    };
+  }, [convId, hydrated, setActiveConv, patchConversation]);
 
   /** Long-press context menu: which message, anchored where. */
   const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
