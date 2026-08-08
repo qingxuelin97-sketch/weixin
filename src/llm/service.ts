@@ -10,6 +10,7 @@ import { LlmRouter, type RoutingPolicy, type RouteRequest, type RoutePlan, type 
 import type { ProviderVM } from '../data/types';
 import { getSecret } from '../lib/keystore';
 import { repo } from '../db/repo';
+import { Capacitor } from '@capacitor/core';
 
 /** Default model per role for a provider kind (falls back to the first model). */
 function modelForRole(vm: ProviderVM, role: Role): string {
@@ -231,10 +232,21 @@ export async function diagnoseProvider(vm: ProviderVM): Promise<string[]> {
     }
   })();
   const provider = buildProvider(vm) as OpenAiCompatibleProvider;
+  // Which transport stage ② actually exercises. httpJson() only uses the native
+  // bridge when Capacitor says we are native; in a browser it silently falls
+  // back to fetch. Labelling it "原生通道" there is a guaranteed false
+  // accusation: any provider without CORS headers (Zen has none — its OPTIONS
+  // preflight 404s) makes the browser fail stage ② while ②b's no-cors probe
+  // succeeds, printing "是 App 的问题" every single time.
+  const isNative = Capacitor.isNativePlatform();
   const t2 = t();
   const [bridge, webview] = await Promise.all([
-    withDeadline(provider.listModelsLive(), 12_000).then(
-      (ids) => ({ ok: ids != null && ids.length > 0, ms: t() - t2, detail: ids ? `目录 ${ids.length} 个` : '无目录' }),
+    withDeadline(provider.probeCatalog(), 12_000).then(
+      (r) => ({
+        ok: r.ok,
+        ms: t() - t2,
+        detail: r.ok ? `目录 ${r.models.length} 个` : (r.error ?? '未知失败'),
+      }),
       (e: unknown) => ({ ok: false, ms: t() - t2, detail: msg(e) }),
     ),
     (async () => {
@@ -252,19 +264,40 @@ export async function diagnoseProvider(vm: ProviderVM): Promise<string[]> {
       }
     })(),
   ]);
-  lines.push(
-    `② 原生通道（App 发请求走的路）：${bridge.ok ? 'OK' : '失败'}（${bridge.ms}ms，${bridge.detail}）`,
-  );
-  lines.push(`②b WebView 通道（不走原生桥）：${webview.ok ? 'OK' : '失败'}（${webview.ms}ms，${webview.detail}）`);
-  if (!bridge.ok && webview.ok) {
-    lines.push('→ 判定：手机到服务商的网络是通的，但 App 的原生请求通道坏了/没发出去——是 App 的问题，不是代理的问题');
-    return lines;
+  const chan = isNative ? '原生通道（App 发请求走的路）' : '浏览器 fetch 通道（受 CORS 限制）';
+  lines.push(`② ${chan}：${bridge.ok ? 'OK' : '失败'}（${bridge.ms}ms，${bridge.detail}）`);
+  lines.push(`②b 裸可达性探针（no-cors）：${webview.ok ? 'OK' : '失败'}（${webview.ms}ms，${webview.detail}）`);
+
+  // In a browser the split below proves nothing about the App: there is no
+  // native bridge here, so stage ② is just a CORS-constrained fetch. Say that
+  // instead of blaming the App.
+  if (!isNative) {
+    lines.push('※ 当前在浏览器里运行，没有原生桥可测——② 走的是普通 fetch。');
+    if (!bridge.ok && webview.ok) {
+      lines.push(
+        '→ 判定：该域可达，② 的失败极可能只是浏览器 CORS（服务商未回 Access-Control-Allow-Origin）。' +
+          '这**不能**说明 App 有问题——装 APK 后请求走原生桥，不受 CORS 约束。请在 App 内重跑本诊断。',
+      );
+      return lines;
+    }
+    if (!bridge.ok && !webview.ok) {
+      lines.push('→ 判定：浏览器连该域都到不了——是网络/代理问题（或该域被墙），与 App 无关。');
+      return lines;
+    }
+    if (!bridge.ok) return lines;
+  } else {
+    if (!bridge.ok && webview.ok) {
+      lines.push(
+        '→ 判定：手机到服务商的网络是通的，但 App 的原生请求通道坏了/没发出去——是 App 的问题，不是代理的问题',
+      );
+      return lines;
+    }
+    if (!bridge.ok && !webview.ok) {
+      lines.push('→ 判定：两条通道都到不了该域——App 内所有网络路径都不通（代理未覆盖 WebView 与原生栈，或断网）');
+      return lines;
+    }
+    if (!bridge.ok) return lines;
   }
-  if (!bridge.ok && !webview.ok) {
-    lines.push('→ 判定：两条通道都到不了该域——App 内所有网络路径都不通（代理未覆盖 WebView 与原生栈，或断网）');
-    return lines;
-  }
-  if (!bridge.ok) return lines;
 
   // Stage 3: one-token completion (the full call path).
   const t3 = t();

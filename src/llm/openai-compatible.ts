@@ -235,21 +235,41 @@ export class OpenAiCompatibleProvider implements ChatProvider {
    * page's 拉取模型列表) use this instead of inferring from list contents.
    */
   async listModelsLive(): Promise<string[] | null> {
+    const r = await this.probeCatalog();
+    return r.ok ? r.models : null;
+  }
+
+  /**
+   * The same GET /models as listModelsLive, but it says WHY it failed instead of
+   * collapsing every outcome into null. The diagnosis page needs the reason:
+   * "无目录" alone cannot distinguish a CORS block from a 401 from a timeout
+   * from a genuinely empty catalog, which makes the whole report unactionable.
+   */
+  async probeCatalog(): Promise<{
+    ok: boolean;
+    models: string[];
+    status?: number;
+    /** Human-readable failure reason; absent on success. */
+    error?: string;
+  }> {
     try {
       const key = await this.cfg.getKey();
-      if (!key) return null;
+      if (!key) return { ok: false, models: [], error: '未保存密钥' };
       const res = await httpJson({
         url: `${this.cfg.baseUrl.replace(/\/$/, '')}/models`,
         method: 'GET',
         headers: { Authorization: `Bearer ${key}`, ...this.cfg.extraHeaders },
         timeoutMs: 15_000,
       });
-      if (res.status >= 400) return null;
+      if (res.status >= 400) {
+        return { ok: false, models: [], status: res.status, error: `HTTP ${res.status}` };
+      }
       const data = (res.data as { data?: Array<{ id?: string }> })?.data;
       const ids = (data ?? []).map((m) => m.id).filter((x): x is string => typeof x === 'string' && !!x);
-      return ids.length ? ids : null;
-    } catch {
-      return null;
+      if (!ids.length) return { ok: false, models: [], status: res.status, error: '目录为空' };
+      return { ok: true, models: ids, status: res.status };
+    } catch (e) {
+      return { ok: false, models: [], error: e instanceof Error ? e.message : String(e) };
     }
   }
 
