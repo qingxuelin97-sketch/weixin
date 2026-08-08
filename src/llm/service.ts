@@ -219,24 +219,54 @@ export async function diagnoseProvider(vm: ProviderVM): Promise<string[]> {
   }
   if (!key) return lines;
 
-  // Stage 2: catalog GET (pure network reachability + auth).
-  const provider = buildProvider(vm) as OpenAiCompatibleProvider;
+  // Stage 2: the SAME origin probed over BOTH transports in parallel. This is
+  // the decisive split the user asked for — "did the request even leave the
+  // app?": the WebView's own fetch (no-cors, no native bridge) proves whether
+  // packets can reach the host at all, independent of the CapacitorHttp path.
+  const origin = (() => {
+    try {
+      return new URL(vm.baseUrl).origin;
+    } catch {
+      return vm.baseUrl;
+    }
+  })();
   const t2 = t();
-  try {
-    const ids = await withDeadline(provider.listModelsLive(), 12_000);
-    lines.push(
-      ids && ids.length
-        ? `② 连接服务商 OK（${t() - t2}ms，目录 ${ids.length} 个模型）`
-        : `② 连接服务商：请求完成但没拿到目录（${t() - t2}ms）——多半是密钥无效或服务商不支持 /models`,
-    );
-    if (!ids?.length) return lines;
-  } catch (e) {
-    lines.push(
-      `② 连接服务商超时/失败（${t() - t2}ms）：${msg(e)}` +
-        '\n→ 手机浏览器能开该网站但这里超时 = 代理没覆盖本应用：把代理切到 VPN/全局模式，或在分应用代理里勾选本应用',
-    );
+  const [bridge, webview] = await Promise.all([
+    withDeadline(
+      (buildProvider(vm) as OpenAiCompatibleProvider).listModelsLive(),
+      12_000,
+    ).then(
+      (ids) => ({ ok: ids != null && ids.length > 0, ms: t() - t2, detail: ids ? `目录 ${ids.length} 个` : '无目录' }),
+      (e: unknown) => ({ ok: false, ms: t() - t2, detail: msg(e) }),
+    ),
+    (async () => {
+      const tw = t();
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 10_000);
+        // no-cors: an opaque response still RESOLVES when the host answered —
+        // reachability signal without CORS noise.
+        await fetch(origin, { mode: 'no-cors', signal: ctrl.signal });
+        clearTimeout(timer);
+        return { ok: true, ms: t() - tw, detail: '有响应' };
+      } catch (e) {
+        return { ok: false, ms: t() - tw, detail: msg(e) };
+      }
+    })(),
+  ]);
+  lines.push(
+    `② 原生通道（App 发请求走的路）：${bridge.ok ? 'OK' : '失败'}（${bridge.ms}ms，${bridge.detail}）`,
+  );
+  lines.push(`②b WebView 通道（不走原生桥）：${webview.ok ? 'OK' : '失败'}（${webview.ms}ms，${webview.detail}）`);
+  if (!bridge.ok && webview.ok) {
+    lines.push('→ 判定：手机到服务商的网络是通的，但 App 的原生请求通道坏了/没发出去——是 App 的问题，不是代理的问题');
     return lines;
   }
+  if (!bridge.ok && !webview.ok) {
+    lines.push('→ 判定：两条通道都到不了该域——App 内所有网络路径都不通（代理未覆盖 WebView 与原生栈，或断网）');
+    return lines;
+  }
+  if (!bridge.ok) return lines;
 
   // Stage 3: one-token completion (the full call path).
   const t3 = t();
