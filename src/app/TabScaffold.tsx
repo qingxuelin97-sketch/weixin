@@ -14,7 +14,7 @@ export function TabScaffold() {
   const location = useLocation();
   const navigate = useNavigate();
   const totalUnread = useAppStore((s) =>
-    s.conversations.reduce((n, c) => n + (c.isMuted ? 0 : c.unreadCount), 0),
+    s.conversations.reduce((n, c) => n + (c.isMuted || c.isHidden ? 0 : c.unreadCount), 0),
   );
 
   return (

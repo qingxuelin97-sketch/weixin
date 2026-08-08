@@ -142,6 +142,11 @@ export function search(input: SearchInput, queryRaw: string): SearchHit[] {
   const query = queryRaw.trim();
   if (!query) return [];
 
+  // Hidden conversations (AI↔AI DMs) are excluded HERE, not in the UI layer:
+  // a caller that forgets to pre-filter must still be unable to leak a private
+  // AI exchange into results — that tell would be irreversible.
+  const hiddenIds = new Set(input.conversations.filter((c) => c.isHidden).map((c) => c.id));
+
   const hits: SearchHit[] = [];
   const newest = Math.max(
     0,
@@ -179,6 +184,7 @@ export function search(input: SearchInput, queryRaw: string): SearchHit[] {
   // --- Conversations: match the title ---
   const convHits: SearchHit[] = [];
   for (const c of input.conversations) {
+    if (c.isHidden) continue;
     const r = findRanges(c.title, query);
     if (r.length === 0) continue;
     convHits.push({
@@ -197,6 +203,7 @@ export function search(input: SearchInput, queryRaw: string): SearchHit[] {
   const convTitle = new Map(input.conversations.map((c) => [c.id, c.title]));
   const msgHits: SearchHit[] = [];
   for (const [convId, list] of Object.entries(input.messages)) {
+    if (hiddenIds.has(convId)) continue;
     for (const m of list) {
       // A recalled message shows no text in the UI; finding it by its original
       // content would leak what was withdrawn.

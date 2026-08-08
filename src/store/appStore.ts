@@ -55,6 +55,8 @@ interface AppState {
   appendMessage: (msg: Omit<MessageVM, 'id'>) => Promise<MessageVM>;
   updateMessage: (msg: MessageVM) => Promise<void>;
   patchConversation: (id: string, patch: Partial<ConversationVM>) => Promise<void>;
+  /** Insert a conversation (used for hidden AI↔AI DM threads). Idempotent by id. */
+  addConversation: (c: ConversationVM) => Promise<void>;
   putPersona: (p: PersonaVM) => Promise<void>;
   putContact: (c: ContactVM) => Promise<void>;
   loadMoments: () => Promise<void>;
@@ -179,6 +181,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({
       conversations: s.conversations.map((c) => (c.id === id ? next : c)).sort(sortConversations),
     }));
+  },
+
+  addConversation: async (c) => {
+    await repo.putConversation(c);
+    set((s) =>
+      s.conversations.some((x) => x.id === c.id)
+        ? s
+        : { conversations: [...s.conversations, c].sort(sortConversations) },
+    );
   },
 
   putPersona: async (p) => {

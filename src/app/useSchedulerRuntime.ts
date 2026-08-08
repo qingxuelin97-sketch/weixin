@@ -9,7 +9,9 @@ import {
   startScheduler,
   stopScheduler,
   hasPendingFor,
+  hasPendingOfKind,
   duePending,
+  enqueue,
 } from '../ai/scheduler';
 import { claimRedPacket, acceptTransfer } from '../ai/money-service';
 import { sendProactiveMessage } from '../ai/engine';
@@ -18,6 +20,8 @@ import { scheduleHeartbeat } from '../ai/heartbeat';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
+import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
+import { getRouter } from '../llm/service';
 import { syncNotifications } from '../ai/notify-service';
 import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
@@ -130,7 +134,48 @@ export function useSchedulerRuntime(enabled: boolean): void {
       if (!speaker?.persona) return;
 
       const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-      await sendGroupProactiveMessage(conv, speaker, members, tier, hooks, s.contactById, at);
+      const hint = typeof payload.hint === 'string' ? payload.hint : undefined;
+      await sendGroupProactiveMessage(conv, speaker, members, tier, hooks, s.contactById, at, hint);
+    });
+
+    // Two agents have a private exchange the user never sees; its gossip lands
+    // in both memories and maybe spills a starter into their shared group.
+    registerHandler('agent_dm', async (payload) => {
+      const plan: DmPlan = {
+        a: String(payload.a ?? ''),
+        b: String(payload.b ?? ''),
+        groupId: String(payload.groupId ?? ''),
+        fireAt: Number(payload.fireAt ?? Date.now()),
+      };
+      if (!plan.a || !plan.b || !plan.groupId) return;
+      const s = useAppStore.getState();
+      const router = await getRouter();
+      await runAgentDm(plan, {
+        getPersona: s.personaFor,
+        getContact: s.contactById,
+        getConversation: (id) => repo.getConversation(id),
+        addConversation: s.addConversation,
+        appendMessage: s.appendMessage,
+        putMemory: (f) => repo.putMemory(f),
+        getMemoryFacts: (id) => repo.getMemory(id),
+        getGroupMessages: (id) => repo.getMessages(id, { limit: 8 }),
+        getMoments: () => repo.getMoments({ limit: 10 }),
+        complete: async (messages, convKey) =>
+          (await router.complete({ role: 'chat', nsfwTier: 'off' }, { messages }, {}, convKey)).text,
+        enqueueGroupSpill: async (groupId, speakerId, hint, at) => {
+          await enqueue({
+            kind: 'group_msg',
+            fireAt: at,
+            payload: { convId: groupId, contactId: speakerId, hint },
+            now: Date.now(),
+            id: `dmspill_${groupId}_${speakerId}_${at}`,
+          });
+        },
+        now: () => Date.now(),
+      });
+      // Chain the next session regardless of outcome — one failed exchange
+      // must not end the whole mechanism.
+      await scheduleNextAgentDm();
     });
 
     const momentsHooks = {
@@ -231,10 +276,46 @@ async function foregroundPass(): Promise<void> {
     }
   }
 
-  // 3) Rebuild the lock-screen notifications from the (now current) queue.
+  // 3) Seed the first AI↔AI DM session if none is queued.
+  try {
+    if (!(await hasPendingOfKind('agent_dm'))) await scheduleNextAgentDm();
+  } catch {
+    /* chemistry is a bonus; never block the foreground path on it */
+  }
+
+  // 4) Rebuild the lock-screen notifications from the (now current) queue.
   try {
     await syncNotifications(await duePending(Number.MAX_SAFE_INTEGER), s.contacts, now);
   } catch {
     /* notifications are a bonus; never let them break the foreground path */
   }
+}
+
+
+/**
+ * Queue the next AI↔AI DM session. The 8–20h seeded gap inside planNextDm is
+ * the entire daily budget — no counter needed. No-op when no two persona-backed
+ * agents share a group.
+ */
+async function scheduleNextAgentDm(): Promise<void> {
+  const s = useAppStore.getState();
+  const roster = s.contacts
+    .filter((c) => c.type === 'ai')
+    .flatMap((c) => {
+      const persona = s.personaFor(c.id);
+      return persona ? [{ contactId: c.id, persona }] : [];
+    });
+  const groups = s.conversations
+    .filter((c) => c.type === 'group' && !c.isHidden)
+    .map((c) => ({ convId: c.id, memberIds: c.memberIds ?? [] }));
+  const now = Date.now();
+  const plan = planNextDm(roster, groups, now, 'dm');
+  if (!plan) return;
+  await enqueue({
+    kind: 'agent_dm',
+    fireAt: plan.fireAt,
+    payload: { ...plan },
+    now,
+    id: `dm_${plan.a}_${plan.b}_${plan.fireAt}`,
+  });
 }

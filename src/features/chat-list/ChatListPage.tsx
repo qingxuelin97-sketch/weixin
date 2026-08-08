@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { NavBar } from '../../components/NavBar';
@@ -12,7 +13,9 @@ import './chat-list.css';
 const NOW = 1_754_500_000_000;
 
 export function ChatListPage() {
-  const conversations = useAppStore((s) => s.conversations);
+  const all = useAppStore((s) => s.conversations);
+  // Hidden (AI↔AI DM) conversations must never surface here.
+  const conversations = useMemo(() => all.filter((c) => !c.isHidden), [all]);
   const navigate = useNavigate();
   const totalUnread = conversations.reduce((n, c) => n + (c.isMuted ? 0 : c.unreadCount), 0);
 

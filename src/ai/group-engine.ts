@@ -273,6 +273,8 @@ export async function sendGroupProactiveMessage(
   hooks: EngineHooks,
   contactById: (id: string) => ContactVM | undefined,
   at?: number,
+  /** Topic steer (≤20 chars) — e.g. what an off-screen DM was about. */
+  hint?: string,
 ): Promise<void> {
   if (!speaker.persona) return;
   // Never talk over a live exchange in this group.
@@ -290,7 +292,7 @@ export async function sendGroupProactiveMessage(
       conv,
       speaker,
       // No director ran, so hand it a neutral plan: start something, don't reply.
-      { agentId: speaker.contactId, intent: 'newtopic', priority: 0 },
+      { agentId: speaker.contactId, intent: 'newtopic', priority: 0, hint },
       recent,
       members.map((m) => m.name),
       globalTier,

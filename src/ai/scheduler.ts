@@ -59,6 +59,12 @@ export async function markDone(a: ScheduledAction): Promise<void> {
   await idbPut('scheduled_actions', { ...a, status: 'done' });
 }
 
+/** Is ANY action of this kind still pending? Used for roster-wide schedules (agent DMs). */
+export async function hasPendingOfKind(kind: ActionKind): Promise<boolean> {
+  const all = await idbGetAll<ScheduledAction>('scheduled_actions');
+  return all.some((a) => a.status === 'pending' && a.kind === kind);
+}
+
 /**
  * Is an action of this kind already queued for this contact? Used on startup so
  * re-opening the app tops up missing schedules without stacking duplicates on

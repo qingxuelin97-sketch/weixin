@@ -340,6 +340,7 @@ export const SCHEDULED_ACTION_KINDS = [
   'moment_like',
   'moment_comment',
   'group_msg',
+  'agent_dm',
   'recall',
   'story_tick',
 ] as const;

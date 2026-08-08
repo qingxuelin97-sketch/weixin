@@ -43,6 +43,12 @@ export interface ConversationVM {
   memberIds?: string[];
   isPinned: boolean;
   isMuted: boolean;
+  /**
+   * Hidden conversations (AI↔AI DMs) never surface in the chat list, unread
+   * counts, tab badge, or search — the user senses them only through their
+   * effects (gossip in group chat). Leaking one is an irreversible tell.
+   */
+  isHidden?: boolean;
   unreadCount: number;
   mentionMe: boolean;
   draft?: string;
