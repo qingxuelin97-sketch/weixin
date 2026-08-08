@@ -87,12 +87,13 @@ const GROUPS: Array<Array<{ key: string; label: string }>> = [
 
 export function MePage() {
   const me = useAppStore((s) => s.contactById('self'));
+  const showToast = useAppStore((s) => s.showToast);
   const navigate = useNavigate();
   return (
     <>
       <NavBar title="" />
       <div className="page-body me">
-        <div className="me__header">
+        <div className="me__header" onClick={() => navigate('/profile')} role="button">
           <Avatar color={me?.avatarColor ?? 'var(--color-brand)'} text={me?.avatarText ?? '我'} size={64} />
           <div className="me__id">
             <div className="me__name">{me?.name ?? '我'}</div>
@@ -100,8 +101,22 @@ export function MePage() {
               <span className="me__wxid">微信号：{me?.wxid ?? '—'}</span>
             </div>
             <div className="me__pills">
-              <button className="me__pill">＋ 状态</button>
-              <button className="me__pill">
+              <button
+                className="me__pill"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  showToast('暂未开放');
+                }}
+              >
+                ＋ 状态
+              </button>
+              <button
+                className="me__pill"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate('/moments');
+                }}
+              >
                 朋友圈
                 <span className="me__pill-dot" />
               </button>
@@ -121,6 +136,8 @@ export function MePage() {
                 onClick={() => {
                   if (e.key === 'settings') navigate('/settings');
                   else if (e.key === 'service') navigate('/wallet');
+                  else if (e.key === 'album') navigate('/moments');
+                  else showToast('暂未开放');
                 }}
               >
                 <MIcon kind={e.key} />

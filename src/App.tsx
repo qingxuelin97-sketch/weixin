@@ -2,10 +2,12 @@ import { useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { TabScaffold } from './app/TabScaffold';
+import { Toast } from './components/Toast';
 import { ChatListPage } from './features/chat-list/ChatListPage';
 import { ContactsPage } from './features/contacts/ContactsPage';
 import { DiscoverPage } from './features/discover/DiscoverPage';
 import { MePage } from './features/me/MePage';
+import { ProfilePage } from './features/me/ProfilePage';
 import { ChatPage } from './features/chat/ChatPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ApiConfigPage } from './features/settings/ApiConfigPage';
@@ -75,6 +77,7 @@ export function App() {
               <Route path="/search" element={<SearchPage />} />
               <Route path="/moments" element={<MomentsPage />} />
               <Route path="/moments/publish" element={<MomentPublishPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/settings/api" element={<ApiConfigPage />} />
               <Route path="/settings/backup" element={<BackupPage />} />
@@ -88,6 +91,7 @@ export function App() {
             </Routes>
           )}
         </ErrorBoundary>
+        <Toast />
       </div>
     </HashRouter>
   );

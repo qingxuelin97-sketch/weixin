@@ -73,6 +73,7 @@ const INDEX_RAIL = ['↑', '☆', 'A', 'C', 'L', 'M', '#'];
 
 export function ContactsPage() {
   const navigate = useNavigate();
+  const showToast = useAppStore((s) => s.showToast);
   // Select the STABLE array reference, then derive — a selector that returns a
   // fresh array (`.filter`) each call makes useSyncExternalStore loop (React #185).
   const allContacts = useAppStore((s) => s.contacts);
@@ -89,7 +90,7 @@ export function ContactsPage() {
             <button className="navbar__btn" aria-label="搜索" onClick={() => navigate('/search')}>
               <IconSearch />
             </button>
-            <button className="navbar__btn" aria-label="添加">
+            <button className="navbar__btn" aria-label="添加" onClick={() => showToast('新建 AI 好友即将上线')}>
               <IconPlus />
             </button>
           </>
@@ -98,7 +99,25 @@ export function ContactsPage() {
       <div className="page-body contacts">
         <div className="contacts__functions">
           {FUNCTION_ENTRIES.map((f) => (
-            <div key={f.key} className="contacts__row">
+            <div
+              key={f.key}
+              className="contacts__row"
+              role="button"
+              onClick={() => {
+                // 群聊 opens the (single) seeded group; the rest are honest
+                // about being shells instead of silently ignoring the tap.
+                if (f.key === 'group') {
+                  const group = useAppStore
+                    .getState()
+                    .conversations.find((c) => c.type === 'group' && !c.isHidden);
+                  if (group) {
+                    navigate(`/chat/${group.id}`);
+                    return;
+                  }
+                }
+                showToast('暂未开放');
+              }}
+            >
               <div className="contacts__fn-icon" style={{ background: f.color }}>
                 <FnGlyph kind={f.glyph} />
               </div>

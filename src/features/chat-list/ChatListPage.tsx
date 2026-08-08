@@ -13,6 +13,7 @@ import { useNow } from '../../lib/useNow';
 
 export function ChatListPage() {
   const all = useAppStore((s) => s.conversations);
+  const showToast = useAppStore((s) => s.showToast);
   // Hidden (AI↔AI DM) conversations must never surface here.
   const conversations = useMemo(() => all.filter((c) => !c.isHidden), [all]);
   const navigate = useNavigate();
@@ -27,7 +28,7 @@ export function ChatListPage() {
             <button className="navbar__btn" aria-label="搜索" onClick={() => navigate('/search')}>
               <IconSearch />
             </button>
-            <button className="navbar__btn" aria-label="更多">
+            <button className="navbar__btn" aria-label="更多" onClick={() => showToast('暂未开放')}>
               <IconPlus />
             </button>
           </>

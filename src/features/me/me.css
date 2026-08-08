@@ -100,3 +100,27 @@
   color: var(--color-text-placeholder);
   font-size: 20px;
 }
+
+/* Profile editor (/profile) */
+.profile__preview {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0 16px;
+}
+.profile__palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px 16px;
+  background: var(--color-cell-bg);
+}
+.profile__swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+.profile__swatch--active {
+  border-color: var(--color-text-primary);
+  transform: scale(1.12);
+}

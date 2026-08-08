@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { NavBar } from '../../components/NavBar';
 import { IconPlus, IconSearch } from '../../components/icons';
+import { useAppStore } from '../../store/appStore';
 import './discover.css';
 
 /**
@@ -154,11 +155,12 @@ const SECTIONS: Row[][] = [
   [{ key: 'miniapp', label: '小程序' }],
 ];
 
-/** Only 朋友圈 navigates; the rest are visual shells until their milestone. */
-const ROUTES: Record<string, string> = { moments: '/moments' };
+/** Only 朋友圈 navigates; the rest toast honestly instead of eating the tap. */
+const ROUTES: Record<string, string> = { moments: '/moments', search: '/search' };
 
 export function DiscoverPage() {
   const navigate = useNavigate();
+  const showToast = useAppStore((s) => s.showToast);
   return (
     <>
       <NavBar
@@ -168,7 +170,7 @@ export function DiscoverPage() {
             <button className="navbar__btn" aria-label="搜索" onClick={() => navigate('/search')}>
               <IconSearch />
             </button>
-            <button className="navbar__btn" aria-label="更多">
+            <button className="navbar__btn" aria-label="更多" onClick={() => showToast('暂未开放')}>
               <IconPlus />
             </button>
           </>
@@ -181,9 +183,11 @@ export function DiscoverPage() {
               <div
                 key={entry.key}
                 className={`discover__row${j < section.length - 1 ? ' hairline-bottom' : ''}`}
-                role={ROUTES[entry.key] ? 'button' : undefined}
-                tabIndex={ROUTES[entry.key] ? 0 : undefined}
-                onClick={() => ROUTES[entry.key] && navigate(ROUTES[entry.key])}
+                role="button"
+                tabIndex={0}
+                onClick={() =>
+                  ROUTES[entry.key] ? navigate(ROUTES[entry.key]) : showToast('暂未开放')
+                }
               >
                 <DIcon kind={entry.key} />
                 <span className="discover__label">{entry.label}</span>

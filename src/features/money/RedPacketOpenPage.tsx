@@ -44,7 +44,7 @@ export function RedPacketOpenPage() {
   const open = async () => {
     if (!rp || flipping || emptied) return;
     setFlipping(true);
-    const claim = await claimRedPacket(rp.id, 'self', '我', {
+    const claim = await claimRedPacket(rp.id, 'self', contactById('self')?.name ?? '我', {
       appendMessage,
       updateMessage,
       now: () => Date.now(),

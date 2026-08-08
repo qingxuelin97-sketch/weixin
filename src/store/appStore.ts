@@ -40,6 +40,9 @@ interface AppState {
    * don't count as unread; entering clears the badge. Null when off any chat.
    */
   activeConvId: string | null;
+  /** Transient feedback line ("暂未开放" etc.). Null = hidden. */
+  toast: string | null;
+  showToast: (msg: string) => void;
 
   /** Moments feed, newest first. Loaded lazily — the feed is not on the hot path. */
   moments: MomentVM[];
@@ -90,6 +93,8 @@ const SEED_BASE = 1_754_500_000_000;
 
 // Module-level so two near-simultaneous hydrate() calls can't seed twice.
 let hydrateInFlight = false;
+
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 type Set = (partial: Partial<AppState>) => void;
 type Get = () => AppState;
@@ -153,6 +158,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   personas: {},
   typing: {},
   activeConvId: null,
+  toast: null,
   moments: [],
   momentsLoaded: false,
   momentLikes: {},
@@ -179,6 +185,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     } finally {
       hydrateInFlight = false;
     }
+  },
+
+  showToast: (msg) => {
+    set({ toast: msg });
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => set({ toast: null }), 2_000);
   },
 
   setActiveConv: async (convId) => {

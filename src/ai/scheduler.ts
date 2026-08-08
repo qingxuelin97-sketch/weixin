@@ -78,12 +78,23 @@ export async function hasPendingOfKind(kind: ActionKind): Promise<boolean> {
  * Is an action of this kind already queued for this contact? Used on startup so
  * re-opening the app tops up missing schedules without stacking duplicates on
  * the ones already waiting.
+ *
+ * Matches the PARSED `contactId` field, not a substring — substring matching
+ * false-positived on any payload merely mentioning the id (an agent_dm names
+ * two agents; a hint can quote anyone). One-off extras (`nudge: true`) don't
+ * count either: a pending nudge must not suppress the standing heartbeat chain.
  */
 export async function hasPendingFor(kind: ActionKind, contactId: string): Promise<boolean> {
   const all = await idbGetAll<ScheduledAction>('scheduled_actions');
-  return all.some(
-    (a) => a.status === 'pending' && a.kind === kind && a.payloadJson.includes(`"${contactId}"`),
-  );
+  return all.some((a) => {
+    if (a.status !== 'pending' || a.kind !== kind) return false;
+    try {
+      const p = JSON.parse(a.payloadJson) as Record<string, unknown>;
+      return p.contactId === contactId && p.nudge !== true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Handlers are registered by the app shell so this module stays dependency-free. */
@@ -98,6 +109,13 @@ export function registerHandler(kind: ActionKind, fn: ActionHandler): void {
 let running = false;
 
 /**
+ * Kinds where seconds matter (a red-packet grab races the user's thumb). They
+ * drain before any LLM-bound kind: a backfill batch of 8 slow generations in
+ * front would otherwise stall a grab by minutes.
+ */
+const FAST_KINDS: ReadonlySet<ActionKind> = new Set(['rp_grab', 'transfer_accept']);
+
+/**
  * Execute every past-due action once. Re-entrant-safe: a slow handler can't cause
  * a second tick to double-fire the same row.
  */
@@ -106,7 +124,12 @@ export async function runDueActions(now: number): Promise<number> {
   running = true;
   let n = 0;
   try {
-    for (const action of await duePending(now)) {
+    const due = (await duePending(now)).sort((a, b) => {
+      const fa = FAST_KINDS.has(a.kind) ? 0 : 1;
+      const fb = FAST_KINDS.has(b.kind) ? 0 : 1;
+      return fa - fb || a.fireAt - b.fireAt;
+    });
+    for (const action of due) {
       const fn = handlers.get(action.kind);
       // Mark done BEFORE running so a throwing handler can't loop forever.
       await markDone(action);

@@ -1,0 +1,17 @@
+.toast {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  max-width: 70%;
+  padding: 12px 18px;
+  border-radius: 8px;
+  background: var(--color-toast-bg);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-sub);
+  text-align: center;
+  line-height: 1.4;
+  pointer-events: none;
+  word-break: break-word;
+}

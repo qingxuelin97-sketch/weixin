@@ -61,7 +61,9 @@ export async function sendGroupMessage(
     const recent = await repo.getMessages(convId, { limit: RECENT_WINDOW });
     const now = hooks.now();
     const nameOf = (id: string) =>
-      id === 'self' ? '我' : (contactById(id)?.remark ?? contactById(id)?.name ?? id);
+      id === 'self'
+        ? (contactById('self')?.name ?? '我')
+        : (contactById(id)?.remark ?? contactById(id)?.name ?? id);
 
     // 1) Cheap rules first — often skips the director entirely.
     const pre = prefilter(members, recent, now, `${convId}:${now}`);
@@ -286,7 +288,9 @@ export async function sendGroupProactiveMessage(
     const stamp = at ?? hooks.now();
     const recent = await repo.getMessages(conv.id, { limit: RECENT_WINDOW });
     const nameOf = (id: string) =>
-      id === 'self' ? '我' : (contactById(id)?.remark ?? contactById(id)?.name ?? id);
+      id === 'self'
+        ? (contactById('self')?.name ?? '我')
+        : (contactById(id)?.remark ?? contactById(id)?.name ?? id);
 
     const bubbles = await generateActorLines(
       conv,

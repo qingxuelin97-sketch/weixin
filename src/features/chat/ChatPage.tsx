@@ -13,6 +13,7 @@ import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
 import { useAppStore } from '../../store/appStore';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
+import { hasUsableProvider } from '../../llm/service';
 import { sendUserMessage } from '../../ai/engine';
 import { sendGroupMessage } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
@@ -36,6 +37,7 @@ export function ChatPage() {
   const setTyping = useAppStore((s) => s.setTyping);
   const setActiveConv = useAppStore((s) => s.setActiveConv);
   const patchConversation = useAppStore((s) => s.patchConversation);
+  const showToast = useAppStore((s) => s.showToast);
   const isTyping = useAppStore((s) => Boolean(s.typing[convId]));
   // Being *in* this conversation zeroes its badge, so no per-conv exception here.
   const totalUnread = useAppStore((s) =>
@@ -61,6 +63,19 @@ export function ChatPage() {
       if (cur && (cur.draft || undefined) !== text) void patchConversation(convId, { draft: text });
     };
   }, [convId, hydrated, setActiveConv, patchConversation]);
+
+  // 防呆 (#5/#16): a chat with no usable provider looks "broken" — every send
+  // gets the persona refusal line. Say why, and link straight to the fix.
+  const [noProvider, setNoProvider] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void hasUsableProvider()
+      .then((ok) => alive && setNoProvider(!ok))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [convId]);
 
   /** Long-press context menu: which message, anchored where. */
   const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
@@ -173,11 +188,24 @@ export function ChatPage() {
           {isTyping ? '对方正在输入…' : conv.title}
         </div>
         <div className="navbar__right">
-          <button className="navbar__btn" aria-label="更多">
+          <button className="navbar__btn" aria-label="更多" onClick={() => showToast('暂未开放')}>
             <IconMore />
           </button>
         </div>
       </header>
+
+      {noProvider && (
+        <div
+          className="chat-banner hairline-bottom"
+          role="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate('/settings/api');
+          }}
+        >
+          未配置 API key，对方无法回复 · 点此去配置 ›
+        </div>
+      )}
 
       {isGroup && conv.announcement && (
         <div className="group-announce hairline-bottom" onClick={(e) => e.stopPropagation()}>
@@ -250,7 +278,7 @@ export function ChatPage() {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="composer__bar">
-          <button className="composer__icon" aria-label="语音">
+          <button className="composer__icon" aria-label="语音" onClick={() => showToast('语音消息暂未开放')}>
             <IconVoiceCircle />
           </button>
           <div className="composer__pill">
@@ -269,7 +297,7 @@ export function ChatPage() {
               }}
               placeholder=""
             />
-            <button className="composer__mic" aria-label="语音输入">
+            <button className="composer__mic" aria-label="语音输入" onClick={() => showToast('语音输入暂未开放')}>
               <IconMicSmall />
             </button>
           </div>
@@ -289,10 +317,15 @@ export function ChatPage() {
         <ComposerPanels
           mode={composer.mode}
           height={composer.panelHeight}
+          // WeChat has no group transfer either — greyed, not hidden.
+          disabledKeys={isGroup ? ['transfer'] : []}
           onAction={(key) => {
             if (key === 'redpacket') navigate(`/rp/send/${convId}`);
             else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
+            else showToast('暂未开放');
           }}
+          onEmoji={(e) => setDraft((d) => d + e)}
+          onEmojiDelete={() => setDraft((d) => Array.from(d).slice(0, -1).join(''))}
         />
       </div>
     </div>

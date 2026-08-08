@@ -452,6 +452,14 @@
   align-items: center;
   justify-content: center;
 }
+.emoji-grid__item:active {
+  background: var(--color-cell-bg-pressed);
+  border-radius: 6px;
+}
+.emoji-grid__del {
+  font-size: 20px;
+  color: var(--color-text-secondary);
+}
 .plus-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -472,6 +480,25 @@
 .plus-grid__label {
   font-size: var(--fs-timestamp);
   color: var(--color-text-secondary);
+}
+.plus-grid__item:active .plus-grid__icon {
+  filter: brightness(0.92);
+}
+.plus-grid__item--disabled {
+  opacity: 0.35;
+}
+
+/* Unconfigured-API guide banner (防呆): shown until a provider has a key. */
+.chat-banner {
+  flex: none;
+  padding: 8px 14px;
+  background: var(--color-cell-bg);
+  color: var(--color-link);
+  font-size: var(--fs-cell-sub);
+  text-align: center;
+}
+.chat-banner:active {
+  background: var(--color-cell-bg-pressed);
 }
 
 /* Long-press context menu — WeChat's dark capsule. */

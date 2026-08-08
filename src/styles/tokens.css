@@ -68,6 +68,7 @@
   --color-nav-title: var(--wx-ink);
   --color-cell-bg: var(--wx-cell);
   --color-cell-bg-pressed: var(--wx-cell-pressed);
+  --color-page-pressed: var(--wx-page-pressed);
   --color-pinned-bg: var(--wx-pinned);
   --color-hairline: var(--wx-hairline);
 
@@ -109,6 +110,7 @@
   --color-quote-block: var(--wx-quote-gray);
   --color-overlay: rgba(0, 0, 0, 0.5);
   --color-menu-bg: #4c4c4c; /* long-press dark menu */
+  --color-toast-bg: rgba(0, 0, 0, 0.75); /* centered transient toast */
   --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */
   --color-on-color-divider: rgba(255, 255, 255, 0.2); /* hairline on a colored surface */
   --color-on-color-fill: rgba(255, 255, 255, 0.25); /* translucent chip on a colored surface */
