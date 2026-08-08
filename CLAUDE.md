@@ -120,6 +120,18 @@ src/
   `actionExists(id)`——否则会把已完成的行覆写回 pending，无限重发。
 - **隐藏会话（AI↔AI 私信）的过滤做在 `search()` 内部**，不是 UI 层。UI 忘传也漏不出去。
   新增用户可见面（如导出预览、通知）时想一下：隐藏会话进去了吗？泄漏即穿帮且不可逆。
+- **原生桥的"超时"必须是真拒绝**：CapacitorHttp 无法从 JS 中断，曾经的超时守卫是个
+  回调体为空的 setTimeout——挂起的桥调用就永远 await（真机"测试连接"卡死）。凡包装
+  不可中断的原生 Promise，都要 `Promise.race` 一个**会 reject** 的定时器。
+- **AudioContext 每次退后台都会被 Android 重新挂起**，且 `resume()` 是异步——在挂起态
+  排 240ms 的音窗=永远无声。播放前 `await resume()`，回前台再 `resumeAudio()`；
+  一次性的 `unlocked` 标志挡不住第二次挂起。
+- **CryptoKey 经 JSON 序列化变 `{}`**：备份导出 settings 全表就会把主密钥导成空壳，
+  恢复写回后 keystore 永久损坏。设备本地密钥行要行级排除（导出滤掉、恢复保本机），
+  读取时用 `instanceof CryptoKey` 校验而不是 truthiness——空壳是 truthy 的。
+- **不要为"截图稳定"冻结业务时钟**：组件里硬编码 NOW 常量意味着真机上所有相对时间戳
+  永远错（diffDays 为负渲染成「星期六」）。确定性归测试侧：Playwright
+  `page.clock.setFixedTime(种子纪元)`，业务代码用真实时钟（`useNow()` 分钟级 tick）。
 
 ## 4. 每个 feature 一份 spec
 

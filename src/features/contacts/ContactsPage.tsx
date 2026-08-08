@@ -90,7 +90,7 @@ export function ContactsPage() {
             <button className="navbar__btn" aria-label="搜索" onClick={() => navigate('/search')}>
               <IconSearch />
             </button>
-            <button className="navbar__btn" aria-label="添加" onClick={() => showToast('新建 AI 好友即将上线')}>
+            <button className="navbar__btn" aria-label="添加" onClick={() => navigate('/contact-new')}>
               <IconPlus />
             </button>
           </>
@@ -134,7 +134,7 @@ export function ContactsPage() {
                 name={cc.remark ?? cc.name}
                 color={cc.avatarColor}
                 text={cc.avatarText}
-                onClick={() => navigate(`/persona/${cc.id}`)}
+                onClick={() => navigate(`/contact/${cc.id}`)}
               />
             ))}
           </div>
@@ -148,7 +148,7 @@ export function ContactsPage() {
                 name={cc.remark ?? cc.name}
                 color={cc.avatarColor}
                 text={cc.avatarText}
-                onClick={() => navigate(`/persona/${cc.id}`)}
+                onClick={() => navigate(`/contact/${cc.id}`)}
               />
             ))}
           </div>

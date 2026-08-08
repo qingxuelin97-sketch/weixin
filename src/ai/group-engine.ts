@@ -12,7 +12,7 @@ import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
 import { assembleSystemPrompt, relationsForPrompt } from './prompt';
 import { selectFactsForInjection } from './memory';
-import { effectiveTier, voiceMeta, type EngineHooks } from './engine';
+import { effectiveTier, voiceMeta, preferredRoute, type EngineHooks } from './engine';
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
 import { playMessageSound } from '../lib/sound';
@@ -211,7 +211,7 @@ async function generateActorLines(
     const router = await getRouter();
     const out: Bubble[] = [];
     for await (const b of router.generate(
-      { role: 'chat', nsfwTier: tier },
+      { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
       { messages, signal, temperature: persona.temperature },
       {},
       `${conv.id}:${member.contactId}`,

@@ -268,3 +268,60 @@ label.settings__row {
   text-align: left;
   cursor: pointer;
 }
+
+/* Memory management page */
+.memory__item {
+  padding: 12px 16px;
+  background: var(--color-cell-bg);
+  position: relative;
+}
+.memory__item + .memory__item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: var(--hairline-width);
+  background: var(--color-hairline);
+  transform: scaleY(0.5);
+}
+.memory__fact {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  line-height: 1.45;
+}
+.memory__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.memory__tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-system-msg-bg);
+  color: var(--color-text-secondary);
+}
+.memory__tag--gossip {
+  color: var(--color-link);
+}
+.memory__date {
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-placeholder);
+}
+.memory__actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+.memory__btn {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-link);
+}
+.memory__btn:active {
+  opacity: 0.55;
+}
+.memory__btn--danger {
+  color: var(--color-badge);
+}

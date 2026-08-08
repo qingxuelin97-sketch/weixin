@@ -28,6 +28,20 @@ N 槽位：用户可加任意 OpenAI 兼容 Provider；每 Provider 留 `fallbac
 日常/导演/记忆抽取=deepseek-chat；复杂剧情=deepseek-reasoner；语音=MiniMax TTS；
 NSFW 全开=宽松通道（Zen: deepseek-v3→glm→kimi）。
 
+## 每智能体模型（M-B 接线）
+- `PersonaVM.modelChat = "providerId:model"`，人设编辑页下拉可选；空=跟随全局默认。
+- 引擎经 `preferredRoute()` 转成 `RouteRequest.preferProvider/preferModel`；
+  单聊与群聊 actor 均传。
+- 铁律不变：**full 档永远走宽松通道**，persona 偏好被无条件覆盖（rule #6）；
+  preferModel 只在该 provider 的 models 列表里存在时生效，否则回落 role 默认。
+- 见 persona-routing.test.ts。
+
+## 传输超时（M-B 修）
+- `GenerateOptions.timeoutMs` 可选逐调用截止；未传用传输层默认 60s。
+- 原生 CapacitorHttp 不可中断——`raceDeadline` 用**会 reject** 的定时器兜底
+  （空壳 setTimeout 曾导致真机测试连接永久卡死）；`testConnection` 固定 15s。
+- 见 http-timeout.test.ts。
+
 ## 验收（router.test.ts / bubbles.test.ts 已覆盖）
 - [ ] 正常返回直出；拒答走宽松链并粘性；tier-1 prefill 可救场；全失败出人设拒绝；auth 不 ladder。
 - [ ] NDJSON/数组/纯文本/坏 JSON 均能解析出气泡；delay 越界被 clamp。

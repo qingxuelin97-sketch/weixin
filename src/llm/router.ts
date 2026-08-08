@@ -26,6 +26,11 @@ export interface RouteRequest {
   nsfwTier: NsfwTier;
   /** Persona-preferred model override, if any. */
   preferModel?: string;
+  /**
+   * Persona-preferred provider id. Ignored on the full NSFW tier — the
+   * permissive-channel routing rule outranks any per-persona preference.
+   */
+  preferProvider?: string;
 }
 
 export interface RoutePlan {

@@ -171,7 +171,12 @@ async function generateAndPlay(
   try {
     const router = await getRouter();
     const bubbles: Bubble[] = [];
-    for await (const b of router.generate({ role: 'chat', nsfwTier: tier }, { messages, signal: ctrl.signal }, ctx, convId)) {
+    for await (const b of router.generate(
+      { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
+      { messages, signal: ctrl.signal },
+      ctx,
+      convId,
+    )) {
       bubbles.push(b);
     }
     if (ctrl.signal.aborted) return;
@@ -314,6 +319,16 @@ function describeGap(ms: number): string {
   if (days === 1) return '距离上次聊天已经过了一天。';
   if (days < 7) return `距离上次聊天已经过了 ${days} 天。`;
   return '你们已经很久没联系了。';
+}
+
+/** Parse a persona's `modelChat` ("providerId:model") into route preferences. */
+export function preferredRoute(
+  modelChat?: string,
+): Pick<import('../llm/router').RouteRequest, 'preferProvider' | 'preferModel'> {
+  if (!modelChat) return {};
+  const i = modelChat.indexOf(':');
+  if (i < 0) return { preferModel: modelChat };
+  return { preferProvider: modelChat.slice(0, i), preferModel: modelChat.slice(i + 1) };
 }
 
 function bubbleToMsgType(b: Bubble): MessageVM['type'] {

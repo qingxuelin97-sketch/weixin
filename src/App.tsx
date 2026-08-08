@@ -20,6 +20,10 @@ import { WalletPage } from './features/money/WalletPage';
 import { MomentsPage } from './features/moments/MomentsPage';
 import { MomentPublishPage } from './features/moments/MomentPublishPage';
 import { BackupPage } from './features/settings/BackupPage';
+import { MemoryPage } from './features/settings/MemoryPage';
+import { ContactProfilePage } from './features/contacts/ContactProfilePage';
+import { NewContactPage } from './features/contacts/NewContactPage';
+import { CallPage } from './features/call/CallPage';
 import { SearchPage } from './features/search/SearchPage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
@@ -96,6 +100,10 @@ export function App() {
               <Route path="/settings/api" element={<Push><ApiConfigPage /></Push>} />
               <Route path="/settings/backup" element={<Push><BackupPage /></Push>} />
               <Route path="/persona/:contactId" element={<Push><PersonaEditPage /></Push>} />
+              <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
+              <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
+              <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />
+              <Route path="/call/:convId" element={<Push><CallPage /></Push>} />
               <Route path="/rp/send/:convId" element={<Push><RedPacketSendPage /></Push>} />
               <Route path="/rp/open/:rpId" element={<Push><RedPacketOpenPage /></Push>} />
               <Route path="/rp/:rpId" element={<Push><RedPacketDetailPage /></Push>} />

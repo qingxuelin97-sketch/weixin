@@ -111,6 +111,8 @@
   --color-overlay: rgba(0, 0, 0, 0.5);
   --color-menu-bg: #4c4c4c; /* long-press dark menu */
   --color-toast-bg: rgba(0, 0, 0, 0.75); /* centered transient toast */
+  --color-call-bg: #2b3038; /* full-screen call backdrop */
+  --color-call-hangup: var(--wx-red);
   --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */
   --color-on-color-divider: rgba(255, 255, 255, 0.2); /* hairline on a colored surface */
   --color-on-color-fill: rgba(255, 255, 255, 0.25); /* translucent chip on a colored surface */

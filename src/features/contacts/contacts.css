@@ -62,3 +62,38 @@
   color: var(--color-text-secondary);
   align-items: center;
 }
+
+/* Contact profile card (资料卡) */
+.contact-card__head {
+  display: flex;
+  gap: 16px;
+  padding: 20px 16px;
+  background: var(--color-cell-bg);
+}
+.contact-card__id {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  min-width: 0;
+}
+.contact-card__name {
+  font-size: 20px;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+}
+.contact-card__meta {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.contact-card__core {
+  padding: 0 16px 14px;
+  font-size: var(--fs-cell-sub);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+.contact-card__action {
+  text-align: center;
+  color: var(--color-link);
+  font-weight: var(--fw-medium);
+}

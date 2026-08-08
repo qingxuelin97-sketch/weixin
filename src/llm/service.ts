@@ -58,11 +58,19 @@ export function makePolicy(cfg: ResolvedConfig): RoutingPolicy {
         pick(cfg.nsfwProviderId) ??
         cfg.providers.find((p) => p.kind === 'zen' || p.kind === 'custom') ??
         cfg.providers[0];
-      const primaryVm = req.nsfwTier === 'full' ? permissive : pick(cfg.defaultProviderId);
+      // Persona-preferred provider (modelChat = "providerId:model") — but the
+      // full-tier permissive routing rule always wins (constitution rule #6).
+      const preferredVm = req.preferProvider ? byId.get(req.preferProvider) : undefined;
+      const primaryVm =
+        req.nsfwTier === 'full' ? permissive : (preferredVm ?? pick(cfg.defaultProviderId));
       if (!primaryVm) throw new Error('未配置任何可用的 API Provider');
 
       const provider = buildProvider(primaryVm);
-      const model = req.preferModel ?? modelForRole(primaryVm, req.role);
+      // The preferred model only applies when this provider actually lists it.
+      const model =
+        req.preferModel && primaryVm.models.includes(req.preferModel)
+          ? req.preferModel
+          : modelForRole(primaryVm, req.role);
 
       // Fallbacks: the permissive provider first (for refusals), then the rest.
       const fbVms = cfg.providers.filter((p) => p.id !== primaryVm.id);

@@ -231,6 +231,27 @@ function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
       );
     }
 
+    case 'call': {
+      const durMs = msg.meta?.durationMs as number | undefined;
+      const label =
+        durMs != null
+          ? `通话时长 ${String(Math.floor(durMs / 60000)).padStart(2, '0')}:${String(
+              Math.floor((durMs % 60000) / 1000),
+            ).padStart(2, '0')}`
+          : (msg.content ?? '已取消');
+      return (
+        <div className={`bubble bubble--${side} call-bubble`}>
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden>
+            <path
+              d="M4 3.5 6.5 3 8 6 6.4 7.6a10 10 0 0 0 6 6L14 12l3 1.5-.5 2.5c-.3 1-1.3 1.6-2.3 1.4A14.5 14.5 0 0 1 2.6 5.8C2.4 4.8 3 3.8 4 3.5z"
+              fill="currentColor"
+            />
+          </svg>
+          <span>{label}</span>
+        </div>
+      );
+    }
+
     default:
       return <div className={`bubble bubble--${side}`}>{msg.content ?? `[${msg.type}]`}</div>;
   }

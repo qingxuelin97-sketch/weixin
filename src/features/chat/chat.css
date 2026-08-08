@@ -488,6 +488,13 @@
   opacity: 0.35;
 }
 
+/* Call record bubble (通话时长 mm:ss / 已取消). */
+.call-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Unconfigured-API guide banner (防呆): shown until a provider has a key. */
 .chat-banner {
   flex: none;

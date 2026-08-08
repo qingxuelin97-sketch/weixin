@@ -1,0 +1,52 @@
+/* Full-screen voice call shell — dark, centered identity, one red control. */
+.call-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(var(--safe-top) + 80px) 24px calc(var(--safe-bottom) + 56px);
+  background: var(--color-call-bg);
+  color: var(--color-text-on-brand);
+}
+.call-page__id {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.call-page__name {
+  font-size: 22px;
+  font-weight: var(--fw-medium);
+}
+.call-page__status {
+  font-size: var(--fs-cell-sub);
+  opacity: 0.7;
+  min-height: 20px;
+}
+.call-page__controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.call-page__btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-on-brand);
+}
+.call-page__btn--hangup {
+  background: var(--color-call-hangup);
+}
+.call-page__btn:active {
+  filter: brightness(0.85);
+}
+.call-page__hint {
+  font-size: var(--fs-small-gray);
+  opacity: 0.7;
+}

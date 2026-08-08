@@ -344,6 +344,7 @@ export function ChatPage() {
           onAction={(key) => {
             if (key === 'redpacket') navigate(`/rp/send/${convId}`);
             else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
+            else if (key === 'call' && conv.type === 'single') navigate(`/call/${convId}`);
             else showToast('暂未开放');
           }}
           onEmoji={(e) => setDraft((d) => d + e)}

@@ -130,3 +130,15 @@ DM = 正式 `conversations` 行，id = `dm_<a>_<b>`（a/b 按字典序，保证�
 - gossip fact 的 `about` 若指向已删除联系人，落库前丢弃。
 - DM 会话不参与 nudge / heartbeat 排期（participants 都是 AI，不需要"等用户回"）。
 - 撤回的 DM 消息不存在（AI 私聊不演撤回戏——没有观众）。
+
+## 用户可见配置面（M-B 全量化）
+
+- 人设编辑页（/persona/:id）暴露 PersonaVM 全部字段，按 人设/行为/朋友圈/关系/
+  模型与语音/NSFW 分组；主动频率与发帖频率用预设档下拉（heartbeatBaseMin、
+  momentsPerDay 的字面值仍可通过既有数据保留为"自定义"项）。
+- **关系编辑**：user + 每个其他 AI 一行；留空 = 互不认识 = planNextDm 不会配对。
+- 记忆管理页（/memory/:id）：待确认（pending → confirmed）/置顶/删除；
+  八卦来源（"和X聊到：/听X说："前缀）打「八卦」标签——化学要可读。
+- 通讯录先进资料卡（/contact/:id：发消息/语音通话/编辑人设/记忆），再进编辑；
+  「＋」走 /contact-new（makePersona 兜底全部行为默认——防 undefined 字段陷阱）。
+- 每智能体模型 modelChat 见 specs/llm-provider.md「每智能体模型」。
