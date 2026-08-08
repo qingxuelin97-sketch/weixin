@@ -230,12 +230,10 @@ export async function diagnoseProvider(vm: ProviderVM): Promise<string[]> {
       return vm.baseUrl;
     }
   })();
+  const provider = buildProvider(vm) as OpenAiCompatibleProvider;
   const t2 = t();
   const [bridge, webview] = await Promise.all([
-    withDeadline(
-      (buildProvider(vm) as OpenAiCompatibleProvider).listModelsLive(),
-      12_000,
-    ).then(
+    withDeadline(provider.listModelsLive(), 12_000).then(
       (ids) => ({ ok: ids != null && ids.length > 0, ms: t() - t2, detail: ids ? `目录 ${ids.length} 个` : '无目录' }),
       (e: unknown) => ({ ok: false, ms: t() - t2, detail: msg(e) }),
     ),
