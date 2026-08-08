@@ -1,25 +1,16 @@
 /**
- * L0 proactive-message heartbeat (foreground tick).
+ * Proactive-message scheduling ("她先找我").
  *
- * The ONLY time-evolution path is the scheduled_actions queue (constitution rule
- * #5): a tick executes every past-due action and schedules the next one. Nothing
- * else may advance time. Scheduling is seeded (`seededRng`) so a reopened app
- * replays the same plan instead of re-rolling.
+ * This module owns only the *timing math* — when should a persona next reach out.
+ * The queue itself lives in `scheduler.ts` (constitution rule #5: one time-evolution
+ * path); this file must never grow its own pending/done bookkeeping again.
+ *
+ * Scheduling is seeded so reopening the app replays the same plan instead of
+ * re-rolling a fresh one every launch.
  */
 import { seededRng } from '../lib/money';
 import type { PersonaVM } from '../data/types';
-import { idbGetAll, idbPut } from '../db/idb';
-
-export interface ScheduledActionRow {
-  id: string;
-  fireAt: number;
-  kind: 'heartbeat';
-  payloadJson: string; // { contactId, convId }
-  status: 'pending' | 'done' | 'cancelled';
-  createdAt: number;
-}
-
-export const TICK_MS = 30_000;
+import { enqueue, duePending, type ScheduledAction } from './scheduler';
 
 /** Local hour a timestamp falls in (activity windows are in local hours). */
 function hourOf(ts: number): number {
@@ -53,35 +44,24 @@ export function nextHeartbeatAt(persona: PersonaVM, from: number): number {
   return Math.round(t);
 }
 
-export async function getPendingActions(now: number): Promise<ScheduledActionRow[]> {
-  const all = await idbGetAll<ScheduledActionRow>('scheduled_actions');
-  return all.filter((a) => a.status === 'pending' && a.fireAt <= now);
-}
-
+/** Queue this persona's next proactive message. Id is stable per fire time. */
 export async function scheduleHeartbeat(
   persona: PersonaVM,
   convId: string,
   from: number,
-): Promise<ScheduledActionRow> {
+): Promise<ScheduledAction> {
   const fireAt = nextHeartbeatAt(persona, from);
-  const row: ScheduledActionRow = {
-    id: `hb_${persona.contactId}_${fireAt}`,
-    fireAt,
+  return enqueue({
     kind: 'heartbeat',
-    payloadJson: JSON.stringify({ contactId: persona.contactId, convId }),
-    status: 'pending',
-    createdAt: from,
-  };
-  await idbPut('scheduled_actions', row);
-  return row;
+    fireAt,
+    payload: { contactId: persona.contactId, convId },
+    now: from,
+    id: `hb_${persona.contactId}_${fireAt}`,
+  });
 }
 
-export async function markDone(row: ScheduledActionRow): Promise<void> {
-  await idbPut('scheduled_actions', { ...row, status: 'done' });
-}
-
-/** Has this persona already got a pending heartbeat queued? */
+/** Whether this persona already has a heartbeat queued (avoids double-scheduling). */
 export async function hasPendingHeartbeat(contactId: string): Promise<boolean> {
-  const all = await idbGetAll<ScheduledActionRow>('scheduled_actions');
-  return all.some((a) => a.status === 'pending' && a.payloadJson.includes(`"${contactId}"`));
+  const pending = await duePending(Number.MAX_SAFE_INTEGER);
+  return pending.some((a) => a.kind === 'heartbeat' && a.payloadJson.includes(`"${contactId}"`));
 }

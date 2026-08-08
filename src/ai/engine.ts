@@ -89,19 +89,40 @@ export async function sendUserMessage(
     createdAt: hooks.now(),
   });
 
-  // 2) Build context: system prompt (persona + memory) + recent window.
+  // 2) Build context, 3) generate and play.
+  await generateAndPlay(convId, peer, persona, globalTier, hooks, ctrl);
+}
+
+/**
+ * Build the context, run the router, and play the resulting bubbles with human
+ * pacing. Shared by user-triggered replies and proactive (heartbeat) messages —
+ * the only difference is whether a user message preceded it.
+ *
+ * @param extraDirective appended to the system prompt (e.g. "you're reaching out first")
+ */
+async function generateAndPlay(
+  convId: string,
+  peer: ContactVM,
+  persona: PersonaVM,
+  globalTier: NsfwTierVM,
+  hooks: EngineHooks,
+  ctrl: AbortController,
+  extraDirective?: string,
+): Promise<void> {
   const recent = await repo.getMessages(convId, { limit: RECENT_WINDOW });
   const facts = await repo.getMemory(peer.id);
   const memory = selectFactsForInjection(facts, hooks.now());
   const summary = await repo.getSetting<string>(`summary:${convId}`);
   if (summary) memory.topK = [summary, ...memory.topK];
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
-  const system = assembleSystemPrompt({
+  let system = assembleSystemPrompt({
     persona: toPersonaView(persona, peer.remark ?? peer.name),
     nsfwTier: tier,
     memory: memory.pinned.length || memory.topK.length ? memory : undefined,
     scene: { kind: 'single', now: new Date(hooks.now()) },
   });
+  if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
+
   const messages = [
     { role: 'system' as const, content: system },
     ...recent.map((m) => ({
@@ -110,7 +131,6 @@ export async function sendUserMessage(
     })),
   ];
 
-  // 3) Show typing, run the router, play bubbles with delays.
   hooks.setTyping(convId, true);
   const ctx: GenerateContext = {
     personaRefusal: () => personaRefusalBubbles(persona),
@@ -180,6 +200,59 @@ export async function sendUserMessage(
     hooks.setTyping(convId, false);
     if (inFlight.get(convId) === ctrl) inFlight.delete(convId);
   }
+}
+
+/**
+ * The AI reaches out first — the "她先找我" moment that carries most of this
+ * app's emotional weight. Driven by the heartbeat action in the scheduler.
+ *
+ * Never interrupts an in-flight exchange: if the user is mid-conversation with
+ * this persona, the heartbeat is dropped (they're already talking).
+ *
+ * @param at the intended message time; for offline backfill this is in the past
+ */
+export async function sendProactiveMessage(
+  convId: string,
+  peer: ContactVM,
+  persona: PersonaVM,
+  globalTier: NsfwTierVM,
+  hooks: EngineHooks,
+  at?: number,
+): Promise<void> {
+  if (inFlight.has(convId)) return; // don't talk over a live exchange
+  const ctrl = new AbortController();
+  inFlight.set(convId, ctrl);
+
+  // Backfilled messages carry their planned past timestamp; live ones use now().
+  const stamped: EngineHooks = at == null ? hooks : { ...hooks, now: () => at };
+
+  const lastMsg = (await repo.getMessages(convId, { limit: 1 }))[0];
+  const silentMs = lastMsg ? (at ?? hooks.now()) - lastMsg.createdAt : 0;
+  const gap = describeGap(silentMs);
+
+  await generateAndPlay(
+    convId,
+    peer,
+    persona,
+    globalTier,
+    stamped,
+    ctrl,
+    `现在是你主动发消息给对方，不是在回复。${gap}` +
+      '找一个自然的由头开口（想起你们聊过的事、关心一下、分享点日常都行），' +
+      '**不要**用"有什么可以帮你"这种客服口气，就像真人突然想起朋友那样。1-2 条短消息即可。',
+  );
+}
+
+/** Human phrasing for how long it's been quiet, so the opener fits the gap. */
+function describeGap(ms: number): string {
+  if (ms <= 0) return '';
+  const hours = ms / 3_600_000;
+  if (hours < 3) return '你们刚聊过没多久。';
+  if (hours < 24) return '你们今天聊过，已经隔了几个小时。';
+  const days = Math.floor(hours / 24);
+  if (days === 1) return '距离上次聊天已经过了一天。';
+  if (days < 7) return `距离上次聊天已经过了 ${days} 天。`;
+  return '你们已经很久没联系了。';
 }
 
 function bubbleToMsgType(b: Bubble): MessageVM['type'] {
