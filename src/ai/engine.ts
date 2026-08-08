@@ -10,7 +10,7 @@
 import type { MessageVM, PersonaVM, ContactVM, NsfwTierVM } from '../data/types';
 import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
-import { assembleSystemPrompt, type PersonaView } from './prompt';
+import { assembleSystemPrompt, relationsForPrompt, type PersonaView } from './prompt';
 import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
 import type { GenerateContext, NsfwTier } from '../llm/router';
@@ -18,6 +18,9 @@ import { playMessageSound } from '../lib/sound';
 import { ensureVoiceAudio } from '../lib/voice';
 import { DEFAULT_VOICE } from '../llm/tts';
 import { repo } from '../db/repo';
+import { enqueue } from './scheduler';
+import { moodOf } from '../lib/mood';
+import { seededRng } from '../lib/money';
 
 export interface EngineHooks {
   /** Persist + push a new message to the UI. Returns the saved message (with id). */
@@ -116,11 +119,24 @@ async function generateAndPlay(
   const summary = await repo.getSetting<string>(`summary:${convId}`);
   if (summary) memory.topK = [summary, ...memory.topK];
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
+
+  // Relations keyed by contactId are translated to display names — the model
+  // must never see internal ids, or it will echo them into dialogue.
+  const contacts = await repo.getContacts();
+  const nameOf = (id: string) => {
+    const c = contacts.find((x) => x.id === id);
+    return c ? (c.remark ?? c.name) : undefined;
+  };
   let system = assembleSystemPrompt({
     persona: toPersonaView(persona, peer.remark ?? peer.name),
+    relations: relationsForPrompt(persona.relations, nameOf),
     nsfwTier: tier,
     memory: memory.pinned.length || memory.topK.length ? memory : undefined,
-    scene: { kind: 'single', now: new Date(hooks.now()) },
+    scene: {
+      kind: 'single',
+      now: new Date(hooks.now()),
+      moodLine: moodOf(peer.id, hooks.now()).line,
+    },
   });
   if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
 
@@ -131,6 +147,13 @@ async function generateAndPlay(
       content: m.content ?? `[${m.type}]`,
     })),
   ];
+
+  // Reading delay: a real person sees the message, thinks, THEN starts typing.
+  // Seeded on the newest message so replay is stable; abortable so a follow-up
+  // send from the user interrupts and restarts the exchange.
+  const readDelay = 1500 + seededRng(`read:${convId}:${recent.at(-1)?.id ?? 0}`)() * 6500;
+  await sleep(readDelay, ctrl.signal);
+  if (ctrl.signal.aborted) return;
 
   hooks.setTyping(convId, true);
   const ctx: GenerateContext = {
@@ -153,7 +176,10 @@ async function generateAndPlay(
       if (ctrl.signal.aborted) return;
 
       if (b.type === 'recall') {
-        // Send-then-recall for a human touch: post it, then flip to recalled.
+        // Send-then-recall for a human touch: post it, then queue the flip.
+        // Queued (not an inline sleep) so the recall is a scheduled_actions row —
+        // it survives a refresh or process kill mid-drama, and there is no
+        // second timer competing with the one time-evolution path (rule #5).
         const posted = await hooks.appendMessage({
           convId,
           senderId: peer.id,
@@ -163,9 +189,13 @@ async function generateAndPlay(
           createdAt: hooks.now(),
         });
         playMessageSound();
-        await sleep(1500, ctrl.signal);
-        if (ctrl.signal.aborted) return;
-        await hooks.updateMessage({ ...posted, isRecalled: true });
+        await enqueue({
+          kind: 'recall',
+          fireAt: hooks.now() + 1500,
+          payload: { msgId: posted.id, convId },
+          now: hooks.now(),
+          id: `recall_${convId}_${posted.id}`,
+        });
         continue;
       }
 

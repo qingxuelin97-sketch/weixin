@@ -15,6 +15,7 @@ import { claimRedPacket, acceptTransfer } from '../ai/money-service';
 import { sendProactiveMessage } from '../ai/engine';
 import { sendGroupProactiveMessage } from '../ai/group-engine';
 import { scheduleHeartbeat } from '../ai/heartbeat';
+import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { syncNotifications } from '../ai/notify-service';
@@ -81,6 +82,33 @@ export function useSchedulerRuntime(enabled: boolean): void {
       // Chain the next one so the rhythm continues.
       const last = s.messagesFor(convId).at(-1)?.createdAt;
       await scheduleHeartbeat(persona, convId, Date.now(), last);
+    });
+
+    // Flip a sent message to recalled (the send-then-recall drama's second act).
+    // Idempotent: a re-fired action finds isRecalled already true and stops.
+    registerHandler('recall', async (payload) => {
+      const msgId = Number(payload.msgId);
+      const convId = String(payload.convId ?? '');
+      if (!msgId || !convId) return;
+      const s = useAppStore.getState();
+      const msg = s.messagesFor(convId).find((m) => m.id === msgId);
+      if (!msg || msg.isRecalled) return;
+      await s.updateMessage({ ...msg, isRecalled: true });
+
+      // The cover line — sometimes they can't leave the recall alone.
+      if (msg.senderId !== 'self' && shouldFollowUpAfterRecall(msgId)) {
+        const persona = s.personaFor(msg.senderId);
+        if (persona) {
+          await hooks.appendMessage({
+            convId,
+            senderId: msg.senderId,
+            type: 'text',
+            content: recallFollowUpLine(persona, msgId),
+            status: 'sent',
+            createdAt: Date.now(),
+          });
+        }
+      }
     });
 
     // A group member says something unprompted (offline backfill chatter).

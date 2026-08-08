@@ -83,6 +83,12 @@ export interface PersonaVM {
   commentRate: number;
   /** Starting closeness, 0..100. Scales like/comment rates and heartbeat warmth. */
   affinityInit: number;
+  /**
+   * Who this persona is to others. Key 'user' or a contactId; value is the
+   * relationship in their own words. Feeds the prompt's relations layer —
+   * agents knowing each other is the precondition for any chemistry.
+   */
+  relations: Record<string, string>;
 }
 
 /** A red packet (拼手气 or 普通). Shares are pre-split at creation for replayability. */

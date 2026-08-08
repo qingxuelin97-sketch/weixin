@@ -18,6 +18,7 @@ import { sendGroupMessage } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
 import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
+import { canRecall } from '../../lib/recall';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
 import './chat.css';
 
@@ -41,6 +42,26 @@ export function ChatPage() {
   const composer = useComposerPanel();
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  /** Long-press context menu: which message, anchored where. */
+  const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    // Any further interaction dismisses the menu, WeChat-style.
+    const close = () => setMenu(null);
+    document.addEventListener('pointerdown', close, { capture: true });
+    return () => document.removeEventListener('pointerdown', close, { capture: true });
+  }, [menu]);
+
+  const recallOwn = async (msg: MessageVM) => {
+    setMenu(null);
+    if (!canRecall(msg, Date.now())) return;
+    await updateMessage({ ...msg, isRecalled: true });
+  };
+  const copyText = (msg: MessageVM) => {
+    setMenu(null);
+    if (msg.content) void navigator.clipboard?.writeText(msg.content).catch(() => {});
+  };
 
   // Interleave time bars (WeChat shows a centered time when the gap > 5 min).
   const rows = useMemo(() => withTimeBars(messages), [messages]);
@@ -168,11 +189,41 @@ export function ChatPage() {
                 isSelf={row.msg.senderId === 'self'}
                 showNickname={isGroup}
                 onMoneyTap={onMoneyTap}
+                onLongPress={(m, x, y) => {
+                  // Only open when there is at least one action — an empty
+                  // capsule reads as breakage.
+                  const hasCopy = m.type === 'text' && Boolean(m.content);
+                  if (hasCopy || canRecall(m, Date.now())) setMenu({ msg: m, x, y });
+                }}
+                onReEdit={(m) => setDraft(m.content ?? '')}
               />
             ),
           )}
         </div>
       </div>
+
+      {menu && (
+        <div
+          className="msg-menu"
+          role="menu"
+          style={{
+            left: Math.min(menu.x, window.innerWidth - 130),
+            top: Math.max(menu.y - 48, 52),
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {menu.msg.type === 'text' && menu.msg.content && (
+            <button role="menuitem" onClick={() => copyText(menu.msg)}>
+              复制
+            </button>
+          )}
+          {canRecall(menu.msg, Date.now()) && (
+            <button role="menuitem" onClick={() => void recallOwn(menu.msg)}>
+              撤回
+            </button>
+          )}
+        </div>
+      )}
 
       <div
         className="composer"

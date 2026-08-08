@@ -10,12 +10,13 @@
 import type { MessageVM, PersonaVM, ContactVM, NsfwTierVM, ConversationVM } from '../data/types';
 import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
-import { assembleSystemPrompt } from './prompt';
+import { assembleSystemPrompt, relationsForPrompt } from './prompt';
 import { selectFactsForInjection } from './memory';
 import { effectiveTier, voiceMeta, type EngineHooks } from './engine';
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
 import { playMessageSound } from '../lib/sound';
+import { moodOf } from '../lib/mood';
 import { repo } from '../db/repo';
 
 const RECENT_WINDOW = 30;
@@ -166,9 +167,20 @@ async function generateActorLines(
       catchphrases: persona.catchphrases,
       nsfwStyleSamples: persona.nsfwStyleSamples,
     },
+    // In a group, knowing who the others ARE to you is what turns turn-taking
+    // into banter — 互称、拆台、护短 all come from here.
+    relations: relationsForPrompt(persona.relations, (id) => {
+      const n = nameOf(id);
+      return n === id ? undefined : n; // nameOf falls back to the raw id; never leak it
+    }),
     nsfwTier: tier,
     memory: memory.pinned.length || memory.topK.length ? memory : undefined,
-    scene: { kind: 'group', now: new Date(now), groupRoster: roster },
+    scene: {
+      kind: 'group',
+      now: new Date(now),
+      groupRoster: roster,
+      moodLine: moodOf(member.contactId, now).line,
+    },
   });
 
   // The director's staging note rides at the end, where recency weighs most.

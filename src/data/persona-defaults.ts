@@ -23,6 +23,7 @@ export const PERSONA_DEFAULTS: Omit<PersonaVM, 'contactId' | 'core'> = {
   likeRate: 0.5,
   commentRate: 0.25,
   affinityInit: 20,
+  relations: {},
 };
 
 /** Build a complete persona from a partial, filling anything unspecified. */

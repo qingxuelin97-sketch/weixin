@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Avatar } from '../../components/Avatar';
 import { fenToYuan } from '../../lib/money';
 import { playVoice } from '../../lib/voice';
+import { canReEdit } from '../../lib/recall';
 import type { MessageVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -12,21 +13,62 @@ interface Props {
   showNickname?: boolean;
   /** Tapping a red-packet / transfer bubble. */
   onMoneyTap?: (msg: MessageVM) => void;
+  /** Long-press (or right-click) on the row — opens the recall/copy menu. */
+  onLongPress?: (msg: MessageVM, x: number, y: number) => void;
+  /** 重新编辑 on a recalled text message: refill the composer with the original. */
+  onReEdit?: (msg: MessageVM) => void;
 }
 
+const LONG_PRESS_MS = 500;
+
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onLongPress, onReEdit }: Props) {
+  // Long-press: pointer down starts a timer; any movement or release cancels it.
+  // touch-action stays default so scrolling still cancels naturally via pointerleave.
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPress = () => {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  };
+  const pressHandlers = onLongPress
+    ? {
+        onPointerDown: (e: React.PointerEvent) => {
+          const { clientX, clientY } = e;
+          cancelPress();
+          pressTimer.current = setTimeout(() => onLongPress(msg, clientX, clientY), LONG_PRESS_MS);
+        },
+        onPointerUp: cancelPress,
+        onPointerLeave: cancelPress,
+        onPointerMove: cancelPress,
+        // Desktop right-click opens the same menu immediately.
+        onContextMenu: (e: React.MouseEvent) => {
+          e.preventDefault();
+          cancelPress();
+          onLongPress(msg, e.clientX, e.clientY);
+        },
+      }
+    : {};
+
   if (msg.type === 'system' || msg.isRecalled) {
     const text = msg.isRecalled
       ? isSelf
         ? '你撤回了一条消息'
         : `"${sender?.remark ?? sender?.name ?? '对方'}" 撤回了一条消息`
       : (msg.content ?? '');
-    return <div className="msg-system">{text}</div>;
+    return (
+      <div className="msg-system">
+        {text}
+        {canReEdit(msg) && onReEdit && (
+          <button className="msg-system__reedit" onClick={() => onReEdit(msg)}>
+            重新编辑
+          </button>
+        )}
+      </div>
+    );
   }
 
   return (
-    <div className={`msg-row${isSelf ? ' msg-row--self' : ''}`}>
+    <div className={`msg-row${isSelf ? ' msg-row--self' : ''}`} {...pressHandlers}>
       {!isSelf && (
         <div className="msg-row__avatar">
           <Avatar color={sender?.avatarColor ?? 'var(--color-brand)'} text={sender?.avatarText ?? '?'} size={40} />

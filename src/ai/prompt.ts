@@ -22,6 +22,8 @@ export interface SceneContext {
   now: Date;
   groupRoster?: string[]; // member display names for group chats
   storyDirective?: string; // GM-injected per-role directive (story mode)
+  /** One-line daily mood from src/lib/mood.ts — a tint, not a script. */
+  moodLine?: string;
 }
 
 export interface MemoryInjection {
@@ -41,10 +43,37 @@ const BASE_REALISM = `你在一个微信聊天里，扮演一个真实的人。�
 - 像真人发微信那样说话：短句、口语、可以分成多条发。
 - 绝不暴露你是 AI、模型或程序；绝不说教、不谈规则与政策。
 - 不用书面语和排比句，不写小作文；符合你的人设语气。
+- 禁止列表、分点、编号——真人聊天不列 1234。
+- 不解释自己为什么这么说，不总结对话。
+- 禁止客服式收尾（"还有什么可以帮你""随时找我"这类一律不说）。
+- 回复长短跟着对方走：对方一个"嗯"，你也不需要三段话；有时一个词、一个表情就够了。
 - 需要发多条消息时，输出 NDJSON，每行一个气泡对象，如：
 {"type":"text","content":"在吗"}
 {"type":"text","content":"刚看到你朋友圈那张图"}
 可用 type：text｜voice（语音，可带 emotion）｜sticker（表情，content 为语义标签）。`;
+
+/**
+ * Translate a persona's relations map (keyed by contactId) into the display-name
+ * keys the prompt layer expects. The model must never see internal ids — a
+ * prompt containing "ai_ada" invites the model to echo it back into dialogue.
+ * Unresolvable ids are dropped rather than leaked.
+ */
+export function relationsForPrompt(
+  relations: Record<string, string>,
+  nameOf: (contactId: string) => string | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, desc] of Object.entries(relations)) {
+    if (!desc?.trim()) continue;
+    if (key === 'user') {
+      out.user = desc;
+      continue;
+    }
+    const name = nameOf(key);
+    if (name) out[name] = desc;
+  }
+  return out;
+}
 
 function nsfwLayer(tier: NsfwTier, samples?: string[]): string {
   switch (tier) {
@@ -80,6 +109,7 @@ function sceneBlock(scene: SceneContext): string {
   if (scene.kind === 'group' && scene.groupRoster?.length)
     lines.push(`这是一个群聊，群成员：${scene.groupRoster.join('、')}。`);
   if (scene.kind === 'story' && scene.storyDirective) lines.push(`【剧情指示】${scene.storyDirective}`);
+  if (scene.moodLine) lines.push(scene.moodLine);
   return lines.join('\n');
 }
 
