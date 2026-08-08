@@ -163,6 +163,7 @@ async function generateAndPlay(
   if (ctrl.signal.aborted) return;
 
   hooks.setTyping(convId, true);
+  const tGenStart = hooks.now();
   const ctx: GenerateContext = {
     personaRefusal: () => personaRefusalBubbles(persona),
     prefixPrefill: tier !== 'off' ? '嗯' : undefined,
@@ -183,7 +184,13 @@ async function generateAndPlay(
 
     for (let i = 0; i < bubbles.length; i++) {
       const b = bubbles[i];
-      const delay = Math.min(typingDelay(b, persona.typingCpm), 6000);
+      // Budgeted pacing: the LLM's real latency (2-8s on free reasoning models)
+      // already elapsed behind the typing indicator. The first bubble only pays
+      // the REMAINDER of its typing delay, so total wait ≈ max(real, simulated)
+      // instead of their sum. Later bubbles pace normally — the model is "done
+      // thinking" by then and the gaps are pure typing rhythm.
+      const full = Math.min(typingDelay(b, persona.typingCpm), 6000);
+      const delay = i === 0 ? Math.max(250, full - (hooks.now() - tGenStart)) : full;
       await sleep(delay, ctrl.signal);
       if (ctrl.signal.aborted) return;
 

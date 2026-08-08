@@ -11,7 +11,9 @@
 const DB_NAME = 'weixin-ai';
 // v2 adds the money stores; v3 adds the TTS audio cache; v4 adds Moments.
 // Bump this on EVERY new store or onupgradeneeded never runs (see CLAUDE.md §3.5).
-const DB_VERSION = 4;
+// Exported for tests/unit/idb-migration.test.ts, whose ledger machine-enforces
+// that rule — register new stores there when bumping.
+export const DB_VERSION = 4;
 
 export interface StoreDef {
   name: string;

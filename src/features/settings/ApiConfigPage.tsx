@@ -4,6 +4,14 @@ import { PRESETS } from '../../llm/presets';
 import { testConnection, fetchModels, invalidateRouter, ensureFreshModelDefaults } from '../../llm/service';
 import { repo } from '../../db/repo';
 import { setSecret, hasSecret } from '../../lib/keystore';
+import {
+  isRecordingEnabled,
+  setRecordingEnabled,
+  getRecordings,
+  clearRecordings,
+  serializeRecordings,
+} from '../../lib/llm-recorder';
+import { saveTextFile } from '../../lib/save-file';
 import type { ProviderVM } from '../../data/types';
 import './settings.css';
 
@@ -31,6 +39,8 @@ export function ApiConfigPage() {
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [fetching, setFetching] = useState(false);
+  const [recording, setRecording] = useState(isRecordingEnabled());
+  const [recCount, setRecCount] = useState(() => getRecordings().length);
 
   const reload = async () => {
     await ensureFreshModelDefaults();
@@ -244,6 +254,53 @@ export function ApiConfigPage() {
             </button>
           </div>
         )}
+
+        <div className="settings__group" style={{ marginTop: 16 }}>
+          <div className="settings__group-title">对话录制（调优语料，只存本机）</div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => {
+              const next = !recording;
+              setRecordingEnabled(next);
+              setRecording(next);
+            }}
+          >
+            <span className="settings__label">录制真实请求与回复</span>
+            <span className={`switch${recording ? ' switch--on' : ''}`}>
+              <span className="switch__knob" />
+            </span>
+          </div>
+          <div className="field">
+            <span className="field__hint">
+              只记录发送的消息与模型回复正文（不含密钥），最多保留 100 条。导出的文件用于
+              调优多气泡解析与记忆抽取。
+            </span>
+          </div>
+          <button
+            className="btn-ghost"
+            disabled={recCount === 0}
+            onClick={() => {
+              void saveTextFile(
+                `llm-recordings-${recCount}.json`,
+                serializeRecordings(),
+                'application/json',
+                '导出对话录制',
+              ).catch(() => {});
+            }}
+          >
+            导出录制（{recCount} 条）
+          </button>
+          <button
+            className="btn-ghost"
+            disabled={recCount === 0}
+            onClick={() => {
+              clearRecordings();
+              setRecCount(0);
+            }}
+          >
+            清空录制
+          </button>
+        </div>
       </div>
     </>
   );

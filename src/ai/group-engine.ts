@@ -90,6 +90,7 @@ export async function sendGroupMessage(
     if (cast.length === 0) return;
 
     hooks.setTyping(convId, true);
+    const tGenStart = hooks.now();
 
     // 2) All actors write at the same time.
     const roster = members.map((m) => m.name);
@@ -116,11 +117,18 @@ export async function sendGroupMessage(
       .filter((o) => o.bubbles.length > 0)
       .sort((a, b) => a.plan.priority - b.plan.priority);
 
+    let firstPlayed = false;
     for (let i = 0; i < ordered.length; i++) {
       const { member, bubbles } = ordered[i];
       const persona = member.persona!;
       for (const b of bubbles.slice(0, MAX_BUBBLES_PER_ACTOR)) {
-        await sleep(Math.min(typingDelay(b, persona.typingCpm), 6000), ctrl.signal);
+        // The slowest actor's real latency already elapsed inside Promise.all —
+        // the very first played bubble only pays the remainder of its typing
+        // delay (总等待 = max(真, 拟) 而非相加); the rest pace normally.
+        const full = Math.min(typingDelay(b, persona.typingCpm), 6000);
+        const delay = firstPlayed ? full : Math.max(250, full - (hooks.now() - tGenStart));
+        firstPlayed = true;
+        await sleep(delay, ctrl.signal);
         if (ctrl.signal.aborted) return;
         if (i === ordered.length - 1) hooks.setTyping(convId, false);
         await hooks.appendMessage({

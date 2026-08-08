@@ -80,7 +80,12 @@ export class LlmRouter {
     convKey = 'default',
   ): Promise<CompletionResult> {
     const plan = this.policy.plan(req);
-    const pinned = this.sticky.get(convKey);
+    // Stickiness is scoped per (conversation, tier): a provider pinned on a lower
+    // tier must never carry a later full-tier turn (constitution rule #6 — the
+    // pin could be a domestic endpoint), and a full-tier pin is by construction
+    // permissive so it must not leak "backwards" either.
+    const stickyKey = `${convKey}::${req.nsfwTier}`;
+    const pinned = this.sticky.get(stickyKey);
     const primary = pinned ?? { provider: plan.provider, model: plan.model };
 
     // Attempt 0: primary (or sticky) model.
@@ -88,7 +93,7 @@ export class LlmRouter {
       const r = await primary.provider.complete({ ...opts, model: primary.model });
       if (!isRefusal(r)) {
         if (pinned) pinned.remaining--;
-        if (pinned && pinned.remaining <= 0) this.sticky.delete(convKey);
+        if (pinned && pinned.remaining <= 0) this.sticky.delete(stickyKey);
         return r;
       }
     } catch (e) {
@@ -115,7 +120,7 @@ export class LlmRouter {
       try {
         const r = await fb.provider.complete({ ...opts, model: fb.model });
         if (!isRefusal(r)) {
-          this.sticky.set(convKey, { provider: fb.provider, model: fb.model, remaining: 10 });
+          this.sticky.set(stickyKey, { provider: fb.provider, model: fb.model, remaining: 10 });
           return r;
         }
       } catch {
@@ -147,6 +152,9 @@ export class LlmRouter {
   }
 
   clearSticky(convKey: string) {
-    this.sticky.delete(convKey);
+    // Pins are keyed `${convKey}::${tier}` — clear every tier's pin for the conv.
+    for (const k of [...this.sticky.keys()]) {
+      if (k === convKey || k.startsWith(`${convKey}::`)) this.sticky.delete(k);
+    }
   }
 }

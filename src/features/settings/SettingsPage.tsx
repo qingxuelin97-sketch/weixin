@@ -90,6 +90,13 @@ export function SettingsPage() {
               <span className="switch__knob" />
             </span>
           </div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/notify-test')}
+          >
+            <span className="settings__label">后台通知测试</span>
+            <span className="settings__chevron">›</span>
+          </div>
           <div className="settings__row" onClick={() => navigate('/settings/backup')}>
             <span className="settings__label">备份与恢复</span>
             <span className="settings__chevron">›</span>

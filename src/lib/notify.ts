@@ -153,6 +153,14 @@ export async function scheduleNotifications(
 }
 
 /**
+ * The self-test rows (settings → 后台通知测试) measure whether THIS device's OS
+ * actually delivers scheduled notifications after backgrounding/force-kill.
+ * They must survive the foreground rebuild below — cancelling them on every
+ * return to the app would fake a "never arrived" result.
+ */
+export const NOTIFY_TEST_IDS = [1, 2, 3].map((i) => notificationId(`notify_test_${i}`));
+
+/**
  * Drop every pending notification. Called on foreground: anything still queued
  * was written against a world state the user has now moved past, so it gets
  * rebuilt from scratch rather than left to fire something stale.
@@ -162,8 +170,9 @@ export async function cancelAll(): Promise<void> {
   if (!plugin) return;
   try {
     const pending = await plugin.getPending();
-    if (pending.notifications.length) {
-      await plugin.cancel({ notifications: pending.notifications.map((n) => ({ id: n.id })) });
+    const toCancel = pending.notifications.filter((n) => !NOTIFY_TEST_IDS.includes(n.id));
+    if (toCancel.length) {
+      await plugin.cancel({ notifications: toCancel.map((n) => ({ id: n.id })) });
     }
   } catch {
     /* nothing pending, or the plugin is unavailable */

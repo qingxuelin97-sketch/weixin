@@ -13,6 +13,12 @@
 ## 路由铁律（代码层硬约束，非 prompt 建议）
 - 全开档上下文**禁止流向 DeepSeek/MiniMax 官方端点**（DeepSeek 2026-05 起 API 审核；MiniMax
   输入输出双审 1026/1027）→ 一律走宽松通道。
+- **闭集三条（M-C1 修复后的形态，tests/unit/nsfw-closure.test.ts 钉死）**：
+  ① full 档的降级 fallbacks 只含宽松 kind（zen/custom），国内端点连"最后手段"都不是；
+  ② `nsfwProviderId` 未配置或误配到国内 kind 时不回落 `providers[0]`——无宽松通道则整档
+  抛错（上游转人设化拒绝），宁可不回也不泄漏；
+  ③ 路由器 sticky 按 `(convKey, tier)` 作用域——低档被钉住的国内 Provider 永不承载
+  后续 full 档轮次，反向同理。
 - 全开档语音：先经宽松通道**降敏改写**再送 MiniMax TTS，失败自动"语音转文字气泡"（露骨文本
   永不出境到 MiniMax）。
 - 拒答降级见 `llm-provider.md`；原始拒答永不上屏。

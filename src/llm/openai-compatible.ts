@@ -12,6 +12,7 @@ import {
 } from './types';
 import { httpJson } from './http';
 import { parseBubbles } from './bubbles';
+import { recordLlmExchange } from '../lib/llm-recorder';
 
 export interface ProviderConfig {
   id: string;
@@ -100,6 +101,19 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     if (!key) throw new LlmError('auth', `no API key for provider ${this.id}`, 401, this.id);
     const headers = { Authorization: `Bearer ${key}`, ...this.cfg.extraHeaders };
     const body = this.buildBody(opts);
+    // Corpus tap (opt-in, rule #2 containment): record ONLY bodies — the
+    // messages we send and the text that came back. Never `headers`.
+    const tapReq = opts.messages.map((m) => ({ role: m.role, content: m.content }));
+    const t0 = Date.now();
+    const tap = (r: Partial<{ text: string; finishReason: string | null; error: string }>) =>
+      recordLlmExchange({
+        providerId: this.id,
+        providerKind: this.kind,
+        model: opts.model,
+        latencyMs: Date.now() - t0,
+        request: tapReq,
+        ...r,
+      });
 
     const bases = [this.cfg.baseUrl, this.cfg.fallbackBaseUrl].filter(Boolean) as string[];
     let lastErr: unknown;
@@ -118,15 +132,22 @@ export class OpenAiCompatibleProvider implements ChatProvider {
           const em = errData?.error?.message ?? `HTTP ${res.status}`;
           throw this.httpStatusToError(res.status, em);
         }
-        const out = this.extract(res.data);
-        return this.stripReasoning(out);
+        const out = this.stripReasoning(this.extract(res.data));
+        tap({ text: out.text, finishReason: out.finishReason ?? null });
+        return out;
       } catch (e) {
         lastErr = e;
         // Only try the fallback base on network/server errors, not auth/content.
-        if (e instanceof LlmError && ['auth', 'content_filter', 'rate_limit'].includes(e.kind)) throw e;
+        if (e instanceof LlmError && ['auth', 'content_filter', 'rate_limit'].includes(e.kind)) {
+          tap({ error: `${e.kind}: ${e.message}` });
+          throw e;
+        }
       }
     }
-    throw lastErr instanceof LlmError ? lastErr : new LlmError('network', String(lastErr), undefined, this.id);
+    const err =
+      lastErr instanceof LlmError ? lastErr : new LlmError('network', String(lastErr), undefined, this.id);
+    tap({ error: `${err.kind}: ${err.message}` });
+    throw err;
   }
 
   async *generate(opts: GenerateOptions): AsyncIterable<Bubble> {

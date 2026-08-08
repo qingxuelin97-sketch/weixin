@@ -82,6 +82,10 @@ async function loadConfig(): Promise<ResolvedConfig> {
 }
 
 /** A concrete policy built from resolved config. Pure given its inputs. */
+/** Channels allowed to carry full-tier NSFW context (constitution rule #6). */
+const PERMISSIVE_KINDS = new Set(['zen', 'custom']);
+const isPermissive = (p: ProviderVM): boolean => PERMISSIVE_KINDS.has(p.kind);
+
 export function makePolicy(cfg: ResolvedConfig): RoutingPolicy {
   const byId = new Map(cfg.providers.map((p) => [p.id, p]));
   const pick = (id?: string): ProviderVM | undefined =>
@@ -89,15 +93,27 @@ export function makePolicy(cfg: ResolvedConfig): RoutingPolicy {
 
   return {
     plan(req: RouteRequest): RoutePlan {
+      // The configured NSFW provider only counts if it actually IS a permissive
+      // kind — an unset id must never silently fall back to providers[0], which
+      // can be a domestic official endpoint.
+      const configured = cfg.nsfwProviderId ? byId.get(cfg.nsfwProviderId) : undefined;
       const permissive =
-        pick(cfg.nsfwProviderId) ??
-        cfg.providers.find((p) => p.kind === 'zen' || p.kind === 'custom') ??
-        cfg.providers[0];
+        (configured && isPermissive(configured) ? configured : undefined) ??
+        cfg.providers.find(isPermissive);
+
       // Persona-preferred provider (modelChat = "providerId:model") — but the
       // full-tier permissive routing rule always wins (constitution rule #6).
       const preferredVm = req.preferProvider ? byId.get(req.preferProvider) : undefined;
-      const primaryVm =
-        req.nsfwTier === 'full' ? permissive : (preferredVm ?? pick(cfg.defaultProviderId));
+      let primaryVm: ProviderVM | undefined;
+      if (req.nsfwTier === 'full') {
+        // Hard constraint, not a preference: with no permissive channel there is
+        // NO route — failing (→ persona refusal upstream) beats leaking context.
+        if (!permissive)
+          throw new Error('NSFW 全开档需要宽松通道 Provider（Zen/自定义），当前未配置');
+        primaryVm = permissive;
+      } else {
+        primaryVm = preferredVm ?? pick(cfg.defaultProviderId);
+      }
       if (!primaryVm) throw new Error('未配置任何可用的 API Provider');
 
       const provider = buildProvider(primaryVm);
@@ -107,9 +123,13 @@ export function makePolicy(cfg: ResolvedConfig): RoutingPolicy {
           ? req.preferModel
           : modelForRole(primaryVm, req.role);
 
-      // Fallbacks: the permissive provider first (for refusals), then the rest.
-      const fbVms = cfg.providers.filter((p) => p.id !== primaryVm.id);
-      if (permissive && permissive.id !== primaryVm.id) {
+      // Fallbacks: the full tier is a CLOSED set — permissive providers only,
+      // domestic endpoints never appear even as a last resort. Other tiers try
+      // the permissive provider first (for refusals), then the rest.
+      let fbVms = cfg.providers.filter((p) => p.id !== primaryVm.id);
+      if (req.nsfwTier === 'full') {
+        fbVms = fbVms.filter(isPermissive);
+      } else if (permissive && permissive.id !== primaryVm.id) {
         fbVms.sort((a, b) => (a.id === permissive.id ? -1 : b.id === permissive.id ? 1 : 0));
       }
       const fallbacks = fbVms.map((vm) => ({
