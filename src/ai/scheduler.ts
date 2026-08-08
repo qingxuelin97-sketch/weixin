@@ -8,14 +8,13 @@
  * path as live execution, just with a wider time window.
  */
 import { idbGetAll, idbPut } from '../db/idb';
+import type { ScheduledActionKind } from '../db/schema';
 
-export type ActionKind =
-  | 'heartbeat'
-  | 'rp_grab'
-  | 'transfer_accept'
-  | 'moment_post'
-  | 'moment_like'
-  | 'moment_comment';
+/**
+ * Derived from the persisted column's enum (src/db/schema.ts) so the two cannot
+ * drift — they already had, silently, until M5.
+ */
+export type ActionKind = ScheduledActionKind;
 
 export interface ScheduledAction {
   id: string;

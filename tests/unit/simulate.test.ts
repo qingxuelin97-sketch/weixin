@@ -5,8 +5,12 @@ import {
   LIMITS,
   MAX_BACKFILL,
   SETTLE_MARGIN,
+  GROUP_WINDOW_MS,
+  GROUP_MAX_PER_WINDOW,
+  MIN_GROUP_GAP_MS,
   type SimContact,
   type SimInput,
+  type SimGroup,
 } from '../../src/ai/simulate';
 import { makePersona } from '../../src/data/persona-defaults';
 import type { PersonaVM } from '../../src/data/types';
@@ -193,5 +197,109 @@ describe('groupMessageBudget', () => {
 
   it('is zero for an empty window', () => {
     expect(groupMessageBudget(NOON, NOON)).toBe(0);
+  });
+});
+
+describe('simulate — offline group chatter (M5 completion bar)', () => {
+  const group = (convId: string, memberIds: string[], lastMsgAt?: number): SimGroup => ({
+    convId,
+    memberIds,
+    lastMsgAt,
+  });
+  const withGroups = (groups: SimGroup[]): SimInput => ({ singles: [], groups });
+
+  /** Largest number of events for one group inside any GROUP_WINDOW_MS window. */
+  function maxPerWindow(times: number[]): number {
+    const sorted = [...times].sort((a, b) => a - b);
+    let worst = 0;
+    for (let i = 0; i < sorted.length; i++) {
+      let n = 0;
+      // Half-open [t, t+W) — matches how a rate limit is normally read.
+      for (const t of sorted) if (t >= sorted[i] && t < sorted[i] + GROUP_WINDOW_MS) n++;
+      worst = Math.max(worst, n);
+    }
+    return worst;
+  }
+
+  it('never exceeds 2 events per 15 minutes — the stated bar', () => {
+    // A long window with a generous budget is the case most likely to breach it.
+    const plan = simulate(NOON - 20 * HOUR, NOON, withGroups([group('g1', ['a', 'b', 'c'])]), 's');
+    const times = plan.events.filter((e) => e.convId === 'g1').map((e) => e.at);
+    expect(times.length).toBeGreaterThan(0);
+    expect(maxPerWindow(times)).toBeLessThanOrEqual(GROUP_MAX_PER_WINDOW);
+  });
+
+  it('holds the bar across many seeds, not just a lucky one', () => {
+    for (let i = 0; i < 50; i++) {
+      const plan = simulate(NOON - 18 * HOUR, NOON, withGroups([group('g1', ['a', 'b'])]), `s${i}`);
+      const times = plan.events.filter((e) => e.convId === 'g1').map((e) => e.at);
+      expect(maxPerWindow(times)).toBeLessThanOrEqual(GROUP_MAX_PER_WINDOW);
+    }
+  });
+
+  it('spaces consecutive group messages by at least the minimum gap', () => {
+    const plan = simulate(NOON - 20 * HOUR, NOON, withGroups([group('g1', ['a', 'b'])]), 's');
+    const times = plan.events.filter((e) => e.convId === 'g1').map((e) => e.at).sort((a, b) => a - b);
+    for (let i = 1; i < times.length; i++) {
+      expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(MIN_GROUP_GAP_MS);
+    }
+  });
+
+  it('actually produces group events now (it silently produced none before M5)', () => {
+    const plan = simulate(NOON - 8 * HOUR, NOON, withGroups([group('g1', ['a', 'b'])]), 's');
+    expect(plan.events.some((e) => e.kind === 'group_msg')).toBe(true);
+  });
+
+  it('only ever picks speakers who are actually members', () => {
+    const plan = simulate(NOON - 20 * HOUR, NOON, withGroups([group('g1', ['a', 'b'])]), 's');
+    for (const e of plan.events.filter((x) => x.kind === 'group_msg')) {
+      expect(['a', 'b']).toContain(e.contactId);
+    }
+  });
+
+  it('never posts behind the group’s own last message', () => {
+    const lastMsgAt = NOON - 2 * HOUR;
+    const plan = simulate(
+      NOON - 20 * HOUR,
+      NOON,
+      withGroups([group('g1', ['a', 'b'], lastMsgAt)]),
+      's',
+    );
+    for (const e of plan.events.filter((x) => x.kind === 'group_msg')) {
+      expect(e.at).toBeGreaterThan(lastMsgAt);
+    }
+  });
+
+  it('stays silent for a group whose last message is newer than the window', () => {
+    const plan = simulate(
+      NOON - 8 * HOUR,
+      NOON,
+      withGroups([group('g1', ['a', 'b'], NOON - 30_000)]),
+      's',
+    );
+    expect(plan.events.filter((e) => e.kind === 'group_msg')).toEqual([]);
+  });
+
+  it('handles a group with no persona-backed members', () => {
+    expect(simulate(NOON - 8 * HOUR, NOON, withGroups([group('g1', [])]), 's').events).toEqual([]);
+  });
+
+  it('is deterministic per seed', () => {
+    const a = simulate(NOON - 12 * HOUR, NOON, withGroups([group('g1', ['a', 'b'])]), 's');
+    const b = simulate(NOON - 12 * HOUR, NOON, withGroups([group('g1', ['a', 'b'])]), 's');
+    expect(a.events).toEqual(b.events);
+  });
+
+  it('rate-limits each group independently', () => {
+    const plan = simulate(
+      NOON - 20 * HOUR,
+      NOON,
+      withGroups([group('g1', ['a', 'b']), group('g2', ['c', 'd'])]),
+      's',
+    );
+    for (const id of ['g1', 'g2']) {
+      const times = plan.events.filter((e) => e.convId === id).map((e) => e.at);
+      expect(maxPerWindow(times)).toBeLessThanOrEqual(GROUP_MAX_PER_WINDOW);
+    }
   });
 });

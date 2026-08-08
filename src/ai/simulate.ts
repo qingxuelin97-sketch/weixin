@@ -66,11 +66,30 @@ export interface SimInput {
 }
 
 export interface SimEvent {
-  kind: 'heartbeat' | 'moment_post';
+  kind: 'heartbeat' | 'moment_post' | 'group_msg';
   contactId: string;
   convId?: string;
   at: number;
 }
+
+/**
+ * The completion bar for offline group chat is "≤2 events per 15 minutes".
+ * Enforced by construction — group slots are spaced at least this far apart —
+ * rather than by a post-hoc filter, so the guarantee can't be lost to a later
+ * refactor that reorders the pipeline.
+ */
+export const GROUP_WINDOW_MS = 15 * 60_000;
+export const GROUP_MAX_PER_WINDOW = 2;
+
+/**
+ * Minimum spacing between two group messages.
+ *
+ * To hold "at most k events in ANY window of length W", k consecutive gaps must
+ * span more than W — otherwise a window can straddle k+1 events. With k=2 and
+ * W=15min the naive W/k = 7.5min is NOT enough: messages at 0, 7:30 and 15:00
+ * put three inside a 15-minute window. Hence the extra minute.
+ */
+export const MIN_GROUP_GAP_MS = Math.floor(GROUP_WINDOW_MS / GROUP_MAX_PER_WINDOW) + 60_000;
 
 export interface SimPlan {
   events: SimEvent[];
@@ -148,11 +167,57 @@ export function simulate(t0: number, t1: number, input: SimInput, seed: string):
     events.push({ kind: 'moment_post', contactId: cand.contactId, at });
   }
 
+  // --- Group chats: quiet chatter, rate-limited per group. ---
+  for (const g of input.groups) {
+    if (g.memberIds.length === 0) continue;
+    events.push(...planGroupChatter(g, from, to, hours, seed));
+  }
+
   // Chronological: the drain inserts in this order, keeping rowid == time order.
   events.sort((a, b) => a.at - b.at);
 
   // Cap total LLM work regardless of how the rolls went.
   return { events: events.slice(0, LIMITS.llmCalls), from, to, truncated };
+}
+
+/**
+ * Plan one group's offline chatter.
+ *
+ * A group that has been running all night should look like it ticked over, not
+ * like it exploded — so the budget is per-hour, and slots are forced at least
+ * GROUP_WINDOW_MS/GROUP_MAX_PER_WINDOW apart. That spacing is what makes the
+ * "≤2 events per 15 min" bar hold for every window, not just on average.
+ */
+function planGroupChatter(
+  g: SimGroup,
+  from: number,
+  to: number,
+  hours: number,
+  seed: string,
+): SimEvent[] {
+  // Never insert behind the group's own last message (rowid == time order).
+  const lo = Math.max(from, (g.lastMsgAt ?? 0) + MINUTE);
+  if (lo >= to) return [];
+
+  const rng = seededRng(`grp:${seed}:${g.convId}:${from}`);
+  const budget = Math.min(groupMessageBudget(lo, to), Math.max(1, Math.round(hours)));
+  const maxBySpacing = Math.floor((to - lo) / MIN_GROUP_GAP_MS) + 1;
+  const count = Math.min(budget, maxBySpacing);
+  if (count <= 0) return [];
+
+  const out: SimEvent[] = [];
+  let cursor = lo;
+  for (let i = 0; i < count; i++) {
+    // At least MIN_GROUP_GAP_MS past the previous message, plus jitter, so the
+    // group doesn't tick like a metronome.
+    const at = Math.round(cursor + rng() * MIN_GROUP_GAP_MS);
+    if (at > to) break;
+    const speaker = g.memberIds[Math.floor(rng() * g.memberIds.length)];
+    out.push({ kind: 'group_msg', contactId: speaker, convId: g.convId, at });
+    cursor = at + MIN_GROUP_GAP_MS;
+    if (cursor > to) break;
+  }
+  return out;
 }
 
 /**

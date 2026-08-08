@@ -322,6 +322,31 @@ export const storySaves = sqliteTable('story_saves', {
 });
 
 /**
+ * Every kind of thing that can happen on its own schedule.
+ *
+ * THIS IS THE ONE LIST. `ActionKind` in src/ai/scheduler.ts is derived from it,
+ * so the runtime union and the persisted column can no longer drift apart — they
+ * did once already (the column said `comment` while the code wrote
+ * `moment_comment`, and `transfer_accept` was missing from the column entirely).
+ *
+ * `story_tick` is reserved for V3 and has no handler yet; an unhandled kind is
+ * dropped by the executor rather than throwing.
+ */
+export const SCHEDULED_ACTION_KINDS = [
+  'heartbeat',
+  'rp_grab',
+  'transfer_accept',
+  'moment_post',
+  'moment_like',
+  'moment_comment',
+  'group_msg',
+  'recall',
+  'story_tick',
+] as const;
+
+export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];
+
+/**
  * The single persisted queue that IS the time-evolution engine. Heartbeats,
  * staggered likes/comments, 1-8s red-packet grabs, recalls, offline backfill —
  * all live here. Executing every past-due row, using fire_at as the message
@@ -332,9 +357,7 @@ export const scheduledActions = sqliteTable(
   {
     id: text('id').primaryKey(),
     fireAt: integer('fire_at').notNull(),
-    kind: text('kind', {
-      enum: ['heartbeat', 'moment_post', 'moment_like', 'comment', 'rp_grab', 'recall', 'story_tick'],
-    }).notNull(),
+    kind: text('kind', { enum: SCHEDULED_ACTION_KINDS }).notNull(),
     payloadJson: text('payload_json'),
     status: text('status', { enum: ['pending', 'done', 'cancelled'] })
       .notNull()

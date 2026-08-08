@@ -44,17 +44,41 @@ export function nextHeartbeatAt(persona: PersonaVM, from: number): number {
   return Math.round(t);
 }
 
-/** Queue this persona's next proactive message. Id is stable per fire time. */
+/**
+ * Whether a heartbeat at `ts` may carry its text up front.
+ *
+ * Only the first message after a long silence qualifies. A persona's `greeting`
+ * is a generic opener — believable when they haven't spoken in a while, wrong if
+ * they messaged an hour ago. Everything else must be written at delivery, which
+ * is why it ships without a lock-screen preview (see notify-service).
+ */
+export function canPreWriteGreeting(persona: PersonaVM, lastMsgAt: number | undefined, ts: number): boolean {
+  if (!persona.greeting?.trim()) return false;
+  if (lastMsgAt == null) return true;
+  return ts - lastMsgAt >= 6 * 3_600_000;
+}
+
+/**
+ * Queue this persona's next proactive message. Id is stable per fire time.
+ *
+ * When the opener can be written now, it rides along in the payload: the
+ * notification shows exactly this text, and the handler persists exactly this
+ * text stamped at `fireAt`. That equality IS the consistency rule — see
+ * specs/backfill.md; without a pre-written body there is nothing a lock-screen
+ * notification could honestly display.
+ */
 export async function scheduleHeartbeat(
   persona: PersonaVM,
   convId: string,
   from: number,
+  lastMsgAt?: number,
 ): Promise<ScheduledAction> {
   const fireAt = nextHeartbeatAt(persona, from);
+  const body = canPreWriteGreeting(persona, lastMsgAt, fireAt) ? persona.greeting : undefined;
   return enqueue({
     kind: 'heartbeat',
     fireAt,
-    payload: { contactId: persona.contactId, convId },
+    payload: { contactId: persona.contactId, convId, ...(body ? { body } : {}) },
     now: from,
     id: `hb_${persona.contactId}_${fireAt}`,
   });

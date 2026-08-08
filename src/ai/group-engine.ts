@@ -241,3 +241,64 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     );
   });
 }
+
+/**
+ * One member says something in the group unprompted — nobody messaged first.
+ *
+ * This is the offline-backfill path: `simulate()` decides a group ticked over
+ * while the app was closed, and each planned slot becomes one line here. It
+ * deliberately skips the director (there is no turn to allocate — the speaker is
+ * already chosen) and plays a single short line, because backfilled chatter
+ * should read as ambient, not as a scene.
+ *
+ * @param at the message's intended timestamp; in the past when backfilling
+ */
+export async function sendGroupProactiveMessage(
+  conv: ConversationVM,
+  speaker: GroupMember,
+  members: GroupMember[],
+  globalTier: NsfwTierVM,
+  hooks: EngineHooks,
+  contactById: (id: string) => ContactVM | undefined,
+  at?: number,
+): Promise<void> {
+  if (!speaker.persona) return;
+  // Never talk over a live exchange in this group.
+  if (inFlight.has(conv.id)) return;
+
+  const ctrl = new AbortController();
+  inFlight.set(conv.id, ctrl);
+  try {
+    const stamp = at ?? hooks.now();
+    const recent = await repo.getMessages(conv.id, { limit: RECENT_WINDOW });
+    const nameOf = (id: string) =>
+      id === 'self' ? '我' : (contactById(id)?.remark ?? contactById(id)?.name ?? id);
+
+    const bubbles = await generateActorLines(
+      conv,
+      speaker,
+      // No director ran, so hand it a neutral plan: start something, don't reply.
+      { agentId: speaker.contactId, intent: 'newtopic', priority: 0 },
+      recent,
+      members.map((m) => m.name),
+      globalTier,
+      nameOf,
+      stamp,
+      ctrl.signal,
+    );
+    if (ctrl.signal.aborted || bubbles.length === 0) return;
+
+    // One line only — ambient chatter, not a monologue.
+    const b = bubbles[0];
+    await hooks.appendMessage({
+      convId: conv.id,
+      senderId: speaker.contactId,
+      type: b.type === 'sticker' ? 'sticker' : 'text',
+      content: b.content,
+      status: 'sent',
+      createdAt: stamp,
+    });
+  } finally {
+    if (inFlight.get(conv.id) === ctrl) inFlight.delete(conv.id);
+  }
+}

@@ -4,13 +4,22 @@
  * unit-testable, while handlers can reach the store/Repo freely.
  */
 import { useEffect } from 'react';
-import { registerHandler, startScheduler, stopScheduler, hasPendingFor } from '../ai/scheduler';
+import {
+  registerHandler,
+  startScheduler,
+  stopScheduler,
+  hasPendingFor,
+  duePending,
+} from '../ai/scheduler';
 import { claimRedPacket, acceptTransfer } from '../ai/money-service';
 import { sendProactiveMessage } from '../ai/engine';
+import { sendGroupProactiveMessage } from '../ai/group-engine';
 import { scheduleHeartbeat } from '../ai/heartbeat';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
-import type { SimContact } from '../ai/simulate';
+import { syncNotifications } from '../ai/notify-service';
+import { useForegroundLifecycle } from './useForegroundLifecycle';
+import type { SimContact, SimGroup } from '../ai/simulate';
 import { repo } from '../db/repo';
 import { useAppStore } from '../store/appStore';
 import type { NsfwTierVM } from '../data/types';
@@ -42,19 +51,58 @@ export function useSchedulerRuntime(enabled: boolean): void {
     });
 
     // An AI reaches out on its own, then queues its next one.
-    registerHandler('heartbeat', async (payload) => {
+    registerHandler('heartbeat', async (payload, action) => {
       const contactId = String(payload.contactId ?? '');
       const convId = String(payload.convId ?? '');
       const at = typeof payload.at === 'number' ? payload.at : undefined;
+      const body = typeof payload.body === 'string' ? payload.body : undefined;
       if (!contactId || !convId) return;
       const s = useAppStore.getState();
       const peer = s.contactById(contactId);
       const persona = s.personaFor(contactId);
       if (!peer || !persona) return;
-      const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-      await sendProactiveMessage(convId, peer, persona, tier, hooks, at);
+
+      if (body) {
+        // A notification may already have shown this exact text on the lock
+        // screen. Persist it verbatim, stamped at the time it was advertised —
+        // regenerating here would contradict what the user already read.
+        await hooks.appendMessage({
+          convId,
+          senderId: peer.id,
+          type: 'text',
+          content: body,
+          status: 'sent',
+          createdAt: at ?? action.fireAt,
+        });
+      } else {
+        const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+        await sendProactiveMessage(convId, peer, persona, tier, hooks, at);
+      }
       // Chain the next one so the rhythm continues.
-      await scheduleHeartbeat(persona, convId, Date.now());
+      const last = s.messagesFor(convId).at(-1)?.createdAt;
+      await scheduleHeartbeat(persona, convId, Date.now(), last);
+    });
+
+    // A group member says something unprompted (offline backfill chatter).
+    registerHandler('group_msg', async (payload, action) => {
+      const convId = String(payload.convId ?? '');
+      const contactId = String(payload.contactId ?? '');
+      const at = typeof payload.at === 'number' ? payload.at : action.fireAt;
+      if (!convId || !contactId) return;
+      const s = useAppStore.getState();
+      const conv = s.conversationById(convId);
+      const persona = s.personaFor(contactId);
+      if (!conv || conv.type !== 'group' || !persona) return;
+
+      const members = (conv.memberIds ?? []).map((id) => {
+        const c = s.contactById(id);
+        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: s.personaFor(id) };
+      });
+      const speaker = members.find((m) => m.contactId === contactId);
+      if (!speaker?.persona) return;
+
+      const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+      await sendGroupProactiveMessage(conv, speaker, members, tier, hooks, s.contactById, at);
     });
 
     const momentsHooks = {
@@ -100,41 +148,65 @@ export function useSchedulerRuntime(enabled: boolean): void {
     });
 
     startScheduler();
-
-    void (async () => {
-      const s = useAppStore.getState();
-      const now = Date.now();
-
-      // 1) Backfill what "happened" while the app was closed. Runs first so the
-      //    fabricated past is queued before any future scheduling looks at it.
-      const singles = s.conversations.flatMap<SimContact>((c) => {
-        if (c.type !== 'single' || !c.peerId) return [];
-        const persona = s.personaFor(c.peerId);
-        if (!persona) return [];
-        return [{ contactId: c.peerId, convId: c.id, persona, lastMsgAt: c.lastMsgAt }];
-      });
-      try {
-        await runBackfill(now, { singles, groups: [] });
-      } catch {
-        // A failed backfill must never block startup — the app still works,
-        // it just doesn't show a fabricated absence this launch.
-      }
-
-      // 2) Seed each persona's first heartbeat and first Moments post. Without
-      //    this neither feature ever fires — nothing else enqueues the first one.
-      for (const conv of s.conversations) {
-        if (conv.type !== 'single' || !conv.peerId) continue;
-        const persona = s.personaFor(conv.peerId);
-        if (!persona) continue;
-        if (!(await hasPendingFor('heartbeat', persona.contactId))) {
-          await scheduleHeartbeat(persona, conv.id, now);
-        }
-        if (!(await hasPendingFor('moment_post', persona.contactId))) {
-          await scheduleNextMoment(persona, now);
-        }
-      }
-    })();
+    void foregroundPass();
 
     return () => stopScheduler();
   }, [enabled]);
+
+  // Every return to the foreground repeats the pass. Before M5 this ran only
+  // once at hydrate, so on a phone — where background→foreground is the normal
+  // path and the WebView never remounts — backfill effectively never fired.
+  useForegroundLifecycle(enabled, { onForeground: foregroundPass });
+}
+
+/**
+ * Backfill the gap, top up missing schedules, and rebuild the OS notifications.
+ * Safe to run repeatedly: the barrier bounds the backfill window and every
+ * enqueue uses a stable id, so a second pass adds nothing the first already did.
+ */
+async function foregroundPass(): Promise<void> {
+  const s = useAppStore.getState();
+  const now = Date.now();
+
+  // 1) Backfill what "happened" while away. First, so the fabricated past is
+  //    queued before any future scheduling looks at it.
+  const singles = s.conversations.flatMap<SimContact>((c) => {
+    if (c.type !== 'single' || !c.peerId) return [];
+    const persona = s.personaFor(c.peerId);
+    if (!persona) return [];
+    return [{ contactId: c.peerId, convId: c.id, persona, lastMsgAt: c.lastMsgAt }];
+  });
+  const groups = s.conversations.flatMap<SimGroup>((c) => {
+    if (c.type !== 'group') return [];
+    const memberIds = (c.memberIds ?? []).filter((id) => s.personaFor(id));
+    if (memberIds.length === 0) return [];
+    return [{ convId: c.id, memberIds, lastMsgAt: c.lastMsgAt }];
+  });
+  try {
+    await runBackfill(now, { singles, groups });
+  } catch {
+    // A failed backfill must never block startup — the app still works, it
+    // just doesn't show a fabricated absence this time.
+  }
+
+  // 2) Seed each persona's first heartbeat and Moments post. Without this
+  //    neither feature ever fires — nothing else enqueues the first one.
+  for (const conv of s.conversations) {
+    if (conv.type !== 'single' || !conv.peerId) continue;
+    const persona = s.personaFor(conv.peerId);
+    if (!persona) continue;
+    if (!(await hasPendingFor('heartbeat', persona.contactId))) {
+      await scheduleHeartbeat(persona, conv.id, now, conv.lastMsgAt);
+    }
+    if (!(await hasPendingFor('moment_post', persona.contactId))) {
+      await scheduleNextMoment(persona, now);
+    }
+  }
+
+  // 3) Rebuild the lock-screen notifications from the (now current) queue.
+  try {
+    await syncNotifications(await duePending(Number.MAX_SAFE_INTEGER), s.contacts, now);
+  } catch {
+    /* notifications are a bonus; never let them break the foreground path */
+  }
 }

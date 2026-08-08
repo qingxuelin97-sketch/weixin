@@ -103,35 +103,53 @@ export async function requestPermission(): Promise<boolean> {
  * Schedule notifications for future delivery.
  *
  * Native: handed to the OS, so they fire with the app closed — the point of the
- * feature. Web: the browser cannot schedule anything for a page that isn't
- * running, so only already-due items are shown and the rest are dropped. The
- * return value says how many the platform actually accepted, so callers don't
- * report success the platform never promised.
+ * feature.
+ *
+ * Web: a browser cannot schedule anything for a page that isn't running, so
+ * future items are simply not accepted. Already-due items ARE shown immediately
+ * (that much the browser can do). The return value counts only what the platform
+ * genuinely took on, so callers never report success the platform never promised.
  */
 export async function scheduleNotifications(
   items: ScheduledNotification[],
   now: number,
 ): Promise<number> {
   const future = items.filter((n) => n.fireAt > now);
-  if (future.length === 0) return 0;
+  const due = items.filter((n) => n.fireAt <= now);
 
   const plugin = await nativePlugin();
   if (plugin) {
+    if (future.length === 0 && due.length === 0) return 0;
     try {
       await plugin.schedule({
-        notifications: future.map((n) => ({
+        notifications: [...due, ...future].map((n) => ({
           id: n.id,
           title: n.title,
           body: displayBody(n),
-          schedule: { at: new Date(n.fireAt), allowWhileIdle: true },
+          // A past `at` fires immediately on Android; keep it rather than
+          // dropping the item, so a due notification is never silently lost.
+          schedule: { at: new Date(Math.max(n.fireAt, now)), allowWhileIdle: true },
         })),
       });
-      return future.length;
+      return due.length + future.length;
     } catch {
       return 0;
     }
   }
-  return 0; // web can't schedule ahead; see the doc comment
+
+  // Web: show what's already due, decline the rest.
+  let shown = 0;
+  if (due.length && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    for (const n of due) {
+      try {
+        new Notification(n.title, { body: displayBody(n), tag: String(n.id) });
+        shown++;
+      } catch {
+        /* some browsers refuse outside a service worker; count only what worked */
+      }
+    }
+  }
+  return shown;
 }
 
 /**
