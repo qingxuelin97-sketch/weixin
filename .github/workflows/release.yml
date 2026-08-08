@@ -32,12 +32,14 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # Capacitor 7 targets JDK 17+; the runner defaults to 17 but pin it so a
-      # runner-image change can't silently move us onto a different toolchain.
+      # JDK 21, NOT the runner's default 17: capacitor-android 7.6.x compiles
+      # with `sourceCompatibility 21`, and 17 fails with
+      # "invalid source release: 21" only once Gradle reaches that module —
+      # ~100s into the build, well past the point everything looks fine.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - run: pnpm install --frozen-lockfile
 

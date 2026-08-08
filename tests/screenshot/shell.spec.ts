@@ -113,3 +113,21 @@ test('backup & restore page', async ({ page }) => {
   await settle(page);
   await expect(page).toHaveScreenshot('backup.png', { fullPage: false });
 });
+
+test('search page (empty state)', async ({ page }) => {
+  await page.goto('/#/search');
+  await settle(page);
+  await expect(page).toHaveScreenshot('search-empty.png', { fullPage: false });
+});
+
+test('search page with results', async ({ page }) => {
+  await page.goto('/#/chats');
+  await page.waitForTimeout(600); // let hydrate() seed the corpus
+  await page.goto('/#/search');
+  await settle(page);
+  // 咖啡 hits a message body AND nothing else, so this golden covers the
+  // 聊天记录 group — the path a name-only query never exercises.
+  await page.getByLabel('搜索').fill('咖啡');
+  await page.waitForTimeout(200);
+  await expect(page).toHaveScreenshot('search-results.png', { fullPage: false });
+});

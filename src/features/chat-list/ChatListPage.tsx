@@ -22,7 +22,7 @@ export function ChatListPage() {
         title={totalUnread > 0 ? `微信(${totalUnread})` : '微信'}
         right={
           <>
-            <button className="navbar__btn" aria-label="搜索">
+            <button className="navbar__btn" aria-label="搜索" onClick={() => navigate('/search')}>
               <IconSearch />
             </button>
             <button className="navbar__btn" aria-label="更多">

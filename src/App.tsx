@@ -18,6 +18,7 @@ import { WalletPage } from './features/money/WalletPage';
 import { MomentsPage } from './features/moments/MomentsPage';
 import { MomentPublishPage } from './features/moments/MomentPublishPage';
 import { BackupPage } from './features/settings/BackupPage';
+import { SearchPage } from './features/search/SearchPage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
 
@@ -53,6 +54,7 @@ export function App() {
                 <Route path="/me" element={<MePage />} />
               </Route>
               <Route path="/chat/:convId" element={<ChatPage />} />
+              <Route path="/search" element={<SearchPage />} />
               <Route path="/moments" element={<MomentsPage />} />
               <Route path="/moments/publish" element={<MomentPublishPage />} />
               <Route path="/settings" element={<SettingsPage />} />

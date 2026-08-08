@@ -165,7 +165,7 @@ export function DiscoverPage() {
         title="发现"
         right={
           <>
-            <button className="navbar__btn" aria-label="搜索">
+            <button className="navbar__btn" aria-label="搜索" onClick={() => navigate('/search')}>
               <IconSearch />
             </button>
             <button className="navbar__btn" aria-label="更多">
