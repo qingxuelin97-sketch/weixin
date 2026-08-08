@@ -20,6 +20,7 @@ import { DEFAULT_VOICE } from '../llm/tts';
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
 import { moodOf } from '../lib/mood';
+import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 
 export interface EngineHooks {
@@ -249,6 +250,7 @@ export async function sendProactiveMessage(
   globalTier: NsfwTierVM,
   hooks: EngineHooks,
   at?: number,
+  opts: { nudge?: boolean } = {},
 ): Promise<void> {
   if (inFlight.has(convId)) return; // don't talk over a live exchange
   const ctrl = new AbortController();
@@ -261,6 +263,26 @@ export async function sendProactiveMessage(
   const silentMs = lastMsg ? (at ?? hooks.now()) - lastMsg.createdAt : 0;
   const gap = describeGap(silentMs);
 
+  // What to open WITH: a nudge about the unanswered message, a remembered fact
+  // to follow up on, their own fresh moment to share — or a plain greeting.
+  // "有事找你" reads human; "打招呼" reads like a bot on a timer.
+  let material = '';
+  if (opts.nudge) {
+    material =
+      '你上一条消息对方一直没回。轻轻问一下（"在忙？"这类），一句就好——' +
+      '不要连环追问，不要表现出不满，问完就等。';
+  } else {
+    const facts = await repo.getMemory(peer.id);
+    const moments = await repo.getMoments({ limit: 10 });
+    const own = moments.find(
+      (m) =>
+        m.authorId === peer.id &&
+        m.text &&
+        (at ?? hooks.now()) - m.createdAt < 24 * 3_600_000,
+    );
+    material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+  }
+
   await generateAndPlay(
     convId,
     peer,
@@ -269,8 +291,9 @@ export async function sendProactiveMessage(
     stamped,
     ctrl,
     `现在是你主动发消息给对方，不是在回复。${gap}` +
-      '找一个自然的由头开口（想起你们聊过的事、关心一下、分享点日常都行），' +
-      '**不要**用"有什么可以帮你"这种客服口气，就像真人突然想起朋友那样。1-2 条短消息即可。',
+      (material ? `\n${material}\n` : '') +
+      '找一个自然的由头开口，**不要**用"有什么可以帮你"这种客服口气，' +
+      '就像真人突然想起朋友那样。1-2 条短消息即可。',
   );
 }
 

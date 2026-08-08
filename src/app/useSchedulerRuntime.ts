@@ -12,16 +12,18 @@ import {
   hasPendingOfKind,
   duePending,
   enqueue,
+  actionExists,
 } from '../ai/scheduler';
 import { claimRedPacket, acceptTransfer } from '../ai/money-service';
 import { sendProactiveMessage } from '../ai/engine';
 import { sendGroupProactiveMessage } from '../ai/group-engine';
-import { scheduleHeartbeat } from '../ai/heartbeat';
+import { scheduleHeartbeat, shouldNudge } from '../ai/heartbeat';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
 import { getRouter } from '../llm/service';
+import { seededRng } from '../lib/money';
 import { syncNotifications } from '../ai/notify-service';
 import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
@@ -81,7 +83,8 @@ export function useSchedulerRuntime(enabled: boolean): void {
         });
       } else {
         const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-        await sendProactiveMessage(convId, peer, persona, tier, hooks, at);
+        const nudge = payload.nudge === true;
+        await sendProactiveMessage(convId, peer, persona, tier, hooks, at, { nudge });
       }
       // Chain the next one so the rhythm continues.
       const last = s.messagesFor(convId).at(-1)?.createdAt;
@@ -273,6 +276,24 @@ async function foregroundPass(): Promise<void> {
     }
     if (!(await hasPendingFor('moment_post', persona.contactId))) {
       await scheduleNextMoment(persona, now);
+    }
+
+    // Nudge: their last message sat unanswered for 6–48h. One per ignored
+    // message EVER — the id is checked against all statuses, because enqueue
+    // upserts and would otherwise revive a completed nudge as pending.
+    const last = s.messagesFor(conv.id).at(-1);
+    if (last && shouldNudge(last, persona, now)) {
+      const nudgeId = `nudge_${conv.id}_${last.id}`;
+      if (!(await actionExists(nudgeId))) {
+        const delay = (5 + seededRng(nudgeId)() * 25) * 60_000;
+        await enqueue({
+          kind: 'heartbeat',
+          fireAt: now + delay,
+          payload: { contactId: persona.contactId, convId: conv.id, nudge: true },
+          now,
+          id: nudgeId,
+        });
+      }
     }
   }
 

@@ -37,7 +37,8 @@ src/
                 / presets(三家预设) / bubbles(多气泡解析) / router(路由+降级)
                 / service(配置→Provider/Router 的接线)
   ai/           AI 业务纯逻辑：prompt(分层组装) / engine(单聊) / group-engine(群聊)
-                / director(调度决策) / memory(打分+抽取) / heartbeat(主动消息排期)
+                / director(调度决策) / memory(打分+抽取) / heartbeat(主动消息排期+素材+nudge)
+                / agent-dm(AI↔AI 私信与八卦扩散)
                 / scheduler(唯一时间演化路径) / money-service(红包转账编排)
                 / moments-engine(朋友圈排期+生成) / moments-service(朋友圈编排)
                 / simulate(离线回填规划，纯函数) / backfill(屏障+物化)
@@ -113,8 +114,12 @@ src/
 - **本容器构建不了 APK**：`dl.google.com` 被出网策略 403（Android SDK 与 Google Maven 都在
   这一个域名下），且无 `/dev/kvm`/`vmx`/`emulator`。APK 只能由 GitHub Actions 产出，
   见 `.github/workflows/release.yml`。
-- **写了没接线 = 没做**：M2 的 heartbeat、M4 的 notify 都曾「写完、有测试、零调用方」。
-  交付前 `grep -rn "from '.*<新模块>'" src/` 确认真有调用方，别只看单测绿。
+- **写了没接线 = 没做**：M2 的 heartbeat、M4 的 notify、M2 的 relations 层都曾
+  「写完、有测试、零调用方」。交付前 `grep -rn "from '.*<新模块>'" src/` 确认真有调用方。
+- **`enqueue` 按 id upsert**：给「一辈子只发一次」的动作（nudge）复用稳定 id 前必须
+  `actionExists(id)`——否则会把已完成的行覆写回 pending，无限重发。
+- **隐藏会话（AI↔AI 私信）的过滤做在 `search()` 内部**，不是 UI 层。UI 忘传也漏不出去。
+  新增用户可见面（如导出预览、通知）时想一下：隐藏会话进去了吗？泄漏即穿帮且不可逆。
 
 ## 4. 每个 feature 一份 spec
 

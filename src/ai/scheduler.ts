@@ -7,7 +7,7 @@
  * anywhere in the app: one queue means offline backfill (M4) is the same code
  * path as live execution, just with a wider time window.
  */
-import { idbGetAll, idbPut } from '../db/idb';
+import { idbGet, idbGetAll, idbPut } from '../db/idb';
 import type { ScheduledActionKind } from '../db/schema';
 
 /**
@@ -57,6 +57,15 @@ export async function duePending(now: number): Promise<ScheduledAction[]> {
 
 export async function markDone(a: ScheduledAction): Promise<void> {
   await idbPut('scheduled_actions', { ...a, status: 'done' });
+}
+
+/**
+ * Has an action with this id EVER been queued (any status)? `enqueue` upserts by
+ * id, so re-enqueueing a done action would silently revive it — for once-ever
+ * actions (nudges) callers must check this first.
+ */
+export async function actionExists(id: string): Promise<boolean> {
+  return (await idbGet<ScheduledAction>('scheduled_actions', id)) != null;
 }
 
 /** Is ANY action of this kind still pending? Used for roster-wide schedules (agent DMs). */

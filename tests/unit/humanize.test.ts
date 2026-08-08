@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { moodOf } from '../../src/lib/mood';
 import { relationsForPrompt, assembleSystemPrompt } from '../../src/ai/prompt';
+import { pickOpener, shouldNudge } from '../../src/ai/heartbeat';
+import { makePersona } from '../../src/data/persona-defaults';
 
 const NOON = new Date(2025, 7, 6, 12, 0, 0).getTime();
 const DAY = 86_400_000;
@@ -84,5 +86,66 @@ describe('assembleSystemPrompt — humanization layers', () => {
 
   it('omits the relations block when there are none', () => {
     expect(assembleSystemPrompt(base)).not.toContain('# 关系');
+  });
+});
+
+describe('pickOpener (主动性素材)', () => {
+  const facts = [
+    { fact: '他下周要面试', status: 'confirmed' },
+    { fact: '待定的事', status: 'pending' },
+  ];
+
+  it('is deterministic per seed', () => {
+    expect(pickOpener(facts, '晒图', 's1')).toEqual(pickOpener(facts, '晒图', 's1'));
+  });
+
+  it('only ever follows up on confirmed facts', () => {
+    for (let i = 0; i < 60; i++) {
+      const o = pickOpener(facts, undefined, `s${i}`);
+      if (o.kind === 'memory') expect(o.directive).toContain('他下周要面试');
+      expect(o.directive).not.toContain('待定的事');
+    }
+  });
+
+  it('uses all three sources across seeds — never a fixed priority', () => {
+    const kinds = new Set(
+      Array.from({ length: 100 }, (_, i) => pickOpener(facts, '刚发的朋友圈', `s${i}`).kind),
+    );
+    expect(kinds).toEqual(new Set(['memory', 'moment', 'greeting']));
+  });
+
+  it('falls back to a plain greeting with no material at all', () => {
+    expect(pickOpener([], undefined, 's').kind).toBe('greeting');
+  });
+});
+
+describe('shouldNudge (未回追问)', () => {
+  const HOUR = 3_600_000;
+  const p = makePersona({ contactId: 'a', core: 'c', proactivity: 1 });
+  const aiMsg = (ageMs: number) => ({ senderId: 'a', createdAt: NOON - ageMs, id: 7 });
+
+  it('never nudges when the user spoke last — there is nothing to chase', () => {
+    expect(shouldNudge({ senderId: 'self', createdAt: NOON - 10 * HOUR, id: 7 }, p, NOON)).toBe(false);
+  });
+
+  it('waits at least 6 hours and gives up after 48', () => {
+    expect(shouldNudge(aiMsg(5 * HOUR), p, NOON)).toBe(false);
+    expect(shouldNudge(aiMsg(49 * HOUR), p, NOON)).toBe(false);
+  });
+
+  it('is deterministic per ignored message — re-checking cannot flip the answer', () => {
+    const m = aiMsg(10 * HOUR);
+    expect(shouldNudge(m, p, NOON)).toBe(shouldNudge(m, p, NOON));
+  });
+
+  it('a zero-proactivity persona never chases', () => {
+    const shy = makePersona({ contactId: 'a', core: 'c', proactivity: 0 });
+    for (let id = 0; id < 50; id++) {
+      expect(shouldNudge({ senderId: 'a', createdAt: NOON - 10 * HOUR, id }, shy, NOON)).toBe(false);
+    }
+  });
+
+  it('handles an empty conversation', () => {
+    expect(shouldNudge(undefined, p, NOON)).toBe(false);
   });
 });

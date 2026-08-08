@@ -3,7 +3,6 @@ import {
   dmConvId,
   planNextDm,
   parseDmScript,
-  pickDmTopic,
   dmTimestamps,
   makeDmConversation,
   gossipFacts,
