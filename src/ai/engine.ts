@@ -13,7 +13,7 @@ import { typingDelay } from '../llm/bubbles';
 import { getEdge, effectiveAffinity, relationTier, tierDirective, recordRelEvent } from './relationship';
 import { noteUserReplied } from './agent-state';
 import { assembleSystemPrompt, relationsForPrompt, type PersonaView } from './prompt';
-import { selectFactsForInjection } from './memory';
+import { selectFactsForInjection, touchFacts } from './memory';
 import { getRouter } from '../llm/service';
 import type { GenerateContext, NsfwTier } from '../llm/router';
 import { playMessageSound } from '../lib/sound';
@@ -127,8 +127,10 @@ async function generateAndPlay(
   const recent = await repo.getMessages(convId, { limit: RECENT_WINDOW });
   const facts = await repo.getMemory(peer.id);
   const memory = selectFactsForInjection(facts, hooks.now());
-  const summary = await repo.getSetting<string>(`summary:${convId}`);
-  if (summary) memory.topK = [summary, ...memory.topK];
+  // Rolling summary from the memory loop — "上次聊到哪" survives the 30-message
+  // context window. (Was a settings read that nothing ever wrote, M2–M-D1.)
+  const summaryRow = await repo.getConvSummary(convId);
+  if (summaryRow?.summary) memory.topK = [`上次你们聊到：${summaryRow.summary}`, ...memory.topK];
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
 
   // Relations keyed by contactId are translated to display names — the model
@@ -256,6 +258,11 @@ async function generateAndPlay(
         createdAt: hooks.now(),
       });
       playMessageSound(hooks.now());
+    }
+    // The reply landed with these facts in context — count the reference
+    // (pending→confirmed on first use). Fire-and-forget bookkeeping.
+    if (bubbles.length > 0 && memory.ids.length > 0) {
+      void touchFacts(peer.id, memory.ids, hooks.now()).catch(() => {});
     }
   } catch {
     // Router threw past its own ladder — emit the persona refusal so the thread never breaks.

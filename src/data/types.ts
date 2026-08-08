@@ -178,6 +178,21 @@ export interface MemoryFactVM {
   isPinned: boolean;
   createdAt: number;
   lastRefAt?: number;
+  /** Where the fact came from (schema column, exposed M-D2). hearsay = gossip. */
+  source?: 'chat' | 'manual' | 'hearsay' | 'story';
+  /** 0..1; hearsay lands at 0.4, direct chat extraction at 0.9. */
+  confidence?: number;
+  /** Times this fact was injected into a prompt that produced a reply. */
+  refCount?: number;
+}
+
+/** One rolling summary per conversation (conv_summaries store). */
+export interface ConvSummaryVM {
+  convId: string;
+  summary: string;
+  /** Newest message id covered by this summary. */
+  uptoMsgId: number;
+  updatedAt: number;
 }
 
 /** Configured LLM provider slot (the real key lives in secure storage, not here). */

@@ -22,6 +22,7 @@ import type {
   MomentLikeVM,
   MomentCommentVM,
   MediaItemVM,
+  ConvSummaryVM,
 } from '../data/types';
 import {
   idbGetAll,
@@ -57,6 +58,8 @@ export interface Repo {
   getMemory(subjectId: string): Promise<MemoryFactVM[]>;
   putMemory(f: MemoryFactVM): Promise<void>;
   deleteMemory(id: string): Promise<void>;
+  getConvSummary(convId: string): Promise<ConvSummaryVM | undefined>;
+  putConvSummary(s: ConvSummaryVM): Promise<void>;
 
   // providers & settings
   getProviders(): Promise<ProviderVM[]>;
@@ -147,6 +150,12 @@ export class IdbRepo implements Repo {
   }
   async deleteMemory(id: string) {
     await idbDelete('memory_facts', id);
+  }
+  async getConvSummary(convId: string) {
+    return idbGet<ConvSummaryVM>('conv_summaries', convId);
+  }
+  async putConvSummary(s: ConvSummaryVM) {
+    await idbPut('conv_summaries', s);
   }
 
   async getProviders() {

@@ -20,6 +20,8 @@ import { sendGroupProactiveMessage } from '../ai/group-engine';
 import { scheduleHeartbeat, shouldNudge } from '../ai/heartbeat';
 import { getEdge, effectiveAffinity, heartbeatAffinityMul } from '../ai/relationship';
 import { noteProactiveSent, getAgentState } from '../ai/agent-state';
+import { extractMemory, maintainMemory } from '../ai/memory';
+import { getExtractMarker, setExtractMarker } from '../ai/memory-service';
 import { moodOf, moodParams } from '../lib/mood';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
@@ -106,6 +108,35 @@ export function useSchedulerRuntime(enabled: boolean): void {
         proactMul: moodParams(moodOf(contactId, now).key).proactMul,
         notBefore: state.cooldownUntil || undefined,
       });
+    });
+
+    // Post-conversation memory pass: extract stable facts + a rolling summary
+    // in ONE cheap role:'memory' call, then retire stale trivia. This is the
+    // loop that makes chats actually produce memory (dead code since M2).
+    registerHandler('mem_extract', async (payload) => {
+      const convId = String(payload.convId ?? '');
+      const contactId = String(payload.contactId ?? '');
+      const upto = Number(payload.uptoMsgId ?? 0);
+      if (!convId || !contactId || !upto) return;
+      const marker = await getExtractMarker(convId);
+      if (upto <= marker) return; // a later run already covered this span
+      const msgs = (await repo.getMessages(convId, { limit: 60 })).filter(
+        (m) => m.id > marker && m.id <= upto && m.type === 'text' && !m.isRecalled,
+      );
+      if (msgs.length === 0) return;
+      const router = await getRouter();
+      const res = await extractMemory(router, contactId, msgs, Date.now());
+      if (res.summary) {
+        await repo.putConvSummary({
+          convId,
+          summary: res.summary,
+          uptoMsgId: upto,
+          updatedAt: Date.now(),
+        });
+      }
+      // Marker advances even when nothing was worth keeping — the span is done.
+      await setExtractMarker(convId, upto);
+      await maintainMemory(contactId, Date.now());
     });
 
     // Flip a sent message to recalled (the send-then-recall drama's second act).

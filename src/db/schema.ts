@@ -342,6 +342,7 @@ export const SCHEDULED_ACTION_KINDS = [
   'group_msg',
   'agent_dm',
   'recall',
+  'mem_extract',
   'story_tick',
 ] as const;
 

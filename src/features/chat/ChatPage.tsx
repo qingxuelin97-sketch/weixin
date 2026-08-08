@@ -18,6 +18,7 @@ import { useAppStore } from '../../store/appStore';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
 import { hasUsableProvider } from '../../llm/service';
 import { sendUserMessage } from '../../ai/engine';
+import { maybeScheduleMemExtract } from '../../ai/memory-service';
 import { sendGroupMessage } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
 import type { GroupMember } from '../../ai/director';
@@ -83,6 +84,17 @@ export function ChatPage() {
   /** Long-press context menu: which message, anchored where. */
   const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
   const albumInputRef = useRef<HTMLInputElement>(null);
+
+  // Leaving the chat = the conversation went quiet → queue ONE memory
+  // extraction if enough new material accumulated (M-D2 loop trigger).
+  useEffect(() => {
+    return () => {
+      const c = useAppStore.getState().conversationById(convId);
+      if (c?.type === 'single' && c.peerId) {
+        void maybeScheduleMemExtract(convId, c.peerId, Date.now()).catch(() => {});
+      }
+    };
+  }, [convId]);
   useEffect(() => {
     if (!menu) return;
     // Any further interaction dismisses the menu, WeChat-style.

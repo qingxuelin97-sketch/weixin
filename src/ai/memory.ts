@@ -33,7 +33,7 @@ export function selectFactsForInjection(
   facts: MemoryFactVM[],
   now: number,
   opts: { maxPinned?: number; topK?: number } = {},
-): { pinned: string[]; topK: string[] } {
+): { pinned: string[]; topK: string[]; ids: string[] } {
   const maxPinned = opts.maxPinned ?? MAX_PINNED;
   const k = opts.topK ?? TOP_K;
   const live = facts.filter((f) => f.status !== 'archived');
@@ -51,7 +51,46 @@ export function selectFactsForInjection(
     .slice(0, k)
     .map((x) => x.f);
 
-  return { pinned: pinned.map((f) => f.fact), topK: rest.map((f) => f.fact) };
+  return {
+    pinned: pinned.map((f) => f.fact),
+    topK: rest.map((f) => f.fact),
+    // Injected fact ids, so a successful reply can bump their refCount (the
+    // pending→confirmed signal): a memory that got USED is a memory that held.
+    ids: [...pinned, ...rest].map((f) => f.id),
+  };
+}
+
+/** Mark injected facts as referenced; first use flips pending → confirmed. */
+export async function touchFacts(subjectId: string, factIds: string[], now: number): Promise<void> {
+  if (factIds.length === 0) return;
+  const wanted = new Set(factIds);
+  const all = await repo.getMemory(subjectId);
+  for (const f of all) {
+    if (!wanted.has(f.id)) continue;
+    await repo.putMemory({
+      ...f,
+      refCount: (f.refCount ?? 0) + 1,
+      lastRefAt: now,
+      status: f.status === 'pending' ? 'confirmed' : f.status,
+    });
+  }
+}
+
+const ARCHIVE_AFTER_MS = 30 * 24 * 3_600_000;
+
+/** Retire trivia: low-importance facts unreferenced for 30 days go to archive. */
+export async function maintainMemory(subjectId: string, now: number): Promise<number> {
+  const all = await repo.getMemory(subjectId);
+  let archived = 0;
+  for (const f of all) {
+    if (f.status === 'archived' || f.isPinned) continue;
+    const lastTouch = f.lastRefAt ?? f.createdAt;
+    if (f.importance <= 2 && now - lastTouch > ARCHIVE_AFTER_MS) {
+      await repo.putMemory({ ...f, status: 'archived' });
+      archived++;
+    }
+  }
+  return archived;
 }
 
 const EXTRACT_SYSTEM = `你是记忆整理员。从对话中提取关于用户的**稳定事实**（偏好、经历、关系、约定、身份等）。
@@ -59,12 +98,19 @@ const EXTRACT_SYSTEM = `你是记忆整理员。从对话中提取关于用户�
 - 忽略一次性的情绪和寒暄，只留下以后仍然成立的信息。
 - 每条事实不超过 30 字，必须附上它出自哪几条消息的 id。
 - 最多 5 条；没有值得记的就返回空数组。
-只输出 JSON：{"facts":[{"fact":"...","importance":1-5,"evidence_msg_ids":[1,2]}]}`;
+- summary 用一句话（≤50字）概括这段对话聊了什么、进展到哪，供下次接着聊。
+只输出 JSON：{"facts":[{"fact":"...","importance":1-5,"evidence_msg_ids":[1,2]}],"summary":"..."}`;
 
 interface ExtractedFact {
   fact: string;
   importance: number;
   evidence_msg_ids: number[];
+}
+
+export interface ExtractResult {
+  facts: MemoryFactVM[];
+  /** One-line conversation summary riding along in the SAME llm call (cost=0 extra). */
+  summary?: string;
 }
 
 /**
@@ -76,8 +122,8 @@ export async function extractMemory(
   subjectId: string,
   messages: MessageVM[],
   now: number,
-): Promise<MemoryFactVM[]> {
-  if (messages.length === 0) return [];
+): Promise<ExtractResult> {
+  if (messages.length === 0) return { facts: [] };
   const transcript = messages
     .map((m) => `[${m.id}] ${m.senderId === 'self' ? '用户' : 'TA'}: ${m.content ?? `[${m.type}]`}`)
     .join('\n');
@@ -96,11 +142,11 @@ export async function extractMemory(
     `memory:${subjectId}`,
   );
 
-  let parsed: { facts?: ExtractedFact[] };
+  let parsed: { facts?: ExtractedFact[]; summary?: string };
   try {
-    parsed = JSON.parse(stripFences(res.text)) as { facts?: ExtractedFact[] };
+    parsed = JSON.parse(stripFences(res.text)) as { facts?: ExtractedFact[]; summary?: string };
   } catch {
-    return []; // unparseable → extract nothing rather than store garbage
+    return { facts: [] }; // unparseable → extract nothing rather than store garbage
   }
 
   const saved: MemoryFactVM[] = [];
@@ -119,11 +165,15 @@ export async function extractMemory(
       status: 'pending',
       isPinned: false,
       createdAt: now,
+      source: 'chat',
+      confidence: 0.9,
+      refCount: 0,
     };
     await repo.putMemory(vm);
     saved.push(vm);
   }
-  return saved;
+  const summary = parsed.summary?.trim().slice(0, 80) || undefined;
+  return { facts: saved, summary };
 }
 
 function clamp(n: number, lo: number, hi: number): number {

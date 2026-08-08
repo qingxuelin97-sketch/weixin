@@ -142,3 +142,18 @@ DM = 正式 `conversations` 行，id = `dm_<a>_<b>`（a/b 按字典序，保证�
 - 通讯录先进资料卡（/contact/:id：发消息/语音通话/编辑人设/记忆），再进编辑；
   「＋」走 /contact-new（makePersona 兜底全部行为默认——防 undefined 字段陷阱）。
 - 每智能体模型 modelChat 见 specs/llm-provider.md「每智能体模型」。
+
+## M-D2 记忆闭环（2026-08）
+
+自 M2 起 `extractMemory` 零调用方——聊天从不产生记忆。现闭环：
+
+- **触发**：离开聊天页且自上次抽取新增 ≥6 条文本消息 → 排 `mem_extract`
+  （2min 后火，稳定 id=`mem_<conv>_<frontier>`+`actionExists` 防重发，走唯一时间路径）。
+- **一次调用三件事**（role:'memory' 廉价路由）：抽事实（source:'chat'
+  confidence:0.9，证据闸门不变）+ 会话滚动摘要（写 conv_summaries 表，
+  engine 注入「上次你们聊到：…」替换原 settings 死读）+ `maintainMemory`
+  归档（importance≤2 且 30 天未引用 → archived，pinned 豁免）。
+- **流转**：注入进成功回复的事实 `touchFacts`（refCount++/lastRefAt，
+  首次引用 pending→confirmed）；八卦入库 source:'hearsay' confidence:0.4。
+- **成本**：每会话每静默期 ≤1 次，估 +3~6 次/天；marker 无论有无产出都前移。
+- MemoryPage 显示来源标签（聊出来的/八卦）、低置信提示、引用次数。

@@ -54,10 +54,15 @@ export function MemoryPage() {
         {f.fact}
       </div>
       <div className="memory__meta">
-        {GOSSIP_RE.test(f.fact) && <span className="memory__tag memory__tag--gossip">八卦</span>}
+        {(f.source === 'hearsay' || GOSSIP_RE.test(f.fact)) && (
+          <span className="memory__tag memory__tag--gossip">八卦</span>
+        )}
+        {f.source === 'chat' && <span className="memory__tag">聊出来的</span>}
         {f.sensitivity !== 'normal' && <span className="memory__tag">{f.sensitivity === 'nsfw' ? '私密' : '敏感'}</span>}
         <span className="memory__date">
           {new Date(f.createdAt).toLocaleDateString('zh-CN')} · 重要度 {f.importance}
+          {f.confidence != null && f.confidence < 0.7 ? ' · 听说的，不一定准' : ''}
+          {(f.refCount ?? 0) > 0 ? ` · 提过 ${f.refCount} 次` : ''}
         </span>
       </div>
       <div className="memory__actions">
