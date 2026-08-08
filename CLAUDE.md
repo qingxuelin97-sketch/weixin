@@ -41,9 +41,10 @@ src/
                 / scheduler(唯一时间演化路径) / money-service(红包转账编排)
                 / moments-engine(朋友圈排期+生成) / moments-service(朋友圈编排)
                 / simulate(离线回填规划，纯函数) / backfill(屏障+物化)
+                / notify-service(队列→通知，含一致性铁律)
   lib/          通用纯函数：money(钱+种子随机) / wallet(红包/账本规则) / time(时间戳)
                 / sound(提示音) / voice(TTS 缓存+播放) / keystore(密钥加密存储)
-                / notify(预调度通知+内容分级) / backup(.aiwx 导出恢复)
+                / notify(预调度通知+内容分级) / backup(.aiwx 导出恢复) / search(全局搜索)
   data/         UI 视图模型类型 + 种子数据（占位色豁免颜色检查）
   store/        zustand 状态（由 Repo 水合 + 写穿，选择器签名稳定）
   components/   通用 UI：Avatar / NavBar / SubNav / icons(手写 SVG，零 PNG)
@@ -65,9 +66,12 @@ src/
   三级降级（软化重试+prefix → 宽松链粘性 → 人设化拒绝）。原始拒答永不上屏。
 - **`assembleSystemPrompt()`**：分层顺序固定 = 基底 → 人设 → 关系 → **NSFW 边界层** →
   记忆 → 场景。改顺序=改行为，需评审。
-- **`scheduledActions` 表**：见铁律 5。新增时间驱动行为 = 扩 `ActionKind` 联合类型 +
-  `registerHandler`，**不要**新建计时器。目前 6 种：heartbeat / rp_grab / transfer_accept /
-  moment_post / moment_like / moment_comment。
+- **`scheduledActions` 表**：见铁律 5。新增时间驱动行为 = 在 `SCHEDULED_ACTION_KINDS`
+  （`src/db/schema.ts`，**唯一那份列表**，`ActionKind` 由它派生）加一项 + `registerHandler`，
+  **不要**新建计时器。目前 7 种在用：heartbeat / rp_grab / transfer_accept / moment_post /
+  moment_like / moment_comment / group_msg（recall、story_tick 已预留）。
+- **前台生命周期**（`src/app/useForegroundLifecycle.ts`）：回前台 = 回填 → 撤销并重排通知。
+  没有它，`runBackfill` 只在冷启动跑一次——而手机上「切后台→回前台」才是常态。
 - **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
   不调 LLM、不碰存储、不读挂钟。它只产出「何时该发生什么」，由 `backfill.ts` 物化成 fireAt
   在过去的 scheduled_actions，交给同一个执行器排空。改限额或窗口规则要同步 `specs/backfill.md`。
@@ -103,6 +107,14 @@ src/
   在这里会被静默读成「从不发帖」「从不点赞」，不报错、只是功能消失。
 - **Capacitor 插件要对齐主版本**：本项目 core 是 7.x，插件必须装 `@^7`。装成 8.x 只有一行
   peer warning，不会报错，但原生侧行为未定义。
+- **构建 APK 需要 JDK 21，不是 17**：capacitor-android 7.6.x 以 `sourceCompatibility 21`
+  编译。用 17 时前面一切正常，直到 Gradle 走到那个模块才报 `invalid source release: 21`
+  ——已经过去 100 秒。CI 里 pin 死 21。
+- **本容器构建不了 APK**：`dl.google.com` 被出网策略 403（Android SDK 与 Google Maven 都在
+  这一个域名下），且无 `/dev/kvm`/`vmx`/`emulator`。APK 只能由 GitHub Actions 产出，
+  见 `.github/workflows/release.yml`。
+- **写了没接线 = 没做**：M2 的 heartbeat、M4 的 notify 都曾「写完、有测试、零调用方」。
+  交付前 `grep -rn "from '.*<新模块>'" src/` 确认真有调用方，别只看单测绿。
 
 ## 4. 每个 feature 一份 spec
 
