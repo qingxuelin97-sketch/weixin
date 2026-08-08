@@ -22,8 +22,11 @@ import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
+import { Capacitor } from '@capacitor/core';
 import { getRouter } from '../llm/service';
 import { seededRng } from '../lib/money';
+import { playMessageSound, resumeAudio } from '../lib/sound';
+import { requestPermission } from '../lib/notify';
 import { syncNotifications } from '../ai/notify-service';
 import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
@@ -73,14 +76,17 @@ export function useSchedulerRuntime(enabled: boolean): void {
         // A notification may already have shown this exact text on the lock
         // screen. Persist it verbatim, stamped at the time it was advertised —
         // regenerating here would contradict what the user already read.
+        const stamp = at ?? action.fireAt;
         await hooks.appendMessage({
           convId,
           senderId: peer.id,
           type: 'text',
           content: body,
           status: 'sent',
-          createdAt: at ?? action.fireAt,
+          createdAt: stamp,
         });
+        // Stamped so a backfilled past message stays silent; a live one dings.
+        playMessageSound(stamp);
       } else {
         const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
         const nudge = payload.nudge === true;
@@ -114,6 +120,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
             status: 'sent',
             createdAt: Date.now(),
           });
+          playMessageSound(Date.now());
         }
       }
     });
@@ -226,7 +233,24 @@ export function useSchedulerRuntime(enabled: boolean): void {
     startScheduler();
     void foregroundPass();
 
-    return () => stopScheduler();
+    // First-run notification ask (H1: requestPermission existed since M4 with
+    // zero callers — Android 13+ notifications were fully inert). Delayed a few
+    // seconds so the dialog doesn't collide with the launch moment; one-shot
+    // forever via the notifyAsked setting; the settings row can re-trigger it.
+    const askTimer = setTimeout(() => {
+      void (async () => {
+        if (!Capacitor.isNativePlatform()) return;
+        if (await repo.getSetting<boolean>('notifyAsked')) return;
+        const granted = await requestPermission();
+        await repo.putSetting('notifyGranted', granted);
+        await repo.putSetting('notifyAsked', true);
+      })().catch(() => {});
+    }, 4_000);
+
+    return () => {
+      clearTimeout(askTimer);
+      stopScheduler();
+    };
   }, [enabled]);
 
   // Every return to the foreground repeats the pass. Before M5 this ran only
@@ -240,9 +264,31 @@ export function useSchedulerRuntime(enabled: boolean): void {
  * Safe to run repeatedly: the barrier bounds the backfill window and every
  * enqueue uses a stable id, so a second pass adds nothing the first already did.
  */
+let lastPassAt = 0;
+let passInFlight = false;
+
 async function foregroundPass(): Promise<void> {
+  // One gate for BOTH triggers (the mount-time pass and appStateChange): two
+  // passes seconds apart carry different `now`s → different action ids → the
+  // same absence fabricated twice (bug M5). In-flight guard for the same race.
+  const t = Date.now();
+  if (passInFlight || t - lastPassAt < 3_000) return;
+  passInFlight = true;
+  lastPassAt = t;
+  try {
+    await runForegroundPass();
+  } finally {
+    passInFlight = false;
+  }
+}
+
+async function runForegroundPass(): Promise<void> {
   const s = useAppStore.getState();
   const now = Date.now();
+
+  // 0) Re-arm audio: Android suspends the AudioContext on every backgrounding,
+  //    and a suspended context swallows chimes without erroring (bug #6).
+  resumeAudio();
 
   // 1) Backfill what "happened" while away. First, so the fabricated past is
   //    queued before any future scheduling looks at it.

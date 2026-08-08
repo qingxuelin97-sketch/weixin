@@ -119,6 +119,16 @@
   color: var(--color-text-primary);
   font-size: var(--fs-cell-sub);
 }
+.btn-ghost:active {
+  background: var(--color-cell-bg-pressed);
+}
+/* Selected state for pick-one buttons (设为默认聊天 etc.): the choice must be
+   readable on the button itself, not only in a card the user scrolled past. */
+.btn-ghost--active {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+  font-weight: var(--fw-medium);
+}
 
 /* Segmented control (NSFW tier, etc.) */
 .segmented {

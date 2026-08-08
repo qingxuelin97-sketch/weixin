@@ -28,6 +28,19 @@ export const BACKUP_EXT = '.aiwx';
 /** Stores excluded from every export. See the module comment for why. */
 const NEVER_EXPORT = new Set(['tts_cache']);
 
+/**
+ * Individual settings rows that must never travel in a backup. The WebCrypto
+ * master key is non-extractable and DEVICE-LOCAL: JSON.stringify turns it into
+ * `{}`, and restoring that husk over a working key bricks the keystore — every
+ * later encrypt throws and no API key can ever be saved again (bug H3).
+ */
+const NEVER_EXPORT_SETTING_KEYS = new Set(['__crypto_master']);
+
+function isPortableSettingRow(row: unknown): boolean {
+  const k = (row as { key?: unknown })?.key;
+  return typeof k !== 'string' || !NEVER_EXPORT_SETTING_KEYS.has(k);
+}
+
 export interface BackupManifest {
   version: number;
   /** IndexedDB schema version the export came from. */
@@ -47,6 +60,7 @@ export interface BackupFile {
 
 /** Strip anything that must not leave the device. */
 function sanitize(store: string, rows: unknown[]): unknown[] {
+  if (store === 'settings') return rows.filter(isPortableSettingRow);
   if (store !== 'providers') return rows;
   // Keep the slot configuration, drop anything key-shaped. `keyAlias` is only a
   // handle into the keystore, so it is safe and necessary to keep.
@@ -82,6 +96,7 @@ export async function exportBackup(now: number, appVersion?: string): Promise<Ba
       omitted: {
         tts_cache: '语音缓存可按原文重新合成，不占备份体积',
         'providers.apiKey': 'API key 只存在设备安全存储，永不导出',
+        'settings.__crypto_master': '本机加密主密钥不可迁移，恢复时保留本机的',
       },
       appVersion,
     },
@@ -130,13 +145,26 @@ export async function restoreBackup(file: BackupFile, now: number): Promise<Rest
   const unknownStores = Object.keys(file.stores).filter((n) => !known.has(n));
   const restored: Record<string, number> = {};
 
+  // THIS device's crypto master key survives every restore: the incoming file
+  // never legitimately carries one (export strips it; old files carry a broken
+  // `{}` husk), and clearing it would orphan every locally-encrypted API key.
+  const localMaster = await idbGetAll('settings').then((rows) =>
+    rows.filter((r) => !isPortableSettingRow(r)),
+  );
+
   for (const def of STORES) {
-    const rows = file.stores[def.name];
+    let rows = file.stores[def.name];
     if (!rows) continue; // absent from this backup — leave the store untouched
+    if (def.name === 'settings') rows = rows.filter(isPortableSettingRow);
     await idbClear(def.name);
     for (const row of rows) await idbPut(def.name, row);
     restored[def.name] = rows.length;
   }
+  for (const row of localMaster) await idbPut('settings', row);
+
+  // The restored file may be days old; without re-arming the barrier the next
+  // foreground pass would "backfill" that whole gap with fabricated activity.
+  await idbPut('settings', { key: 'lastForegroundAt', value: now });
 
   return { restored, unknownStores, snapshot };
 }

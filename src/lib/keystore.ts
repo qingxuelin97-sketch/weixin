@@ -15,7 +15,11 @@ const LS_PREFIX = 'secret.';
 
 async function getMasterKey(): Promise<CryptoKey> {
   const existing = await idbGet<{ key: string; value: CryptoKey }>('settings', MASTER_ROW_KEY);
-  if (existing?.value) return existing.value;
+  // instanceof, not truthiness: a restore from an old backup could have written
+  // a `{}` husk here (CryptoKey JSON-serializes to nothing), and handing that
+  // to WebCrypto throws on every call. Regenerating self-heals such devices —
+  // previously-saved secrets are lost either way, but saving works again.
+  if (existing?.value instanceof CryptoKey) return existing.value;
   const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, [
     'encrypt',
     'decrypt',

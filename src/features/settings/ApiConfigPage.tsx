@@ -57,9 +57,15 @@ export function ApiConfigPage() {
 
   const saveKey = async () => {
     if (!editing || !keyInput.trim()) return;
-    await setSecret(editing.keyAlias, keyInput.trim());
-    setKeyInput('');
-    setTestMsg({ ok: true, text: '密钥已加密保存到本机' });
+    try {
+      await setSecret(editing.keyAlias, keyInput.trim());
+      setKeyInput('');
+      setTestMsg({ ok: true, text: '密钥已加密保存到本机' });
+    } catch (e) {
+      // A failed save MUST be loud — silently keeping the input made the user
+      // believe the key was stored when the keystore was actually broken.
+      setTestMsg({ ok: false, text: `密钥保存失败：${e instanceof Error ? e.message : String(e)}` });
+    }
     await reload();
   };
 
@@ -190,11 +196,19 @@ export function ApiConfigPage() {
               <div className={`test-result${testMsg.ok ? ' test-result--ok' : ''}`}>{testMsg.text}</div>
             )}
             <div style={{ display: 'flex', gap: 10, margin: '10px 16px 0' }}>
-              <button className="btn-ghost" style={{ margin: 0 }} onClick={() => setAsDefault(editing.id)}>
-                设为默认聊天
+              <button
+                className={`btn-ghost${defaultId === editing.id ? ' btn-ghost--active' : ''}`}
+                style={{ margin: 0 }}
+                onClick={() => void setAsDefault(editing.id).catch(() => {})}
+              >
+                {defaultId === editing.id ? '✓ 当前默认聊天' : '设为默认聊天'}
               </button>
-              <button className="btn-ghost" style={{ margin: 0 }} onClick={() => setAsNsfw(editing.id)}>
-                设为宽松通道
+              <button
+                className={`btn-ghost${nsfwId === editing.id ? ' btn-ghost--active' : ''}`}
+                style={{ margin: 0 }}
+                onClick={() => void setAsNsfw(editing.id).catch(() => {})}
+              >
+                {nsfwId === editing.id ? '✓ 当前宽松通道' : '设为宽松通道'}
               </button>
             </div>
             <button className="btn-ghost" onClick={() => removeProvider(editing.id)}>

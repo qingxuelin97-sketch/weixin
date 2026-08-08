@@ -132,7 +132,7 @@ export async function sendGroupMessage(
           status: 'sent',
           createdAt: hooks.now(),
         });
-        playMessageSound();
+        playMessageSound(hooks.now());
       }
     }
   } finally {

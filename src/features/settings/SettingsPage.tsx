@@ -1,7 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
-import { isMessageSoundEnabled, setMessageSoundEnabled } from '../../lib/sound';
+import {
+  isMessageSoundEnabled,
+  setMessageSoundEnabled,
+  isVibrateEnabled,
+  setVibrateEnabled,
+} from '../../lib/sound';
+import { requestPermission } from '../../lib/notify';
 import { repo } from '../../db/repo';
 import type { NsfwTierVM } from '../../data/types';
 import './settings.css';
@@ -11,12 +17,15 @@ const NSFW_LABEL: Record<NsfwTierVM, string> = { off: '关闭', ambiguous: '暧�
 export function SettingsPage() {
   const navigate = useNavigate();
   const [sound, setSound] = useState(isMessageSoundEnabled());
+  const [vibrate, setVibrate] = useState(isVibrateEnabled());
   const [nsfw, setNsfw] = useState<NsfwTierVM>('off');
   const [providerCount, setProviderCount] = useState(0);
+  const [notifyOn, setNotifyOn] = useState<boolean | null>(null);
 
   useEffect(() => {
     void repo.getSetting<NsfwTierVM>('nsfwGlobalTier').then((t) => setNsfw(t ?? 'off'));
     void repo.getProviders().then((p) => setProviderCount(p.filter((x) => x.enabled).length));
+    void repo.getSetting<boolean>('notifyGranted').then((v) => setNotifyOn(v ?? false));
   }, []);
 
   const setTier = (t: NsfwTierVM) => {
@@ -28,6 +37,26 @@ export function SettingsPage() {
     const next = !sound;
     setSound(next);
     setMessageSoundEnabled(next);
+  };
+
+  const toggleVibrate = () => {
+    const next = !vibrate;
+    setVibrate(next);
+    setVibrateEnabled(next);
+  };
+
+  // Turning the row on triggers the OS dialog — the one call that was written
+  // in M4 but had zero callers, leaving Android 13+ notifications fully inert.
+  const toggleNotify = async () => {
+    if (notifyOn) {
+      setNotifyOn(false);
+      await repo.putSetting('notifyGranted', false);
+      return;
+    }
+    const granted = await requestPermission();
+    setNotifyOn(granted);
+    await repo.putSetting('notifyGranted', granted);
+    await repo.putSetting('notifyAsked', true);
   };
 
   return (
@@ -46,9 +75,33 @@ export function SettingsPage() {
               <span className="switch__knob" />
             </span>
           </div>
+          <div className="settings__row settings__row--divided" onClick={toggleVibrate}>
+            <span className="settings__label">新消息振动</span>
+            <span className={`switch${vibrate ? ' switch--on' : ''}`}>
+              <span className="switch__knob" />
+            </span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => void toggleNotify()}
+          >
+            <span className="settings__label">锁屏通知</span>
+            <span className={`switch${notifyOn ? ' switch--on' : ''}`}>
+              <span className="switch__knob" />
+            </span>
+          </div>
           <div className="settings__row" onClick={() => navigate('/settings/backup')}>
             <span className="settings__label">备份与恢复</span>
             <span className="settings__chevron">›</span>
+          </div>
+        </div>
+
+        <div className="settings__group">
+          <div className="field">
+            <span className="field__hint">
+              提示音默认使用内置合成音。想要微信原声：把你自己提取的 message.mp3 放到应用的
+              sounds 目录（Web 端为 public/sounds/message.mp3），App 会自动优先使用。
+            </span>
           </div>
         </div>
 

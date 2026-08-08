@@ -129,7 +129,9 @@ let timer: ReturnType<typeof setInterval> | null = null;
 /** Start the foreground tick. Idempotent. */
 export function startScheduler(now: () => number = () => Date.now()): void {
   if (timer) return;
-  timer = setInterval(() => void runDueActions(now()), TICK_MS);
+  // Swallow tick-level failures (e.g. IDB refusing mid-shutdown): an unhandled
+  // rejection every second buries the console and can surface as a crash toast.
+  timer = setInterval(() => void runDueActions(now()).catch(() => {}), TICK_MS);
 }
 
 export function stopScheduler(): void {

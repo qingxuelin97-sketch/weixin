@@ -195,7 +195,7 @@ async function generateAndPlay(
           status: 'sent',
           createdAt: hooks.now(),
         });
-        playMessageSound();
+        playMessageSound(hooks.now());
         await enqueue({
           kind: 'recall',
           fireAt: hooks.now() + 1500,
@@ -218,7 +218,7 @@ async function generateAndPlay(
         status: 'sent',
         createdAt: hooks.now(),
       });
-      playMessageSound();
+      playMessageSound(hooks.now());
     }
   } catch {
     // Router threw past its own ladder — emit the persona refusal so the thread never breaks.

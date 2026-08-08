@@ -27,6 +27,8 @@ import { repo, IdbRepo } from '../db/repo';
 
 interface AppState {
   hydrated: boolean;
+  /** Set when hydrate() failed — the shell shows a retry screen, not white. */
+  hydrateError: string | null;
   contacts: ContactVM[];
   conversations: ConversationVM[];
   messages: Record<string, MessageVM[]>;
@@ -86,8 +88,65 @@ const EMPTY_COMMENTS: MomentCommentVM[] = [];
 // Fixed timestamp for seeded rows so first-run state is deterministic.
 const SEED_BASE = 1_754_500_000_000;
 
+// Module-level so two near-simultaneous hydrate() calls can't seed twice.
+let hydrateInFlight = false;
+
+type Set = (partial: Partial<AppState>) => void;
+type Get = () => AppState;
+
+async function doHydrate(set: Set, _get: Get): Promise<void> {
+  // First run: write seed into the Repo so the app has believable friends.
+  if (await repo.isEmpty()) {
+    const seedMsgs = seedConversations.flatMap((conv) =>
+      (seedMessages[conv.id] ?? []).map(({ id: _drop, ...rest }) => rest),
+    );
+    await (repo as IdbRepo).bulkSeed({
+      contacts: seedContacts,
+      personas: seedPersonas,
+      conversations: seedConversations,
+      messages: seedMsgs,
+      moments: seedMoments,
+      momentLikes: seedMomentLikes,
+      momentComments: seedMomentComments,
+    });
+    // Real packet entities behind the seeded bubbles, so they're tappable.
+    for (const rp of seedRedPackets) await repo.putRedPacket(rp);
+    // Opening wallet balance so red packets / transfers have something to move.
+    await repo.putWalletTx({
+      id: 'wtx_seed',
+      kind: 'adjust',
+      amountFen: 128_800,
+      title: '零钱初始余额',
+      balanceAfterFen: 128_800,
+      createdAt: SEED_BASE,
+    });
+  }
+  const [contacts, conversations] = await Promise.all([
+    repo.getContacts(),
+    repo.getConversations(),
+  ]);
+  const messages: Record<string, MessageVM[]> = {};
+  await Promise.all(
+    conversations.map(async (conv) => {
+      messages[conv.id] = await repo.getMessages(conv.id, { limit: 200 });
+    }),
+  );
+  const personas: Record<string, PersonaVM> = {};
+  await Promise.all(
+    contacts
+      .filter((cc) => cc.type === 'ai')
+      .map(async (cc) => {
+        const p = await repo.getPersona(cc.id);
+        if (p) personas[cc.id] = p;
+      }),
+  );
+  conversations.sort(sortConversations);
+  set({ hydrated: true, contacts, conversations, messages, personas });
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   hydrated: false,
+  hydrateError: null,
   contacts: [],
   conversations: [],
   messages: {},
@@ -108,54 +167,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   commentsFor: (momentId) => get().momentComments[momentId] ?? EMPTY_COMMENTS,
 
   hydrate: async () => {
-    if (get().hydrated) return;
-    // First run: write seed into the Repo so the app has believable friends.
-    if (await repo.isEmpty()) {
-      const seedMsgs = seedConversations.flatMap((conv) =>
-        (seedMessages[conv.id] ?? []).map(({ id: _drop, ...rest }) => rest),
-      );
-      await (repo as IdbRepo).bulkSeed({
-        contacts: seedContacts,
-        personas: seedPersonas,
-        conversations: seedConversations,
-        messages: seedMsgs,
-        moments: seedMoments,
-        momentLikes: seedMomentLikes,
-        momentComments: seedMomentComments,
-      });
-      // Real packet entities behind the seeded bubbles, so they're tappable.
-      for (const rp of seedRedPackets) await repo.putRedPacket(rp);
-      // Opening wallet balance so red packets / transfers have something to move.
-      await repo.putWalletTx({
-        id: 'wtx_seed',
-        kind: 'adjust',
-        amountFen: 128_800,
-        title: '零钱初始余额',
-        balanceAfterFen: 128_800,
-        createdAt: SEED_BASE,
-      });
+    if (get().hydrated || hydrateInFlight) return;
+    hydrateInFlight = true;
+    set({ hydrateError: null });
+    try {
+      await doHydrate(set, get);
+    } catch (e) {
+      // An async rejection never reaches the ErrorBoundary — without this the
+      // app would sit on the blank loading view forever (bug M7).
+      set({ hydrateError: e instanceof Error ? e.message : String(e) });
+    } finally {
+      hydrateInFlight = false;
     }
-    const [contacts, conversations] = await Promise.all([
-      repo.getContacts(),
-      repo.getConversations(),
-    ]);
-    const messages: Record<string, MessageVM[]> = {};
-    await Promise.all(
-      conversations.map(async (conv) => {
-        messages[conv.id] = await repo.getMessages(conv.id, { limit: 200 });
-      }),
-    );
-    const personas: Record<string, PersonaVM> = {};
-    await Promise.all(
-      contacts
-        .filter((cc) => cc.type === 'ai')
-        .map(async (cc) => {
-          const p = await repo.getPersona(cc.id);
-          if (p) personas[cc.id] = p;
-        }),
-    );
-    conversations.sort(sortConversations);
-    set({ hydrated: true, contacts, conversations, messages, personas });
   },
 
   setActiveConv: async (convId) => {

@@ -29,6 +29,7 @@ import { useSchedulerRuntime } from './app/useSchedulerRuntime';
  */
 export function App() {
   const hydrated = useAppStore((s) => s.hydrated);
+  const hydrateError = useAppStore((s) => s.hydrateError);
   const hydrate = useAppStore((s) => s.hydrate);
 
   useEffect(() => {
@@ -37,6 +38,23 @@ export function App() {
 
   // Single time-evolution path: drains scheduled_actions once hydrated.
   useSchedulerRuntime(hydrated);
+
+  // Hydrate rejects asynchronously, which no ErrorBoundary can see — without
+  // this branch a failed boot is an eternal blank screen (bug M7). After every
+  // hook so the hook order never varies (rules-of-hooks).
+  if (hydrateError) {
+    return (
+      <div className="app-shell">
+        <div className="error-screen">
+          <p className="error-screen__title">启动失败</p>
+          <p className="error-screen__msg">{hydrateError}</p>
+          <button className="error-screen__btn" onClick={() => void hydrate()}>
+            重试
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <HashRouter>

@@ -52,8 +52,16 @@ const CLEAR_ALL = `
 
 /** Rows the backup deliberately does not carry, excluded from the comparison. */
 function comparable(dump: Record<string, unknown[]>): Record<string, unknown[]> {
-  const { tts_cache: _omitted, ...rest } = dump;
-  return rest;
+  const { tts_cache: _omitted, settings = [], ...rest } = dump;
+  // Device-local settings rows are non-portable BY DESIGN (H3): the crypto
+  // master key never travels, and restore re-arms the backfill barrier at
+  // restore time. Everything else must round-trip exactly.
+  return {
+    ...rest,
+    settings: (settings as Array<{ key?: string }>).filter(
+      (r) => r.key !== '__crypto_master' && r.key !== 'lastForegroundAt',
+    ),
+  };
 }
 
 test('export → wipe → restore round-trips the real database', async ({ page }) => {

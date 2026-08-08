@@ -6,6 +6,9 @@
  * the user confirms against real row counts rather than a yes/no prompt.
  */
 import { useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import { SubNav } from '../../components/SubNav';
 import {
   exportBackup,
@@ -51,16 +54,36 @@ export function BackupPage() {
     try {
       const now = Date.now();
       const file = await exportBackup(now);
-      const blob = new Blob([serializeBackup(file)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = backupFilename(now);
-      a.click();
-      URL.revokeObjectURL(url);
+      const json = serializeBackup(file);
+      const name = backupFilename(now);
+
+      if (Capacitor.isNativePlatform()) {
+        // A WebView ignores blob+<a download> entirely — the old path reported
+        // "已导出" while writing nothing (H2). Write a real file, verify it
+        // exists, then hand it to the system share sheet.
+        const written = await Filesystem.writeFile({
+          path: name,
+          data: json,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8,
+        });
+        const stat = await Filesystem.stat({ path: name, directory: Directory.Cache });
+        if (!stat.size) throw new Error('文件写入校验失败');
+        await Share.share({ title: name, url: written.uri, dialogTitle: '保存备份文件' });
+      } else {
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
       setStatus(`已导出：${summarize(file.manifest.counts)}`);
     } catch (e) {
-      setStatus(`导出失败：${(e as Error).message}`);
+      const msg = (e as Error).message ?? String(e);
+      // Backing out of the share sheet isn't a failure — the file is written.
+      setStatus(/cancel/i.test(msg) ? '已生成备份文件（未分享）' : `导出失败：${msg}`);
     } finally {
       setBusy(false);
     }
