@@ -48,6 +48,9 @@ importers:
         specifier: ^5.0.2
         version: 5.0.14(@types/react@18.3.31)(react@18.3.1)
     devDependencies:
+      '@capacitor/android':
+        specifier: ^7.6.8
+        version: 7.6.8(@capacitor/core@7.6.8)
       '@capacitor/cli':
         specifier: ^7.0.0
         version: 7.6.8
@@ -172,6 +175,11 @@ packages:
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
+
+  '@capacitor/android@7.6.8':
+    resolution: {integrity: sha512-N5LXe1ls+TA0mq+RhtyDdP1JISzAAI+OuLGL3G7OWQxfQQOZYkiEjEJMYqMV6JR421IqpRsYj08JOfC0PFC3NA==}
+    peerDependencies:
+      '@capacitor/core': ^7.6.0
 
   '@capacitor/app@7.1.2':
     resolution: {integrity: sha512-d4I/oF/PRu4megL7/IGKYfe5j7yzSON1FRFgq6kH+m5kH6g7V+wyjHRLauCzGNjdRx4S+nWOumINds0qcRBtKg==}
@@ -2061,6 +2069,10 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
+
+  '@capacitor/android@7.6.8(@capacitor/core@7.6.8)':
+    dependencies:
+      '@capacitor/core': 7.6.8
 
   '@capacitor/app@7.1.2(@capacitor/core@7.6.8)':
     dependencies:

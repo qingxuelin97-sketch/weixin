@@ -1,0 +1,154 @@
+name: Android APK
+
+# The APK cannot be built in the dev container: `dl.google.com` is blocked by
+# egress policy there, and that single host serves BOTH the Android SDK and the
+# Google Maven repo (AGP + every androidx artifact). GitHub's ubuntu runners
+# ship the SDK preinstalled and can reach it, so this is the only place an APK
+# gets produced. See specs/build-distribution.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: '构建备注（可选，仅用于在运行列表里认出这次构建）'
+        required: false
+  push:
+    tags: ['v*']
+
+jobs:
+  apk:
+    name: build APK
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # needed only to attach the APK to a Release on a tag
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Capacitor 7 targets JDK 17+; the runner defaults to 17 but pin it so a
+      # runner-image change can't silently move us onto a different toolchain.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - run: pnpm install --frozen-lockfile
+
+      # Gate the APK on the same checks as CI — shipping an APK that fails
+      # typecheck would waste a real-device test cycle.
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+      - name: Build web bundle
+        run: pnpm build
+
+      # android/ is gitignored (it is a generated artifact), so it is created
+      # fresh here on every run.
+      - name: Generate the native project
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      # versionCode must increase monotonically for an in-place upgrade to be
+      # accepted by Android; run_number is the only always-increasing value here.
+      - name: Stamp version
+        run: |
+          VERSION_NAME="${GITHUB_REF_NAME#v}"
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then VERSION_NAME="0.0.0-dev.${GITHUB_RUN_NUMBER}"; fi
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          sed -i "s/versionCode 1$/versionCode ${GITHUB_RUN_NUMBER}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"${VERSION_NAME}\"/" android/app/build.gradle
+          grep -nE 'versionCode|versionName' android/app/build.gradle
+          # Fail loudly if the Capacitor template changed shape: a silent no-op
+          # here would ship every build as versionCode 1, and Android refuses to
+          # upgrade in place without an increasing versionCode.
+          grep -q "versionCode ${GITHUB_RUN_NUMBER}$" android/app/build.gradle \
+            || { echo "::error::versionCode 未被写入——Capacitor 模板可能已变，请更新此步骤的 sed"; exit 1; }
+          grep -q "versionName \"${VERSION_NAME}\"" android/app/build.gradle \
+            || { echo "::error::versionName 未被写入——同上"; exit 1; }
+
+      # ---- Debug APK: always produced, needs no secrets ----
+      - name: Build debug APK
+        run: cd android && ./gradlew --no-daemon assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: weixin-ai-debug-${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      # ---- Signed release: only on a tag, and only once the keystore exists ----
+      - name: Check for signing secrets
+        id: signing
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ -n "$KS" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::未产出签名 APK。签名版需要 tag 触发 + ANDROID_KEYSTORE_BASE64 等 4 个 Secret；参见 specs/build-distribution.md。本次仅提供 debug APK。"
+          fi
+
+      - name: Build signed release APK
+        if: steps.signing.outputs.ready == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # trap, not a trailing rm: the keystore must not survive a failed build.
+          trap 'rm -f /tmp/release.keystore /tmp/aligned.apk' EXIT
+          echo "$KEYSTORE_B64" | base64 -d > /tmp/release.keystore
+          cd android && ./gradlew --no-daemon assembleRelease
+          BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          OUT=app/build/outputs/apk/release
+          # zipalign BEFORE signing — apksigner preserves alignment but cannot
+          # introduce it, and an unaligned APK wastes memory at runtime.
+          "$ANDROID_HOME/build-tools/$BT/zipalign" -p -f 4 \
+            "$OUT/app-release-unsigned.apk" /tmp/aligned.apk
+          "$ANDROID_HOME/build-tools/$BT/apksigner" sign \
+            --ks /tmp/release.keystore \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out "$OUT/weixin-ai.apk" /tmp/aligned.apk
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --verbose "$OUT/weixin-ai.apk"
+
+      - name: Attach APK to the Release
+        if: steps.signing.outputs.ready == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/release/weixin-ai.apk
+          fail_on_unmatched_files: true
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Android 构建 #${GITHUB_RUN_NUMBER}"
+            echo ""
+            if [ -f android/app/build/outputs/apk/debug/app-debug.apk ]; then
+              SZ=$(du -h android/app/build/outputs/apk/debug/app-debug.apk | cut -f1)
+              echo "- debug APK: \`$SZ\`（见本次运行的 Artifacts）"
+            else
+              echo "- debug APK: **构建失败**"
+            fi
+            echo "- versionCode: \`${GITHUB_RUN_NUMBER}\` / versionName: \`${VERSION_NAME:-?}\`"
+            echo "- 签名版: ${{ steps.signing.outputs.ready == 'true' && '已产出并挂到 Release' || '未产出（缺 tag 或 keystore Secrets）' }}"
+            echo ""
+            echo "> debug 签名每次构建都不同，**无法覆盖升级**，换版本需先卸载（本地聊天数据会一并清空）。"
+            echo "> 升级前请先在 设置 → 备份与恢复 导出 \`.aiwx\`。"
+          } >> "$GITHUB_STEP_SUMMARY"

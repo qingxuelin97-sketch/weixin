@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "AI 微信 — 个人自用的微信复刻 + 智能体聊天 App（不商用不公开）",
+  "description": "AI \u5fae\u4fe1 \u2014 \u4e2a\u4eba\u81ea\u7528\u7684\u5fae\u4fe1\u590d\u523b + \u667a\u80fd\u4f53\u804a\u5929 App\uff08\u4e0d\u5546\u7528\u4e0d\u516c\u5f00\uff09",
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
@@ -20,7 +20,9 @@
     "test:screenshot": "playwright test",
     "test:screenshot:update": "playwright test --update-snapshots",
     "cap:sync": "cap sync",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\""
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
+    "cap:add": "cap add android",
+    "cap:apk": "pnpm build && cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
     "@capacitor/app": "^7.0.0",
@@ -38,6 +40,7 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@capacitor/android": "^7.6.8",
     "@capacitor/cli": "^7.0.0",
     "@playwright/test": "^1.49.1",
     "@types/react": "^18.3.18",
