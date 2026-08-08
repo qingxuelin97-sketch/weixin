@@ -87,3 +87,23 @@ test('composer: plus panel open', async ({ page }) => {
   await page.waitForTimeout(200);
   await expect(page).toHaveScreenshot('composer-plus.png', { fullPage: false });
 });
+
+test('moments feed', async ({ page }) => {
+  await page.goto('/#/moments');
+  await settle(page);
+  await expect(page).toHaveScreenshot('moments-feed.png', { fullPage: false });
+});
+
+test('moments feed scrolled (nav fades to solid)', async ({ page }) => {
+  await page.goto('/#/moments');
+  await settle(page);
+  await page.locator('.moments__scroll').evaluate((el) => (el.scrollTop = 320));
+  await page.waitForTimeout(250);
+  await expect(page).toHaveScreenshot('moments-feed-scrolled.png', { fullPage: false });
+});
+
+test('moments publish page', async ({ page }) => {
+  await page.goto('/#/moments/publish');
+  await settle(page);
+  await expect(page).toHaveScreenshot('moments-publish.png', { fullPage: false });
+});

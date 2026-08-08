@@ -1,24 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { prefilter, parseDecision, findMentions, type GroupMember } from '../../src/ai/director';
 import type { MessageVM, PersonaVM } from '../../src/data/types';
+import { makePersona } from '../../src/data/persona-defaults';
 
 const NOW = new Date(2025, 7, 6, 12, 0, 0).getTime(); // noon — inside default windows
 const min = 60_000;
 
 function persona(over: Partial<PersonaVM> = {}): PersonaVM {
-  return {
-    contactId: 'x',
-    core: 'c',
-    fewShots: [],
-    catchphrases: [],
-    activeHours: [[9, 23]],
-    proactivity: 0.5,
-    typingCpm: 300,
-    heartbeatBaseMin: 240,
-    temperature: 0.8,
-    nsfwPermit: false,
-    ...over,
-  };
+  return makePersona({ contactId: 'x', core: 'c', proactivity: 0.5, ...over });
 }
 
 function member(id: string, name: string, p?: Partial<PersonaVM>): GroupMember {

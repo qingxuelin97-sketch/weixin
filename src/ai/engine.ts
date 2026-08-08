@@ -34,7 +34,8 @@ const inFlight = new Map<string, AbortController>();
 
 const RECENT_WINDOW = 30; // messages of context sent to the model
 
-function toPersonaView(p: PersonaVM, name: string): PersonaView {
+/** Persona row → the prompt layer's view. Shared with the Moments engine. */
+export function toPersonaView(p: PersonaVM, name: string): PersonaView {
   return {
     name,
     core: p.core,

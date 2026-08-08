@@ -9,7 +9,13 @@
  */
 import { idbGetAll, idbPut } from '../db/idb';
 
-export type ActionKind = 'heartbeat' | 'rp_grab' | 'transfer_accept';
+export type ActionKind =
+  | 'heartbeat'
+  | 'rp_grab'
+  | 'transfer_accept'
+  | 'moment_post'
+  | 'moment_like'
+  | 'moment_comment';
 
 export interface ScheduledAction {
   id: string;
@@ -52,6 +58,18 @@ export async function duePending(now: number): Promise<ScheduledAction[]> {
 
 export async function markDone(a: ScheduledAction): Promise<void> {
   await idbPut('scheduled_actions', { ...a, status: 'done' });
+}
+
+/**
+ * Is an action of this kind already queued for this contact? Used on startup so
+ * re-opening the app tops up missing schedules without stacking duplicates on
+ * the ones already waiting.
+ */
+export async function hasPendingFor(kind: ActionKind, contactId: string): Promise<boolean> {
+  const all = await idbGetAll<ScheduledAction>('scheduled_actions');
+  return all.some(
+    (a) => a.status === 'pending' && a.kind === kind && a.payloadJson.includes(`"${contactId}"`),
+  );
 }
 
 /** Handlers are registered by the app shell so this module stays dependency-free. */

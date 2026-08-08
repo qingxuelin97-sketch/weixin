@@ -10,7 +10,7 @@
  */
 import { seededRng } from '../lib/money';
 import type { PersonaVM } from '../data/types';
-import { enqueue, duePending, type ScheduledAction } from './scheduler';
+import { enqueue, type ScheduledAction } from './scheduler';
 
 /** Local hour a timestamp falls in (activity windows are in local hours). */
 function hourOf(ts: number): number {
@@ -60,8 +60,3 @@ export async function scheduleHeartbeat(
   });
 }
 
-/** Whether this persona already has a heartbeat queued (avoids double-scheduling). */
-export async function hasPendingHeartbeat(contactId: string): Promise<boolean> {
-  const pending = await duePending(Number.MAX_SAFE_INTEGER);
-  return pending.some((a) => a.kind === 'heartbeat' && a.payloadJson.includes(`"${contactId}"`));
-}

@@ -4,22 +4,11 @@ import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { VOICE_OPTIONS, DEFAULT_VOICE } from '../../llm/tts';
 import type { PersonaVM } from '../../data/types';
+import { makePersona } from '../../data/persona-defaults';
 import './settings.css';
 
 function emptyPersona(contactId: string): PersonaVM {
-  return {
-    contactId,
-    core: '',
-    speechStyle: '',
-    fewShots: [],
-    catchphrases: [],
-    activeHours: [[9, 23]],
-    proactivity: 0.5,
-    typingCpm: 300,
-    heartbeatBaseMin: 240,
-    temperature: 0.8,
-    nsfwPermit: false,
-  };
+  return makePersona({ contactId, core: '', speechStyle: '', proactivity: 0.5 });
 }
 
 export function PersonaEditPage() {

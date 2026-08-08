@@ -75,6 +75,14 @@ export interface PersonaVM {
   nsfwPermit: boolean;
   nsfwStyleSamples?: string[];
   greeting?: string;
+  /** Moments posting rate, posts per day (0.3 ≈ twice a week). 0 = never posts. */
+  momentsPerDay: number;
+  /** Base probability this persona likes a given post, before affinity scaling. */
+  likeRate: number;
+  /** Base probability this persona comments on a given post. */
+  commentRate: number;
+  /** Starting closeness, 0..100. Scales like/comment rates and heartbeat warmth. */
+  affinityInit: number;
 }
 
 /** A red packet (拼手气 or 普通). Shares are pre-split at creation for replayability. */
@@ -148,4 +156,42 @@ export interface ProviderVM {
   keyAlias: string; // handle into keystore
   models: string[];
   enabled: boolean;
+}
+
+/* ---- Moments (朋友圈) ---- */
+
+/**
+ * A Moments post. Authored by 'self' or an AI contact.
+ *
+ * `imageRefs` are keys into the image pool (see src/lib/moments-assets.ts), not
+ * URLs — that way a post survives swapping placeholder art for real PNGs later.
+ *
+ * Moments are unconditionally SFW regardless of the global NSFW tier: the feed is
+ * the one surface where a stray explicit post would be jarring rather than opt-in.
+ * `isNsfw` exists only to mirror the SQLite column; nothing sets it true today.
+ */
+export interface MomentVM {
+  id: string;
+  authorId: string;
+  text?: string;
+  imageRefs: string[];
+  isNsfw: boolean;
+  createdAt: number;
+}
+
+/** A like. `id` is `${momentId}:${contactId}` — one like per person per moment. */
+export interface MomentLikeVM {
+  id: string;
+  momentId: string;
+  contactId: string;
+  createdAt: number;
+}
+
+export interface MomentCommentVM {
+  id: string;
+  momentId: string;
+  authorId: string;
+  replyToCommentId?: string;
+  text: string;
+  createdAt: number;
 }

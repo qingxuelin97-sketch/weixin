@@ -3,7 +3,17 @@
  * and chat page against real-device screenshots. Replaced by live SQLite in M2.
  * Timestamps are fixed offsets from a stable base so golden screenshots are stable.
  */
-import type { ContactVM, ConversationVM, MessageVM, PersonaVM, RedPacketVM } from './types';
+import type {
+  ContactVM,
+  ConversationVM,
+  MessageVM,
+  PersonaVM,
+  RedPacketVM,
+  MomentVM,
+  MomentLikeVM,
+  MomentCommentVM,
+} from './types';
+import { makePersona } from './persona-defaults';
 import { splitLuckyPacket } from '../lib/money';
 
 // Stable base time (no Date.now) so screenshot goldens never drift.
@@ -57,9 +67,9 @@ export const seedContacts: ContactVM[] = [
 
 const c = (id: string) => seedContacts.find((x) => x.id === id)!;
 
-/** Three preset persona cards so the app has believable friends out of the box. */
+/** Preset persona cards so the app has believable friends out of the box. */
 export const seedPersonas: PersonaVM[] = [
-  {
+  makePersona({
     contactId: 'ai_lin',
     core: '25 岁插画师，温柔体贴但偶尔毒舌，爱猫爱咖啡，习惯把关心藏在吐槽里。',
     speechStyle: '短句、口语、爱用语气词和颜文字，很少发长段落',
@@ -73,8 +83,8 @@ export const seedPersonas: PersonaVM[] = [
     temperature: 0.85,
     nsfwPermit: false,
     greeting: '嘿，忙完啦？',
-  },
-  {
+  }),
+  makePersona({
     contactId: 'ai_chen',
     core: '48 岁的邻家大叔，退休爱钓鱼下棋，话不多但靠谱，喜欢发语音和红包。',
     speechStyle: '沉稳、简短、偶尔带点老派用语，很少用表情',
@@ -88,8 +98,8 @@ export const seedPersonas: PersonaVM[] = [
     temperature: 0.7,
     nsfwPermit: false,
     greeting: '在忙吗？',
-  },
-  {
+  }),
+  makePersona({
     contactId: 'ai_ada',
     core: '程序员，理性、略高冷但其实很关心朋友，说话夹带英文和技术梗，作息昼夜颠倒。',
     speechStyle: '简洁直接、爱用英文缩写、偶尔冷幽默',
@@ -103,8 +113,8 @@ export const seedPersonas: PersonaVM[] = [
     temperature: 0.8,
     nsfwPermit: false,
     greeting: '哟，还醒着？',
-  },
-  {
+  }),
+  makePersona({
     contactId: 'ai_mao',
     core: '大学生，话痨、情绪外放、爱玩梗和发表情包，追星追剧样样不落，嘴上没个正形但很讲义气。',
     speechStyle: '语气夸张、爱刷屏、大量语气词和叠字',
@@ -118,7 +128,7 @@ export const seedPersonas: PersonaVM[] = [
     temperature: 0.95,
     nsfwPermit: false,
     greeting: '在干嘛在干嘛',
-  },
+  }),
 ];
 
 export const seedConversations: ConversationVM[] = [
@@ -282,3 +292,62 @@ function m(
 ): MessageVM {
   return { id, convId, senderId, type, content, createdAt, status: 'sent', ...(meta ? { meta } : {}) };
 }
+
+/**
+ * A few Moments so the feed isn't empty on first launch — one from each of
+ * three friends plus reactions, showing off the 1/4-image grids and the
+ * like/comment block. Timestamps are offsets from SEED_MOMENT_BASE so the
+ * ordering (and therefore the golden screenshot) is deterministic.
+ */
+const SEED_MOMENT_BASE = 1_754_500_000_000;
+const H = 3_600_000;
+
+export const seedMoments: MomentVM[] = [
+  {
+    id: 'mo_seed_lin',
+    authorId: 'ai_lin',
+    text: '画了一天，终于收工。猫在我腿上睡了三个小时，动都不敢动。',
+    imageRefs: ['ph:2', 'ph:5', 'ph:7'],
+    isNsfw: false,
+    createdAt: SEED_MOMENT_BASE - 2 * H,
+  },
+  {
+    id: 'mo_seed_ada',
+    authorId: 'ai_ada',
+    text: '写了一天 SQL，喝了四杯咖啡。新店的拿铁真的可以。',
+    imageRefs: ['ph:1'],
+    isNsfw: false,
+    createdAt: SEED_MOMENT_BASE - 9 * H,
+  },
+  {
+    id: 'mo_seed_chen',
+    authorId: 'ai_chen',
+    text: '今天钓了一上午，就这一条。够吃了。',
+    imageRefs: [],
+    isNsfw: false,
+    createdAt: SEED_MOMENT_BASE - 26 * H,
+  },
+];
+
+export const seedMomentLikes: MomentLikeVM[] = [
+  { id: 'mo_seed_lin:ai_ada', momentId: 'mo_seed_lin', contactId: 'ai_ada', createdAt: SEED_MOMENT_BASE - H },
+  { id: 'mo_seed_lin:ai_chen', momentId: 'mo_seed_lin', contactId: 'ai_chen', createdAt: SEED_MOMENT_BASE - H / 2 },
+  { id: 'mo_seed_ada:ai_lin', momentId: 'mo_seed_ada', contactId: 'ai_lin', createdAt: SEED_MOMENT_BASE - 8 * H },
+];
+
+export const seedMomentComments: MomentCommentVM[] = [
+  {
+    id: 'mc_seed_1',
+    momentId: 'mo_seed_lin',
+    authorId: 'ai_ada',
+    text: '猫比你会享受',
+    createdAt: SEED_MOMENT_BASE - H / 3,
+  },
+  {
+    id: 'mc_seed_2',
+    momentId: 'mo_seed_ada',
+    authorId: 'ai_chen',
+    text: '什么时候去',
+    createdAt: SEED_MOMENT_BASE - 7 * H,
+  },
+];

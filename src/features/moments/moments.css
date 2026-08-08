@@ -1,0 +1,345 @@
+/* Moments (朋友圈) — feed, post card, and the publish composer. */
+
+.moments {
+  position: relative;
+  height: 100%;
+  background: var(--color-moments-bg);
+}
+
+/* Nav starts transparent over the cover and fades in as it scrolls away.
+   --nav-alpha is set from real scroll position by MomentsPage. */
+.moments__nav {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 4px;
+  color: var(--color-text-on-brand);
+  background: color-mix(in srgb, var(--color-nav-bg) calc(var(--nav-alpha) * 100%), transparent);
+  transition: color 0.15s linear;
+}
+/* Past the halfway fade the bar reads as light, so the ink flips to dark. */
+.moments__nav--solid {
+  color: var(--color-nav-title);
+}
+
+.moments__nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.moments__nav-title {
+  flex: 1;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 600;
+  opacity: var(--nav-alpha);
+}
+
+.moments__scroll {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---- Cover ---- */
+.moments__cover {
+  position: relative;
+  height: 260px;
+  background: linear-gradient(
+    160deg,
+    var(--color-moments-cover-a) 0%,
+    var(--color-moments-cover-b) 100%
+  );
+}
+.moments__self {
+  position: absolute;
+  right: 16px;
+  bottom: -20px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.moments__self-name {
+  margin-bottom: 26px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--color-text-on-brand);
+  text-shadow: 0 1px 2px var(--color-overlay);
+}
+
+.moments__empty {
+  margin: 60px 24px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--color-text-placeholder);
+}
+
+.moments__list {
+  padding: 36px 0 24px;
+}
+
+/* ---- One post ---- */
+.moment {
+  display: flex;
+  gap: 10px;
+  padding: 14px 16px 6px;
+  border-bottom: 1px solid var(--color-hairline);
+}
+.moment__body {
+  flex: 1;
+  min-width: 0;
+}
+.moment__author {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-link);
+}
+.moment__text {
+  margin: 4px 0 0;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Image grids: 1 large, 4 as 2×2, everything else 3-across. */
+.moment__images {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+.moment__images--single {
+  grid-template-columns: 160px;
+}
+.moment__images--single .moment__image {
+  aspect-ratio: 4 / 3;
+}
+.moment__images--quad {
+  grid-template-columns: repeat(2, 78px);
+}
+.moment__images--grid {
+  grid-template-columns: repeat(3, 78px);
+}
+.moment__image {
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--color-moments-image-empty);
+}
+.moment__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.moment__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.moment__time {
+  font-size: 12px;
+  color: var(--color-text-timestamp);
+}
+
+.moment__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.moment__dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 30px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--color-moments-action-bg);
+  cursor: pointer;
+}
+.moment__dots span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--color-link);
+}
+
+.moment__capsule {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  border-radius: 4px;
+  background: var(--color-menu-bg);
+  overflow: hidden;
+}
+.moment__capsule button {
+  padding: 0 14px;
+  height: 100%;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--color-text-on-brand);
+  cursor: pointer;
+}
+.moment__capsule-div {
+  width: 1px;
+  height: 14px;
+  background: var(--color-on-color-divider);
+}
+
+/* ---- Likes & comments block ---- */
+.moment__reactions {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  background: var(--color-moments-comment-bg);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.moment__likes {
+  color: var(--color-link);
+  word-break: break-word;
+}
+.moment__heart {
+  margin-right: 4px;
+  font-size: 12px;
+}
+.moment__reaction-div {
+  height: 1px;
+  margin: 5px 0;
+  background: var(--color-hairline);
+}
+.moment__comment {
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+.moment__comment-author {
+  color: var(--color-link);
+}
+.moment__comment-reply {
+  margin: 0 4px;
+  color: var(--color-text-secondary);
+}
+
+/* ---- Inline comment composer ---- */
+.moments__composer {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--color-input-bar-bg);
+  border-bottom: 1px solid var(--color-hairline);
+}
+.moments__composer input {
+  flex: 1;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--color-input-field-bg);
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+.moments__composer button {
+  padding: 0 14px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--color-brand);
+  font-size: 14px;
+  color: var(--color-text-on-brand);
+  cursor: pointer;
+}
+
+/* ---- Publish page ---- */
+.publish {
+  background: var(--color-cell-bg);
+}
+.publish__send {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--color-brand);
+  font-size: 14px;
+  color: var(--color-text-on-brand);
+  cursor: pointer;
+}
+.publish__send:disabled {
+  background: var(--color-hairline);
+  color: var(--color-text-placeholder);
+  cursor: default;
+}
+.publish__text {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  padding: 16px;
+  border: 0;
+  resize: none;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background: var(--color-cell-bg);
+}
+.publish__text::placeholder {
+  color: var(--color-text-placeholder);
+}
+.publish__picker-label {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.publish__picker {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 0 16px 16px;
+}
+.publish__thumb {
+  position: relative;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--color-moments-image-empty);
+  cursor: pointer;
+}
+.publish__thumb--on {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+}
+.publish__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.publish__badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-brand);
+  font-size: 11px;
+  color: var(--color-text-on-brand);
+}

@@ -2,21 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { isActiveAt, nextHeartbeatAt } from '../../src/ai/heartbeat';
 import { effectiveTier } from '../../src/ai/engine';
 import type { PersonaVM } from '../../src/data/types';
+import { makePersona } from '../../src/data/persona-defaults';
 
 function persona(over: Partial<PersonaVM> = {}): PersonaVM {
-  return {
-    contactId: 'ai_lin',
-    core: '测试人设',
-    fewShots: [],
-    catchphrases: [],
-    activeHours: [[9, 23]],
-    proactivity: 0.5,
-    typingCpm: 300,
-    heartbeatBaseMin: 240,
-    temperature: 0.8,
-    nsfwPermit: false,
-    ...over,
-  };
+  return makePersona({ contactId: 'ai_lin', core: '测试人设', proactivity: 0.5, ...over });
 }
 
 const at = (h: number) => new Date(2025, 7, 6, h, 0, 0).getTime();

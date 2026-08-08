@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { NavBar } from '../../components/NavBar';
 import { IconPlus, IconSearch } from '../../components/icons';
 import './discover.css';
@@ -153,7 +154,11 @@ const SECTIONS: Row[][] = [
   [{ key: 'miniapp', label: '小程序' }],
 ];
 
+/** Only 朋友圈 navigates; the rest are visual shells until their milestone. */
+const ROUTES: Record<string, string> = { moments: '/moments' };
+
 export function DiscoverPage() {
+  const navigate = useNavigate();
   return (
     <>
       <NavBar
@@ -173,7 +178,13 @@ export function DiscoverPage() {
         {SECTIONS.map((section, i) => (
           <div key={i} className="discover__group">
             {section.map((entry, j) => (
-              <div key={entry.key} className={`discover__row${j < section.length - 1 ? ' hairline-bottom' : ''}`}>
+              <div
+                key={entry.key}
+                className={`discover__row${j < section.length - 1 ? ' hairline-bottom' : ''}`}
+                role={ROUTES[entry.key] ? 'button' : undefined}
+                tabIndex={ROUTES[entry.key] ? 0 : undefined}
+                onClick={() => ROUTES[entry.key] && navigate(ROUTES[entry.key])}
+              >
                 <DIcon kind={entry.key} />
                 <span className="discover__label">{entry.label}</span>
                 {entry.extra === 'badge' && entry.badge != null && (

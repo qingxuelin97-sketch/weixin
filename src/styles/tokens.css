@@ -57,6 +57,11 @@
   --wx-input-bar: #f7f7f7; /* chat input toolbar / tabbar bg */
   --wx-panel: #ededed; /* +panel / emoji panel bg */
 
+  /* Moments: the feed is white, unlike the gray page background elsewhere */
+  --wx-moments-comment-bg: #f7f7f7; /* like/comment block under a post */
+  --wx-moments-cover-a: #4a5a6d; /* cover photo placeholder gradient */
+  --wx-moments-cover-b: #8a9bb0;
+
   /* ---- Semantic aliases (components reference ONLY these) ---- */
   --color-page-bg: var(--wx-page);
   --color-nav-bg: var(--wx-page);
@@ -107,6 +112,14 @@
   --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */
   --color-on-color-divider: rgba(255, 255, 255, 0.2); /* hairline on a colored surface */
   --color-on-color-fill: rgba(255, 255, 255, 0.25); /* translucent chip on a colored surface */
+
+  /* Moments */
+  --color-moments-bg: var(--wx-white);
+  --color-moments-comment-bg: var(--wx-moments-comment-bg);
+  --color-moments-action-bg: var(--wx-moments-comment-bg);
+  --color-moments-cover-a: var(--wx-moments-cover-a);
+  --color-moments-cover-b: var(--wx-moments-cover-b);
+  --color-moments-image-empty: var(--wx-page); /* grid cell before art loads */
 
   /* ---- Typography (dp == px at baseline; system CJK black, no bundled font) ---- */
   --font-sans:

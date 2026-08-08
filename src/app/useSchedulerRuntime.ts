@@ -4,10 +4,11 @@
  * unit-testable, while handlers can reach the store/Repo freely.
  */
 import { useEffect } from 'react';
-import { registerHandler, startScheduler, stopScheduler } from '../ai/scheduler';
+import { registerHandler, startScheduler, stopScheduler, hasPendingFor } from '../ai/scheduler';
 import { claimRedPacket, acceptTransfer } from '../ai/money-service';
 import { sendProactiveMessage } from '../ai/engine';
-import { scheduleHeartbeat, hasPendingHeartbeat } from '../ai/heartbeat';
+import { scheduleHeartbeat } from '../ai/heartbeat';
+import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { repo } from '../db/repo';
 import { useAppStore } from '../store/appStore';
 import type { NsfwTierVM } from '../data/types';
@@ -54,18 +55,65 @@ export function useSchedulerRuntime(enabled: boolean): void {
       await scheduleHeartbeat(persona, convId, Date.now());
     });
 
+    const momentsHooks = {
+      addMoment: store.addMoment,
+      applyLike: store.applyLike,
+      addComment: store.addComment,
+      now: () => Date.now(),
+    };
+
+    // An AI publishes a post, which in turn queues the reactions it draws.
+    registerHandler('moment_post', async (payload) => {
+      const contactId = String(payload.contactId ?? '');
+      const at = typeof payload.at === 'number' ? payload.at : undefined;
+      const s = useAppStore.getState();
+      const peer = s.contactById(contactId);
+      const persona = s.personaFor(contactId);
+      if (!peer || !persona) return;
+      await runMomentPost(persona, peer, s.contacts, s.personaFor, momentsHooks, at);
+    });
+
+    registerHandler('moment_like', async (payload) => {
+      const momentId = String(payload.momentId ?? '');
+      const contactId = String(payload.contactId ?? '');
+      const at = typeof payload.at === 'number' ? payload.at : undefined;
+      if (momentId && contactId) await runMomentLike(momentId, contactId, momentsHooks, at);
+    });
+
+    registerHandler('moment_comment', async (payload) => {
+      const momentId = String(payload.momentId ?? '');
+      const contactId = String(payload.contactId ?? '');
+      const at = typeof payload.at === 'number' ? payload.at : undefined;
+      if (!momentId || !contactId) return;
+      const s = useAppStore.getState();
+      const commenter = s.contactById(contactId);
+      const persona = s.personaFor(contactId);
+      if (!commenter || !persona) return;
+      const moment = await repo.getMoment(momentId);
+      if (!moment) return;
+      const author = s.contactById(moment.authorId);
+      const authorName =
+        moment.authorId === 'self' ? '你' : (author?.remark ?? author?.name ?? '朋友');
+      await runMomentComment(momentId, commenter, persona, authorName, momentsHooks, at);
+    });
+
     startScheduler();
 
-    // Seed each persona's first heartbeat. Without this the whole proactive
-    // feature never fires — nothing else enqueues one.
+    // Seed each persona's first heartbeat and first Moments post. Without this
+    // neither feature ever fires — nothing else enqueues the initial action.
     void (async () => {
       const s = useAppStore.getState();
+      const now = Date.now();
       for (const conv of s.conversations) {
         if (conv.type !== 'single' || !conv.peerId) continue;
         const persona = s.personaFor(conv.peerId);
         if (!persona) continue;
-        if (await hasPendingHeartbeat(persona.contactId)) continue;
-        await scheduleHeartbeat(persona, conv.id, Date.now());
+        if (!(await hasPendingFor('heartbeat', persona.contactId))) {
+          await scheduleHeartbeat(persona, conv.id, now);
+        }
+        if (!(await hasPendingFor('moment_post', persona.contactId))) {
+          await scheduleNextMoment(persona, now);
+        }
       }
     })();
 

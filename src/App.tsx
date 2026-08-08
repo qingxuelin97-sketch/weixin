@@ -15,6 +15,8 @@ import { RedPacketOpenPage } from './features/money/RedPacketOpenPage';
 import { RedPacketDetailPage } from './features/money/RedPacketDetailPage';
 import { TransferSendPage } from './features/money/TransferSendPage';
 import { WalletPage } from './features/money/WalletPage';
+import { MomentsPage } from './features/moments/MomentsPage';
+import { MomentPublishPage } from './features/moments/MomentPublishPage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
 
@@ -50,6 +52,8 @@ export function App() {
                 <Route path="/me" element={<MePage />} />
               </Route>
               <Route path="/chat/:convId" element={<ChatPage />} />
+              <Route path="/moments" element={<MomentsPage />} />
+              <Route path="/moments/publish" element={<MomentPublishPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/settings/api" element={<ApiConfigPage />} />
               <Route path="/persona/:contactId" element={<PersonaEditPage />} />

@@ -4,13 +4,24 @@
  * so data survives refresh. Component-facing selectors keep their M1 signatures.
  */
 import { create } from 'zustand';
-import type { ContactVM, ConversationVM, MessageVM, PersonaVM } from '../data/types';
+import type {
+  ContactVM,
+  ConversationVM,
+  MessageVM,
+  PersonaVM,
+  MomentVM,
+  MomentLikeVM,
+  MomentCommentVM,
+} from '../data/types';
 import {
   seedContacts,
   seedConversations,
   seedMessages,
   seedPersonas,
   seedRedPackets,
+  seedMoments,
+  seedMomentLikes,
+  seedMomentComments,
 } from '../data/seed';
 import { repo, IdbRepo } from '../db/repo';
 
@@ -23,12 +34,21 @@ interface AppState {
   /** Conversations currently showing "对方正在输入…". */
   typing: Record<string, boolean>;
 
+  /** Moments feed, newest first. Loaded lazily — the feed is not on the hot path. */
+  moments: MomentVM[];
+  momentsLoaded: boolean;
+  /** Keyed by momentId so selectors can return a stable reference (see CLAUDE.md §3.5). */
+  momentLikes: Record<string, MomentLikeVM[]>;
+  momentComments: Record<string, MomentCommentVM[]>;
+
   // selectors (stable signatures)
   contactById: (id: string) => ContactVM | undefined;
   messagesFor: (convId: string) => MessageVM[];
   conversationById: (id: string) => ConversationVM | undefined;
   personaFor: (contactId: string) => PersonaVM | undefined;
   setTyping: (convId: string, on: boolean) => void;
+  likesFor: (momentId: string) => MomentLikeVM[];
+  commentsFor: (momentId: string) => MomentCommentVM[];
 
   // lifecycle & mutations (write through to Repo)
   hydrate: () => Promise<void>;
@@ -37,9 +57,22 @@ interface AppState {
   patchConversation: (id: string, patch: Partial<ConversationVM>) => Promise<void>;
   putPersona: (p: PersonaVM) => Promise<void>;
   putContact: (c: ContactVM) => Promise<void>;
+  loadMoments: () => Promise<void>;
+  addMoment: (m: MomentVM) => Promise<void>;
+  /** Add or remove a like. Returns true if the moment is liked afterwards. */
+  toggleLike: (momentId: string, contactId: string, now: number) => Promise<boolean>;
+  /**
+   * Idempotently add a like. Distinct from toggleLike because an AI reacting is
+   * always an add — toggling would undo the like if the feed happened to be loaded.
+   */
+  applyLike: (like: MomentLikeVM) => Promise<void>;
+  addComment: (c: MomentCommentVM) => Promise<void>;
 }
 
 const EMPTY_MESSAGES: MessageVM[] = [];
+// Module-level constants: returning a fresh [] from a selector re-renders forever.
+const EMPTY_LIKES: MomentLikeVM[] = [];
+const EMPTY_COMMENTS: MomentCommentVM[] = [];
 
 // Fixed timestamp for seeded rows so first-run state is deterministic.
 const SEED_BASE = 1_754_500_000_000;
@@ -51,12 +84,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   messages: {},
   personas: {},
   typing: {},
+  moments: [],
+  momentsLoaded: false,
+  momentLikes: {},
+  momentComments: {},
 
   contactById: (id) => get().contacts.find((cc) => cc.id === id),
   messagesFor: (convId) => get().messages[convId] ?? EMPTY_MESSAGES,
   conversationById: (id) => get().conversations.find((cc) => cc.id === id),
   personaFor: (contactId) => get().personas[contactId],
   setTyping: (convId, on) => set((s) => ({ typing: { ...s.typing, [convId]: on } })),
+  likesFor: (momentId) => get().momentLikes[momentId] ?? EMPTY_LIKES,
+  commentsFor: (momentId) => get().momentComments[momentId] ?? EMPTY_COMMENTS,
 
   hydrate: async () => {
     if (get().hydrated) return;
@@ -70,6 +109,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         personas: seedPersonas,
         conversations: seedConversations,
         messages: seedMsgs,
+        moments: seedMoments,
+        momentLikes: seedMomentLikes,
+        momentComments: seedMomentComments,
       });
       // Real packet entities behind the seeded bubbles, so they're tappable.
       for (const rp of seedRedPackets) await repo.putRedPacket(rp);
@@ -150,6 +192,72 @@ export const useAppStore = create<AppState>((set, get) => ({
       contacts: s.contacts.some((x) => x.id === c.id)
         ? s.contacts.map((x) => (x.id === c.id ? c : x))
         : [...s.contacts, c],
+    }));
+  },
+
+  /** Pull the feed plus every post's likes/comments. Idempotent. */
+  loadMoments: async () => {
+    if (get().momentsLoaded) return;
+    const moments = await repo.getMoments();
+    const momentLikes: Record<string, MomentLikeVM[]> = {};
+    const momentComments: Record<string, MomentCommentVM[]> = {};
+    await Promise.all(
+      moments.map(async (m) => {
+        momentLikes[m.id] = await repo.getLikes(m.id);
+        momentComments[m.id] = await repo.getComments(m.id);
+      }),
+    );
+    set({ moments, momentLikes, momentComments, momentsLoaded: true });
+  },
+
+  addMoment: async (m) => {
+    await repo.putMoment(m);
+    set((s) => ({
+      moments: [m, ...s.moments].sort((a, b) => b.createdAt - a.createdAt),
+      momentLikes: { ...s.momentLikes, [m.id]: EMPTY_LIKES },
+      momentComments: { ...s.momentComments, [m.id]: EMPTY_COMMENTS },
+    }));
+  },
+
+  toggleLike: async (momentId, contactId, now) => {
+    const id = `${momentId}:${contactId}`;
+    const existing = (get().momentLikes[momentId] ?? []).some((l) => l.id === id);
+    if (existing) {
+      await repo.deleteLike(id);
+      set((s) => ({
+        momentLikes: {
+          ...s.momentLikes,
+          [momentId]: (s.momentLikes[momentId] ?? []).filter((l) => l.id !== id),
+        },
+      }));
+      return false;
+    }
+    const like: MomentLikeVM = { id, momentId, contactId, createdAt: now };
+    await repo.putLike(like);
+    set((s) => ({
+      momentLikes: { ...s.momentLikes, [momentId]: [...(s.momentLikes[momentId] ?? []), like] },
+    }));
+    return true;
+  },
+
+  applyLike: async (like) => {
+    await repo.putLike(like);
+    set((s) => {
+      const cur = s.momentLikes[like.momentId] ?? [];
+      if (cur.some((l) => l.id === like.id)) return s;
+      return { momentLikes: { ...s.momentLikes, [like.momentId]: [...cur, like] } };
+    });
+  },
+
+  addComment: async (c) => {
+    await repo.putComment(c);
+    set((s) => ({
+      momentComments: {
+        ...s.momentComments,
+        [c.momentId]: [...(s.momentComments[c.momentId] ?? []), c].sort(
+          (a, b) => a.createdAt - b.createdAt,
+        ),
+      },
     }));
   },
 }));

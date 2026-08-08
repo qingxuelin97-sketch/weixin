@@ -18,6 +18,9 @@ import type {
   RpClaimVM,
   TransferVM,
   WalletTxVM,
+  MomentVM,
+  MomentLikeVM,
+  MomentCommentVM,
 } from '../data/types';
 import {
   idbGetAll,
@@ -28,6 +31,7 @@ import {
   idbBulkPut,
   idbCount,
   idbQueryByIndex,
+  idbGetAllByIndex,
 } from './idb';
 
 export interface Repo {
@@ -69,6 +73,17 @@ export interface Repo {
   putTransfer(t: TransferVM): Promise<void>;
   getWalletTxs(): Promise<WalletTxVM[]>;
   putWalletTx(t: WalletTxVM): Promise<void>;
+
+  // moments
+  /** Newest first. `before` paginates by createdAt for infinite scroll. */
+  getMoments(opts?: { limit?: number; before?: number }): Promise<MomentVM[]>;
+  getMoment(id: string): Promise<MomentVM | undefined>;
+  putMoment(m: MomentVM): Promise<void>;
+  getLikes(momentId: string): Promise<MomentLikeVM[]>;
+  putLike(l: MomentLikeVM): Promise<void>;
+  deleteLike(id: string): Promise<void>;
+  getComments(momentId: string): Promise<MomentCommentVM[]>;
+  putComment(c: MomentCommentVM): Promise<void>;
 
   isEmpty(): Promise<boolean>;
 }
@@ -171,6 +186,37 @@ export class IdbRepo implements Repo {
     await idbPut('wallet_tx', t);
   }
 
+  async getMoments(opts: { limit?: number; before?: number } = {}) {
+    const all = await idbGetAll<MomentVM>('moments');
+    const filtered =
+      opts.before == null ? all : all.filter((m) => m.createdAt < (opts.before as number));
+    filtered.sort((a, b) => b.createdAt - a.createdAt); // feed is newest-first
+    return opts.limit == null ? filtered : filtered.slice(0, opts.limit);
+  }
+  async getMoment(id: string) {
+    return idbGet<MomentVM>('moments', id);
+  }
+  async putMoment(m: MomentVM) {
+    await idbPut('moments', m);
+  }
+  async getLikes(momentId: string) {
+    const rows = await idbGetAllByIndex<MomentLikeVM>('moment_likes', 'byMoment', momentId);
+    return rows.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  async putLike(l: MomentLikeVM) {
+    await idbPut('moment_likes', l);
+  }
+  async deleteLike(id: string) {
+    await idbDelete('moment_likes', id);
+  }
+  async getComments(momentId: string) {
+    const rows = await idbGetAllByIndex<MomentCommentVM>('moment_comments', 'byMoment', momentId);
+    return rows.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  async putComment(c: MomentCommentVM) {
+    await idbPut('moment_comments', c);
+  }
+
   async isEmpty() {
     return (await idbCount('conversations')) === 0;
   }
@@ -180,12 +226,18 @@ export class IdbRepo implements Repo {
     personas: PersonaVM[];
     conversations: ConversationVM[];
     messages: Array<Omit<MessageVM, 'id'>>;
+    moments?: MomentVM[];
+    momentLikes?: MomentLikeVM[];
+    momentComments?: MomentCommentVM[];
   }) {
     await idbBulkPut('contacts', data.contacts);
     await idbBulkPut('personas', data.personas);
     await idbBulkPut('conversations', data.conversations);
     // Messages use autoincrement — add in order so ids ascend with time.
     for (const m of data.messages) await idbAdd('messages', m);
+    if (data.moments?.length) await idbBulkPut('moments', data.moments);
+    if (data.momentLikes?.length) await idbBulkPut('moment_likes', data.momentLikes);
+    if (data.momentComments?.length) await idbBulkPut('moment_comments', data.momentComments);
   }
 }
 

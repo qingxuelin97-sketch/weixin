@@ -9,8 +9,9 @@
  */
 
 const DB_NAME = 'weixin-ai';
-// v2 adds the money stores; v3 adds the TTS audio cache.
-const DB_VERSION = 3;
+// v2 adds the money stores; v3 adds the TTS audio cache; v4 adds Moments.
+// Bump this on EVERY new store or onupgradeneeded never runs (see CLAUDE.md §3.5).
+const DB_VERSION = 4;
 
 export interface StoreDef {
   name: string;
@@ -41,6 +42,17 @@ export const STORES: StoreDef[] = [
   { name: 'wallet_tx', keyPath: 'id' },
   // Content-addressed TTS audio cache (key = hash of voice+text+params).
   { name: 'tts_cache', keyPath: 'key' },
+  // --- moments (v4) ---
+  { name: 'moments', keyPath: 'id' },
+  // SQLite models likes as a composite PK (momentId, contactId). IndexedDB keyPaths
+  // are single-valued, so the id is the synthetic join `${momentId}:${contactId}` —
+  // that keeps "one like per person per moment" enforced by the store itself.
+  { name: 'moment_likes', keyPath: 'id', indexes: [{ name: 'byMoment', keyPath: 'momentId' }] },
+  {
+    name: 'moment_comments',
+    keyPath: 'id',
+    indexes: [{ name: 'byMoment', keyPath: 'momentId' }],
+  },
 ];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -126,6 +138,26 @@ export async function idbCount(store: string): Promise<number> {
  * Query an index for all rows whose indexed value equals `value`, newest-first,
  * optionally paginated with a cursor (return rows with id < cursorId).
  */
+/**
+ * Equality lookup on an index, unordered, for stores keyed by a string id.
+ * Separate from `idbQueryByIndex` because that one assumes numeric autoincrement
+ * keys so it can walk them descending for cursor pagination — Moments likes and
+ * comments have neither property, and callers sort them explicitly.
+ */
+export async function idbGetAllByIndex<T>(
+  store: string,
+  indexName: string,
+  value: IDBValidKey,
+): Promise<T[]> {
+  const db = await openDB();
+  const os = tx(db, store, 'readonly');
+  return new Promise((resolve, reject) => {
+    const req = os.index(indexName).getAll(value);
+    req.onsuccess = () => resolve(req.result as T[]);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 export async function idbQueryByIndex<T extends { id: number }>(
   store: string,
   indexName: string,
