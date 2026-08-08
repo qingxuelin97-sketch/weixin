@@ -64,6 +64,7 @@ export function RedPacketDetailPage() {
                   <Avatar
                     color={who?.avatarColor ?? 'var(--color-brand)'}
                     text={who?.avatarText ?? '?'}
+                    imageRef={who?.avatarRef}
                     size={40}
                   />
                   <div className="rp-claim__main">

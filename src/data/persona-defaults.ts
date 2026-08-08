@@ -24,6 +24,7 @@ export const PERSONA_DEFAULTS: Omit<PersonaVM, 'contactId' | 'core'> = {
   commentRate: 0.25,
   affinityInit: 20,
   relations: {},
+  imageTags: [],
 };
 
 /** Build a complete persona from a partial, filling anything unspecified. */

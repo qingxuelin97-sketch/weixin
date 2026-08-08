@@ -93,7 +93,7 @@ export function MomentsPage() {
         <div className="moments__cover">
           <div className="moments__self">
             <span className="moments__self-name">{self ? (self.remark ?? self.name) : '我'}</span>
-            <Avatar text={self?.avatarText ?? '我'} color={self?.avatarColor ?? 'var(--color-text-secondary)'} size={64} />
+            <Avatar text={self?.avatarText ?? '我'} color={self?.avatarColor ?? 'var(--color-text-secondary)'} imageRef={self?.avatarRef} size={64} />
           </div>
         </div>
 

@@ -35,6 +35,7 @@ const STORE_INTRODUCED_IN: Record<string, number> = {
   moments: 4,
   moment_likes: 4,
   moment_comments: 4,
+  media: 5,
 };
 
 describe('DB migration guards', () => {

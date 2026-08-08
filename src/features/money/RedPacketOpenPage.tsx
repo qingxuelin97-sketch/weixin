@@ -69,6 +69,7 @@ export function RedPacketOpenPage() {
             <Avatar
               color={sender?.avatarColor ?? 'var(--color-brand)'}
               text={sender?.avatarText ?? '?'}
+              imageRef={sender?.avatarRef}
               size={56}
             />
             <div className="rp-open__name">

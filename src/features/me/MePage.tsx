@@ -94,7 +94,7 @@ export function MePage() {
       <NavBar title="" />
       <div className="page-body me">
         <div className="me__header" onClick={() => navigate('/profile')} role="button">
-          <Avatar color={me?.avatarColor ?? 'var(--color-brand)'} text={me?.avatarText ?? '我'} size={64} />
+          <Avatar color={me?.avatarColor ?? 'var(--color-brand)'} text={me?.avatarText ?? '我'} imageRef={me?.avatarRef} size={64} />
           <div className="me__id">
             <div className="me__name">{me?.name ?? '我'}</div>
             <div className="me__wxid-row">

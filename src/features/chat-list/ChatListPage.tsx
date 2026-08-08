@@ -48,9 +48,17 @@ export function ChatListPage() {
 
 function ConversationRow({ conv, onOpen }: { conv: ConversationVM; onOpen: () => void }) {
   const NOW = useNow();
+  const contactById = useAppStore((s) => s.contactById);
   const badge = conv.unreadCount > 0;
   // Muted conversations show a small red dot instead of a numeric badge (device behavior).
   const dotOnly = conv.isMuted;
+  // Real avatars resolve through the live contact, not the denormalized conv
+  // fields — assigning a new avatar updates every row without a data migration.
+  const peerRef = conv.type === 'single' && conv.peerId ? contactById(conv.peerId)?.avatarRef : undefined;
+  const memberAvatars = conv.memberAvatars?.map((m, i) => ({
+    ...m,
+    imageRef: conv.memberIds?.[i] ? contactById(conv.memberIds[i])?.avatarRef : undefined,
+  }));
   return (
     <div
       className={`conv-row hairline-bottom${conv.isPinned ? ' conv-row--pinned' : ''}`}
@@ -58,7 +66,7 @@ function ConversationRow({ conv, onOpen }: { conv: ConversationVM; onOpen: () =>
       role="button"
     >
       <div className="conv-row__avatar">
-        <Avatar color={conv.avatarColor} text={conv.avatarText} size={48} members={conv.memberAvatars} />
+        <Avatar color={conv.avatarColor} text={conv.avatarText} size={48} imageRef={peerRef} members={memberAvatars} />
         {badge && (
           <span className={`conv-row__badge${dotOnly ? ' conv-row__badge--dot' : ''}`}>
             {dotOnly ? '' : conv.unreadCount > 99 ? '99+' : conv.unreadCount}

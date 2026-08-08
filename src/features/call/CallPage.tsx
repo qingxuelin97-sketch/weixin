@@ -74,7 +74,7 @@ export function CallPage() {
   return (
     <div className="call-page">
       <div className="call-page__id">
-        <Avatar color={peer.avatarColor} text={peer.avatarText} size={88} />
+        <Avatar color={peer.avatarColor} text={peer.avatarText} imageRef={peer.avatarRef} size={88} />
         <div className="call-page__name">{peer.remark ?? peer.name}</div>
         <div className="call-page__status">
           {phase === 'dialing' ? '正在等待对方接受邀请…' : phase === 'active' ? mmss : '通话已结束'}

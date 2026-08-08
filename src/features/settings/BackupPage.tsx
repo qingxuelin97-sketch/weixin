@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { SubNav } from '../../components/SubNav';
 import { saveTextFile } from '../../lib/save-file';
+import { repo } from '../../db/repo';
 import {
   exportBackup,
   serializeBackup,
@@ -33,12 +34,14 @@ const STORE_LABEL: Record<string, string> = {
   wallet_tx: '零钱明细',
   providers: 'API 配置',
   settings: '设置',
+  media: '素材图片',
 };
 
 export function BackupPage() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [pending, setPending] = useState<BackupFile | null>(null);
+  const [includeMedia, setIncludeMedia] = useState(true);
 
   const summarize = (counts: Record<string, number>) =>
     Object.entries(counts)
@@ -51,11 +54,13 @@ export function BackupPage() {
     setStatus(null);
     try {
       const now = Date.now();
-      const file = await exportBackup(now);
+      const file = await exportBackup(now, undefined, { includeMedia });
       const json = serializeBackup(file);
       const name = backupFilename(now);
 
       await saveTextFile(name, json, 'application/json', '保存备份文件');
+      // Freshness marker for the "该备份了" nudge on the settings page.
+      await repo.putSetting('lastBackupAt', now);
       setStatus(`已导出：${summarize(file.manifest.counts)}`);
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
@@ -110,6 +115,15 @@ export function BackupPage() {
             <span className="settings__label">导出备份</span>
             <span className="settings__value">.aiwx 文件</span>
           </button>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => setIncludeMedia((v) => !v)}
+          >
+            <span className="settings__label">备份包含素材图片</span>
+            <span className={`switch${includeMedia ? ' switch--on' : ''}`}>
+              <span className="switch__knob" />
+            </span>
+          </div>
           <label className="settings__row">
             <span className="settings__label">从文件恢复</span>
             <span className="settings__value">选择 .aiwx</span>

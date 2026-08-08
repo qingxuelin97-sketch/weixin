@@ -11,6 +11,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
+import { Avatar } from '../../components/Avatar';
+import { MediaPicker } from '../../components/MediaPicker';
 import { useAppStore } from '../../store/appStore';
 import { VOICE_OPTIONS, DEFAULT_VOICE } from '../../llm/tts';
 import { repo } from '../../db/repo';
@@ -45,8 +47,12 @@ export function PersonaEditPage() {
   const existing = useAppStore((s) => s.personaFor(contactId));
   const putPersona = useAppStore((s) => s.putPersona);
   const showToast = useAppStore((s) => s.showToast);
-  const [p, setP] = useState<PersonaVM>(existing ?? emptyPersona(contactId));
+  const putContact = useAppStore((s) => s.putContact);
+  // Rows persisted before a field existed lack it — makePersona backfills the
+  // defaults so e.g. `p.imageTags.join` can't crash on a pre-M-C2 persona.
+  const [p, setP] = useState<PersonaVM>(existing ? makePersona(existing) : emptyPersona(contactId));
   const [providers, setProviders] = useState<ProviderVM[]>([]);
+  const [pickingAvatar, setPickingAvatar] = useState(false);
 
   useEffect(() => {
     void repo.getProviders().then((all) => setProviders(all.filter((x) => x.enabled)));
@@ -75,6 +81,36 @@ export function PersonaEditPage() {
     <>
       <SubNav title={contact ? `编辑：${contact.remark ?? contact.name}` : '编辑人设'} />
       <div className="page-body settings">
+        {contact && (
+          <div className="settings__group">
+            <div
+              className="settings__row"
+              onClick={() => setPickingAvatar(true)}
+              role="button"
+            >
+              <span className="settings__label">头像</span>
+              <Avatar
+                color={contact.avatarColor}
+                text={contact.avatarText}
+                imageRef={contact.avatarRef}
+                size={40}
+              />
+              <span className="settings__chevron">›</span>
+            </div>
+          </div>
+        )}
+        {pickingAvatar && contact && (
+          <MediaPicker
+            kind="avatar"
+            title="选择头像"
+            allowClear
+            onPick={(ref) => {
+              void putContact({ ...contact, avatarRef: ref || undefined });
+              setPickingAvatar(false);
+            }}
+            onClose={() => setPickingAvatar(false)}
+          />
+        )}
         <div className="settings__group">
           <div className="settings__group-title">人设</div>
           <div className="field field--divided">
@@ -244,6 +280,24 @@ export function PersonaEditPage() {
               step={0.05}
               value={p.commentRate}
               onChange={(e) => set('commentRate', Number(e.target.value))}
+            />
+          </div>
+          <div className="field field--divided">
+            <span className="field__label">配图标签（逗号分隔，对应素材库照片标签）</span>
+            <input
+              className="field__input"
+              value={p.imageTags.join(', ')}
+              onChange={(e) =>
+                set(
+                  'imageTags',
+                  e.target.value
+                    .split(/[,，]/)
+                    .map((t) => t.trim())
+                    .filter(Boolean),
+                )
+              }
+              placeholder="留空 = 从整个照片池抽取"
+              spellCheck={false}
             />
           </div>
           <div className="field">

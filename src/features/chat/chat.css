@@ -540,3 +540,16 @@
   color: var(--color-link);
   cursor: pointer;
 }
+
+/* Image message (M-C2): bare rounded picture, no bubble chrome — device style. */
+.msg-image {
+  max-width: 150px;
+  max-height: 220px;
+  border-radius: 6px;
+  display: block;
+  object-fit: cover;
+}
+.msg-image--ph {
+  width: 150px;
+  height: 110px;
+}

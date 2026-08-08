@@ -134,6 +134,7 @@ export function ContactsPage() {
                 name={cc.remark ?? cc.name}
                 color={cc.avatarColor}
                 text={cc.avatarText}
+                imageRef={cc.avatarRef}
                 onClick={() => navigate(`/contact/${cc.id}`)}
               />
             ))}
@@ -148,6 +149,7 @@ export function ContactsPage() {
                 name={cc.remark ?? cc.name}
                 color={cc.avatarColor}
                 text={cc.avatarText}
+                imageRef={cc.avatarRef}
                 onClick={() => navigate(`/contact/${cc.id}`)}
               />
             ))}
@@ -168,16 +170,18 @@ function ContactRow({
   name,
   color,
   text,
+  imageRef,
   onClick,
 }: {
   name: string;
   color: string;
   text: string;
+  imageRef?: string;
   onClick?: () => void;
 }) {
   return (
     <div className="contacts__row" onClick={onClick}>
-      <Avatar color={color} text={text} size={40} />
+      <Avatar color={color} text={text} imageRef={imageRef} size={40} />
       <span className="contacts__name hairline-bottom contacts__cell">{name}</span>
     </div>
   );

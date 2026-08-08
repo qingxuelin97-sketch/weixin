@@ -10,6 +10,8 @@ import {
 } from '../../components/icons';
 import { Avatar } from '../../components/Avatar';
 import { MessageBubble } from './MessageBubble';
+import { ImageViewer } from '../../components/ImageViewer';
+import { registerMedia } from '../../data/media-registry';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
 import { useAppStore } from '../../store/appStore';
@@ -80,6 +82,7 @@ export function ChatPage() {
 
   /** Long-press context menu: which message, anchored where. */
   const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
+  const albumInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!menu) return;
     // Any further interaction dismisses the menu, WeChat-style.
@@ -142,6 +145,53 @@ export function ChatPage() {
     }
 
     await sendUserMessage(convId, text, peer, persona, globalTier, hooks);
+  };
+
+  /**
+   * 相册发图：system file picker → import into the media library (photo pool,
+   * 标签"聊天") → send as an image message whose content is the `idb:` ref.
+   * Persisting through the library (not a one-off blob) keeps a single media
+   * path — the ref survives backup/restore like every other ref.
+   */
+  const sendImages = async (files: FileList | null) => {
+    if (!files?.length || !conv) return;
+    for (const f of Array.from(files)) {
+      if (!f.type.startsWith('image/')) continue;
+      const item = {
+        id: crypto.randomUUID(),
+        kind: 'photo' as const,
+        tags: ['聊天'],
+        mime: f.type,
+        blob: f as Blob,
+        createdAt: Date.now(),
+      };
+      await repo.putMedia(item);
+      registerMedia(item.id, { url: URL.createObjectURL(f), kind: 'photo', tags: item.tags });
+      await appendMessage({
+        convId,
+        senderId: 'self',
+        type: 'image',
+        content: `idb:${item.id}`,
+        status: 'sent',
+        createdAt: Date.now(),
+      });
+    }
+  };
+
+  /** Ordered image refs of this conversation, so the viewer can page through. */
+  const imageRefs = useMemo(
+    () =>
+      rows
+        .filter((r) => r.kind !== 'time')
+        .map((r) => (r as { msg: MessageVM }).msg)
+        .filter((m) => m.type === 'image' && !m.isRecalled && m.content)
+        .map((m) => m.content as string),
+    [rows],
+  );
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const onImageTap = (msg: MessageVM) => {
+    const idx = imageRefs.indexOf(msg.content ?? '');
+    setViewerIndex(idx >= 0 ? idx : 0);
   };
 
   /** Red packet → open/detail; a pending transfer from the peer → accept it. */
@@ -238,6 +288,7 @@ export function ChatPage() {
                 isSelf={row.msg.senderId === 'self'}
                 showNickname={isGroup}
                 onMoneyTap={onMoneyTap}
+                onImageTap={onImageTap}
                 onLongPress={(m, x, y) => {
                   // Only open when there is at least one action — an empty
                   // capsule reads as breakage.
@@ -254,6 +305,7 @@ export function ChatPage() {
                 <Avatar
                   color={peerContact?.avatarColor ?? 'var(--color-brand)'}
                   text={peerContact?.avatarText ?? '?'}
+                  imageRef={peerContact?.avatarRef}
                   size={40}
                 />
               </div>
@@ -345,12 +397,27 @@ export function ChatPage() {
             if (key === 'redpacket') navigate(`/rp/send/${convId}`);
             else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
             else if (key === 'call' && conv.type === 'single') navigate(`/call/${convId}`);
+            else if (key === 'album') albumInputRef.current?.click();
             else showToast('暂未开放');
           }}
           onEmoji={(e) => setDraft((d) => d + e)}
           onEmojiDelete={() => setDraft((d) => Array.from(d).slice(0, -1).join(''))}
         />
+        <input
+          ref={albumInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            void sendImages(e.target.files);
+            e.target.value = '';
+          }}
+        />
       </div>
+      {viewerIndex != null && imageRefs.length > 0 && (
+        <ImageViewer refs={imageRefs} index={viewerIndex} onClose={() => setViewerIndex(null)} />
+      )}
     </div>
   );
 }

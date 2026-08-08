@@ -24,6 +24,7 @@ import {
   seedMomentComments,
 } from '../data/seed';
 import { repo, IdbRepo } from '../db/repo';
+import { registerMedia } from '../data/media-registry';
 
 interface AppState {
   hydrated: boolean;
@@ -145,6 +146,15 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
         if (p) personas[cc.id] = p;
       }),
   );
+  // Prime the media registry so `idb:` refs (avatars, photo pools) resolve
+  // synchronously everywhere. Object URLs live for the process lifetime.
+  for (const item of await repo.getMedia()) {
+    registerMedia(item.id, {
+      url: URL.createObjectURL(item.blob),
+      kind: item.kind,
+      tags: item.tags,
+    });
+  }
   conversations.sort(sortConversations);
   set({ hydrated: true, contacts, conversations, messages, personas });
 }

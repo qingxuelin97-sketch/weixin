@@ -57,3 +57,9 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
 - **AI 点赞用 `applyLike` 而不是 `toggleLike`**：AI 的反应永远是「加」。曾经的写法是先
   `repo.putLike` 再调 `toggleLike`，结果第二步立刻把刚加的赞又取消了。
 - 新增 store 记得 `DB_VERSION` +1（v4 就是为朋友圈加的）。
+
+## M-C2 增补：配图池标签化
+
+`pickImages(seed, count, tags?)`：`tags` 来自 `PersonaVM.imageTags`，按标签过滤
+`idb:` 照片池（吃货人设不发健身照）；空标签或过滤后为空 → 回落全池（宁可跑题不可
+让人设永远无图）。优先级：运行时媒体库 > 构建期 assets > 渐变占位。同种子同图不变。

@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
+import { MediaPicker } from '../../components/MediaPicker';
 import { useAppStore } from '../../store/appStore';
 import { AVATAR_PALETTE } from '../../data/avatar-palette';
 import '../settings/settings.css';
@@ -22,7 +23,9 @@ export function ProfilePage() {
   const [name, setName] = useState(me?.name ?? '我');
   const [avatarText, setAvatarText] = useState(me?.avatarText ?? '我');
   const [color, setColor] = useState(me?.avatarColor ?? AVATAR_PALETTE[0]);
+  const [avatarRef, setAvatarRef] = useState(me?.avatarRef);
   const [wxid, setWxid] = useState(me?.wxid ?? '');
+  const [picking, setPicking] = useState(false);
 
   const save = async () => {
     if (!me) return;
@@ -36,6 +39,7 @@ export function ProfilePage() {
       name: trimmed,
       avatarText: (avatarText.trim() || trimmed).slice(0, 2),
       avatarColor: color,
+      avatarRef,
       wxid: wxid.trim() || me.wxid,
     });
     showToast('已保存');
@@ -46,9 +50,26 @@ export function ProfilePage() {
     <>
       <SubNav title="个人资料" />
       <div className="page-body settings">
-        <div className="profile__preview">
-          <Avatar color={color} text={(avatarText.trim() || name.trim() || '我').slice(0, 2)} size={64} />
+        <div className="profile__preview" onClick={() => setPicking(true)} role="button">
+          <Avatar
+            color={color}
+            text={(avatarText.trim() || name.trim() || '我').slice(0, 2)}
+            imageRef={avatarRef}
+            size={64}
+          />
         </div>
+        {picking && (
+          <MediaPicker
+            kind="avatar"
+            title="选择头像"
+            allowClear
+            onPick={(ref) => {
+              setAvatarRef(ref || undefined);
+              setPicking(false);
+            }}
+            onClose={() => setPicking(false)}
+          />
+        )}
 
         <div className="settings__group">
           <div className="field field--divided">

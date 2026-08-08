@@ -21,11 +21,19 @@ export function SettingsPage() {
   const [nsfw, setNsfw] = useState<NsfwTierVM>('off');
   const [providerCount, setProviderCount] = useState(0);
   const [notifyOn, setNotifyOn] = useState<boolean | null>(null);
+  const [backupHint, setBackupHint] = useState('');
 
   useEffect(() => {
     void repo.getSetting<NsfwTierVM>('nsfwGlobalTier').then((t) => setNsfw(t ?? 'off'));
     void repo.getProviders().then((p) => setProviderCount(p.filter((x) => x.enabled).length));
     void repo.getSetting<boolean>('notifyGranted').then((v) => setNotifyOn(v ?? false));
+    // Freshness nudge: data is the only asset this app has, and .aiwx is its
+    // only escape hatch — surface staleness where the user will see it.
+    void repo.getSetting<number>('lastBackupAt').then((t) => {
+      if (!t) return setBackupHint('从未备份');
+      const days = Math.floor((Date.now() - t) / 86_400_000);
+      setBackupHint(days === 0 ? '今天已备份' : days > 7 ? `${days} 天前，该备份了` : `${days} 天前`);
+    });
   }, []);
 
   const setTier = (t: NsfwTierVM) => {
@@ -92,6 +100,13 @@ export function SettingsPage() {
           </div>
           <div
             className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/media')}
+          >
+            <span className="settings__label">素材库（头像与照片）</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
             onClick={() => navigate('/settings/notify-test')}
           >
             <span className="settings__label">后台通知测试</span>
@@ -99,6 +114,7 @@ export function SettingsPage() {
           </div>
           <div className="settings__row" onClick={() => navigate('/settings/backup')}>
             <span className="settings__label">备份与恢复</span>
+            <span className="settings__value">{backupHint}</span>
             <span className="settings__chevron">›</span>
           </div>
         </div>

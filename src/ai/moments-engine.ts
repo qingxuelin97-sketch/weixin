@@ -206,7 +206,7 @@ export async function generateMomentPost(
     );
     const text = cleanPostText(res.text ?? '');
     if (!text) return null;
-    return { text, imageRefs: pickImages(`mi:${peer.id}:${now}`, imgCount) };
+    return { text, imageRefs: pickImages(`mi:${peer.id}:${now}`, imgCount, persona.imageTags) };
   } catch {
     return null;
   }

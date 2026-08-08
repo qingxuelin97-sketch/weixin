@@ -7,6 +7,7 @@
  */
 import { useState } from 'react';
 import { Avatar } from '../../components/Avatar';
+import { ImageViewer } from '../../components/ImageViewer';
 import { resolveImageRef } from '../../data/moments-images';
 import { momentTimestamp } from '../../lib/time';
 import type { MomentVM, MomentLikeVM, MomentCommentVM, ContactVM } from '../../data/types';
@@ -47,6 +48,7 @@ export function MomentCard({
   onComment,
 }: Props) {
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const imgs = moment.imageRefs.slice(0, 9);
   const hasReactions = likes.length > 0 || comments.length > 0;
 
@@ -55,6 +57,7 @@ export function MomentCard({
       <Avatar
         text={author?.avatarText ?? '?'}
         color={author?.avatarColor ?? 'var(--color-text-placeholder)'}
+        imageRef={author?.avatarRef}
         size={40}
       />
       <div className="moment__body">
@@ -71,12 +74,17 @@ export function MomentCard({
                   key={`${ref}-${i}`}
                   className="moment__image"
                   style={background ? { background } : undefined}
+                  onClick={() => setViewerIndex(i)}
+                  role="button"
                 >
                   {url && <img src={url} alt="" loading="lazy" />}
                 </div>
               );
             })}
           </div>
+        )}
+        {viewerIndex != null && (
+          <ImageViewer refs={imgs} index={viewerIndex} onClose={() => setViewerIndex(null)} />
         )}
 
         <div className="moment__meta">

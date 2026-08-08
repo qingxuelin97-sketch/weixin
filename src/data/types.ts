@@ -9,11 +9,28 @@ export interface ContactVM {
   type: 'self' | 'ai';
   name: string;
   remark?: string;
-  avatarColor: string; // placeholder avatar tint until PNG library arrives
+  avatarColor: string; // placeholder avatar tint until a real image is assigned
   avatarText: string; // 1-2 chars shown on placeholder avatar
+  /** Media-library ref (`idb:<id>`) for a real avatar image; color/text remain the fallback. */
+  avatarRef?: string;
   signature?: string;
   wxid?: string;
   pinyinInitial?: string;
+}
+
+/**
+ * A user-imported media item (runtime library, idb store `media`). Refs of the
+ * form `idb:<id>` point here — see src/data/moments-images.ts for resolution.
+ */
+export interface MediaItemVM {
+  id: string;
+  /** 'avatar' items feed the avatar picker; 'photo' items feed聊天/朋友圈配图. */
+  kind: 'avatar' | 'photo';
+  /** Free-form persona tags (风景/美食/自拍…). Empty = usable by everyone. */
+  tags: string[];
+  mime: string;
+  blob: Blob;
+  createdAt: number;
 }
 
 export type MessageType = 'text' | 'image' | 'voice' | 'sticker' | 'rp' | 'transfer' | 'call' | 'system';
@@ -89,6 +106,11 @@ export interface PersonaVM {
   commentRate: number;
   /** Starting closeness, 0..100. Scales like/comment rates and heartbeat warmth. */
   affinityInit: number;
+  /**
+   * Media-library tags this persona draws配图 from (吃货人设发健身照=秒穿帮).
+   * Empty = draws from the whole photo pool.
+   */
+  imageTags: string[];
   /**
    * Who this persona is to others. Key 'user' or a contactId; value is the
    * relationship in their own words. Feeds the prompt's relations layer —

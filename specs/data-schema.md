@@ -33,3 +33,17 @@ ZIP{manifest, VACUUM INTO 快照 db, media 可选}。两档（仅数据 MB 级 /
 - [ ] `splitLuckyPacket` 守恒 + 确定性（见 money.test.ts）。
 - [ ] 万级消息游标分页无跳动、60fps（M1 熔断门 a，真机）。
 - [ ] 杀进程重启 scheduled_actions 不丢（M2）。
+
+## media 表（v5，M-C2 运行时媒体库）
+
+`{ id, kind: 'avatar'|'photo', tags: string[], mime, blob: Blob, createdAt }`，
+IndexedDB store `media`（`DB_VERSION=5`）。这是**真机唯一可行**的素材通道——APK 由
+CI 构建，`src/assets/` 构建期槽位在设备上永远不可达。
+
+- ref 体系新增 `idb:<id>`（`resolveImageRef` 同步解析，经 `data/media-registry` 的
+  进程级 objectURL 注册表；启动水合时 prime，删除时 revoke）。
+- `ContactVM.avatarRef` / `PersonaVM.imageTags` 由它支撑；`PersonaVM` 加字段必须走
+  `makePersona()`（§3.5）。
+- 备份：blob 以 `blobB64` 进 `.aiwx`（JSON 会把 Blob 变 `{}`——与 CryptoKey 同类陷阱），
+  恢复时还原；导出可选排除（备份页开关）。恢复后需重启让注册表重新 prime。
+- Repo 接口：`getMedia(kind?) / getMediaItem / putMedia / deleteMedia`。

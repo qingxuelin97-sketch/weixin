@@ -21,6 +21,7 @@ import { MomentsPage } from './features/moments/MomentsPage';
 import { MomentPublishPage } from './features/moments/MomentPublishPage';
 import { BackupPage } from './features/settings/BackupPage';
 import { NotifyTestPage } from './features/settings/NotifyTestPage';
+import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
 import { NewContactPage } from './features/contacts/NewContactPage';
@@ -101,6 +102,7 @@ export function App() {
               <Route path="/settings/api" element={<Push><ApiConfigPage /></Push>} />
               <Route path="/settings/backup" element={<Push><BackupPage /></Push>} />
               <Route path="/settings/notify-test" element={<Push><NotifyTestPage /></Push>} />
+              <Route path="/settings/media" element={<Push><MediaLibraryPage /></Push>} />
               <Route path="/persona/:contactId" element={<Push><PersonaEditPage /></Push>} />
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />

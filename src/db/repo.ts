@@ -21,6 +21,7 @@ import type {
   MomentVM,
   MomentLikeVM,
   MomentCommentVM,
+  MediaItemVM,
 } from '../data/types';
 import {
   idbGetAll,
@@ -84,6 +85,12 @@ export interface Repo {
   deleteLike(id: string): Promise<void>;
   getComments(momentId: string): Promise<MomentCommentVM[]>;
   putComment(c: MomentCommentVM): Promise<void>;
+
+  // runtime media library (avatars + photo pools; see specs/data-schema.md)
+  getMedia(kind?: MediaItemVM['kind']): Promise<MediaItemVM[]>;
+  getMediaItem(id: string): Promise<MediaItemVM | undefined>;
+  putMedia(item: MediaItemVM): Promise<void>;
+  deleteMedia(id: string): Promise<void>;
 
   isEmpty(): Promise<boolean>;
 }
@@ -215,6 +222,21 @@ export class IdbRepo implements Repo {
   }
   async putComment(c: MomentCommentVM) {
     await idbPut('moment_comments', c);
+  }
+
+  async getMedia(kind?: MediaItemVM['kind']) {
+    const all = await idbGetAll<MediaItemVM>('media');
+    const filtered = kind ? all.filter((m) => m.kind === kind) : all;
+    return filtered.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  async getMediaItem(id: string) {
+    return idbGet<MediaItemVM>('media', id);
+  }
+  async putMedia(item: MediaItemVM) {
+    await idbPut('media', item);
+  }
+  async deleteMedia(id: string) {
+    await idbDelete('media', id);
   }
 
   async isEmpty() {

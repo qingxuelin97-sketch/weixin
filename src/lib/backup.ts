@@ -71,17 +71,55 @@ function sanitize(store: string, rows: unknown[]): unknown[] {
 }
 
 /**
+ * Media rows carry Blobs, which JSON.stringify silently turns into `{}` — the
+ * same class of bug as the CryptoKey husk (H3). They travel base64-encoded in
+ * a `blobB64` field instead, rebuilt into Blobs on restore.
+ */
+export async function encodeMediaRows(rows: unknown[]): Promise<unknown[]> {
+  return Promise.all(
+    rows.map(async (r) => {
+      const { blob, ...rest } = r as { blob?: Blob } & Record<string, unknown>;
+      if (!(blob instanceof Blob)) return rest;
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      let bin = '';
+      // Chunked to keep the argument list under engine limits on big photos.
+      for (let i = 0; i < buf.length; i += 0x8000) {
+        bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      }
+      return { ...rest, blobB64: btoa(bin) };
+    }),
+  );
+}
+
+export function decodeMediaRow(row: unknown): unknown {
+  const { blobB64, ...rest } = row as { blobB64?: string; mime?: string } & Record<string, unknown>;
+  if (typeof blobB64 !== 'string') return row;
+  const bin = atob(blobB64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return { ...rest, blob: new Blob([buf], { type: (rest.mime as string) || 'image/jpeg' }) };
+}
+
+/**
  * Read every exportable store into a single envelope.
  *
  * @param now injected timestamp so exports are reproducible in tests
+ * @param opts includeMedia=false drops the媒体库 (biggest store by bytes) for a lean file
  */
-export async function exportBackup(now: number, appVersion?: string): Promise<BackupFile> {
+export async function exportBackup(
+  now: number,
+  appVersion?: string,
+  opts: { includeMedia?: boolean } = {},
+): Promise<BackupFile> {
+  const includeMedia = opts.includeMedia ?? true;
   const stores: Record<string, unknown[]> = {};
   const counts: Record<string, number> = {};
 
   for (const def of STORES) {
     if (NEVER_EXPORT.has(def.name)) continue;
-    const rows = sanitize(def.name, await idbGetAll(def.name));
+    if (def.name === 'media' && !includeMedia) continue;
+    let rows = sanitize(def.name, await idbGetAll(def.name));
+    if (def.name === 'media') rows = await encodeMediaRows(rows);
     stores[def.name] = rows;
     counts[def.name] = rows.length;
   }
@@ -156,6 +194,7 @@ export async function restoreBackup(file: BackupFile, now: number): Promise<Rest
     let rows = file.stores[def.name];
     if (!rows) continue; // absent from this backup — leave the store untouched
     if (def.name === 'settings') rows = rows.filter(isPortableSettingRow);
+    if (def.name === 'media') rows = rows.map(decodeMediaRow);
     await idbClear(def.name);
     for (const row of rows) await idbPut(def.name, row);
     restored[def.name] = rows.length;

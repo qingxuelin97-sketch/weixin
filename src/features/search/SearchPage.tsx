@@ -84,11 +84,18 @@ export function SearchPage() {
   const avatarFor = (h: SearchHit) => {
     if (h.kind === 'contact') {
       const c = contactById(h.id);
-      return { text: c?.avatarText ?? '?', color: c?.avatarColor ?? 'var(--color-text-placeholder)' };
+      return {
+        text: c?.avatarText ?? '?',
+        color: c?.avatarColor ?? 'var(--color-text-placeholder)',
+        ref: c?.avatarRef,
+      };
     }
     const conv = conversations.find((c) => c.id === (h.convId ?? h.id));
-    if (conv) return { text: conv.avatarText, color: conv.avatarColor };
-    return { text: '圈', color: 'var(--color-text-placeholder)' };
+    if (conv) {
+      const peer = conv.type === 'single' && conv.peerId ? contactById(conv.peerId) : undefined;
+      return { text: conv.avatarText, color: conv.avatarColor, ref: peer?.avatarRef };
+    }
+    return { text: '圈', color: 'var(--color-text-placeholder)', ref: undefined };
   };
 
   return (
@@ -136,7 +143,7 @@ export function SearchPage() {
                     className="search__row"
                     onClick={() => open(h)}
                   >
-                    <Avatar text={av.text} color={av.color} size={40} />
+                    <Avatar text={av.text} color={av.color} imageRef={av.ref} size={40} />
                     <span className="search__text">
                       <span className="search__title">
                         <Highlighted text={h.title} ranges={titleRanges} />

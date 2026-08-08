@@ -3,6 +3,7 @@ import { Avatar } from '../../components/Avatar';
 import { fenToYuan } from '../../lib/money';
 import { playVoice } from '../../lib/voice';
 import { canReEdit } from '../../lib/recall';
+import { resolveImageRef } from '../../data/moments-images';
 import type { MessageVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
   showNickname?: boolean;
   /** Tapping a red-packet / transfer bubble. */
   onMoneyTap?: (msg: MessageVM) => void;
+  /** Tapping an image bubble — the page opens the full-screen viewer. */
+  onImageTap?: (msg: MessageVM) => void;
   /** Long-press (or right-click) on the row — opens the recall/copy menu. */
   onLongPress?: (msg: MessageVM, x: number, y: number) => void;
   /** 重新编辑 on a recalled text message: refill the composer with the original. */
@@ -22,7 +25,7 @@ interface Props {
 const LONG_PRESS_MS = 500;
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onLongPress, onReEdit }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onLongPress, onReEdit }: Props) {
   // Long-press: pointer down starts a timer; any movement or release cancels it.
   // touch-action stays default so scrolling still cancels naturally via pointerleave.
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -79,7 +82,7 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
     >
       {!isSelf && (
         <div className="msg-row__avatar">
-          <Avatar color={sender?.avatarColor ?? 'var(--color-brand)'} text={sender?.avatarText ?? '?'} size={40} />
+          <Avatar color={sender?.avatarColor ?? 'var(--color-brand)'} text={sender?.avatarText ?? '?'} imageRef={sender?.avatarRef} size={40} />
         </div>
       )}
       <div className="msg-row__col">
@@ -89,7 +92,11 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
         <div
           className="msg-row__body"
           onClick={
-            msg.type === 'rp' || msg.type === 'transfer' ? () => onMoneyTap?.(msg) : undefined
+            msg.type === 'rp' || msg.type === 'transfer'
+              ? () => onMoneyTap?.(msg)
+              : msg.type === 'image'
+                ? () => onImageTap?.(msg)
+                : undefined
           }
         >
           <BubbleContent msg={msg} isSelf={isSelf} />
@@ -100,7 +107,7 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
       </div>
       {isSelf && (
         <div className="msg-row__avatar">
-          <Avatar color={sender?.avatarColor ?? 'var(--color-brand)'} text={sender?.avatarText ?? '我'} size={40} />
+          <Avatar color={sender?.avatarColor ?? 'var(--color-brand)'} text={sender?.avatarText ?? '我'} imageRef={sender?.avatarRef} size={40} />
         </div>
       )}
     </div>
@@ -157,6 +164,17 @@ function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
     case 'sticker':
       // Stickers render bare (no bubble background), like real WeChat.
       return <div className="msg-sticker">{msg.content || '🙂'}</div>;
+
+    case 'image': {
+      // content is an image ref (idb:/img:/ph:) — schema had the type since M1,
+      // but nothing rendered it until M-C2 (it fell through to the text bubble).
+      const { url, background } = resolveImageRef(msg.content ?? '');
+      return url ? (
+        <img className="msg-image" src={url} alt="" loading="lazy" />
+      ) : (
+        <div className="msg-image msg-image--ph" style={{ background }} />
+      );
+    }
 
     case 'voice':
       return <VoiceBubble msg={msg} isSelf={isSelf} />;

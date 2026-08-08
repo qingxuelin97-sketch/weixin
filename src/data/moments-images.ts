@@ -16,6 +16,7 @@
  * lives in src/data/ — the one tree exempt from the no-hardcoded-colors guard.
  */
 import { seededRng } from '../lib/money';
+import { getMediaUrl, photoPoolIds } from './media-registry';
 
 /** Vite resolves this at build time; empty object until the user adds files. */
 const ASSETS = import.meta.glob('../assets/moments/*.{png,jpg,jpeg,webp}', {
@@ -50,8 +51,15 @@ const PLACEHOLDER_GRADIENTS: Array<[string, string]> = [
 
 export const PLACEHOLDER_COUNT = PLACEHOLDER_GRADIENTS.length;
 
-/** All refs offerable in the publish picker. */
-export function availableRefs(): string[] {
+/**
+ * All refs offerable in the publish picker / AI pools. The runtime media
+ * library (user-imported on device, `idb:` refs) outranks the build-time asset
+ * slot — an APK user can only ever fill the former. `tags` narrows the library
+ * pool per persona; a filter matching nothing falls back to the whole pool.
+ */
+export function availableRefs(tags?: string[]): string[] {
+  const lib = photoPoolIds(tags);
+  if (lib.length > 0) return lib.map((id) => `idb:${id}`);
   if (hasRealAssets) return ASSET_NAMES.map((n) => `img:${n}`);
   return PLACEHOLDER_GRADIENTS.map((_, i) => `ph:${i}`);
 }
@@ -61,6 +69,13 @@ export function availableRefs(): string[] {
  * `background` instead of an <img>.
  */
 export function resolveImageRef(ref: string): { url?: string; background?: string } {
+  if (ref.startsWith('idb:')) {
+    const url = getMediaUrl(ref.slice(4));
+    if (url) return { url };
+    // Item deleted (or registry not primed yet) — stable placeholder keeps the
+    // grid's shape instead of a broken image.
+    return { background: gradientFor(hashRef(ref) % PLACEHOLDER_COUNT) };
+  }
   if (ref.startsWith('img:')) {
     const url = ASSET_BY_NAME[ref.slice(4)];
     if (url) return { url };
@@ -86,9 +101,10 @@ function hashRef(s: string): number {
 /**
  * Deterministically pick `count` distinct refs for a seed — same persona + same
  * post always gets the same pictures, so a replayed timeline looks identical.
+ * `tags` restricts the pool to the persona's media-library tags (imageTags).
  */
-export function pickImages(seed: string, count: number): string[] {
-  const pool = availableRefs();
+export function pickImages(seed: string, count: number, tags?: string[]): string[] {
+  const pool = availableRefs(tags);
   if (count <= 0 || pool.length === 0) return [];
   const rng = seededRng(seed);
   const remaining = [...pool];

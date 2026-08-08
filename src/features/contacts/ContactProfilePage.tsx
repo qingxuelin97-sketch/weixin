@@ -57,7 +57,7 @@ export function ContactProfilePage() {
       <SubNav title="" />
       <div className="page-body contacts contact-card">
         <div className="contact-card__head">
-          <Avatar color={contact.avatarColor} text={contact.avatarText} size={64} />
+          <Avatar color={contact.avatarColor} text={contact.avatarText} imageRef={contact.avatarRef} size={64} />
           <div className="contact-card__id">
             <div className="contact-card__name">{contact.remark ?? contact.name}</div>
             {contact.wxid && <div className="contact-card__meta">微信号：{contact.wxid}</div>}

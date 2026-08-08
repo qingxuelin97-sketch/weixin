@@ -325,3 +325,43 @@ label.settings__row {
 .memory__btn--danger {
   color: var(--color-badge);
 }
+
+/* 素材库 grid (M-C2) */
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 12px 16px;
+}
+.media-grid__item {
+  position: relative;
+}
+.media-grid__thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--avatar-radius);
+  display: block;
+}
+.media-grid__del {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-badge);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-sub);
+  line-height: 20px;
+  padding: 0;
+}
+.media-grid__tags {
+  font-size: var(--fs-badge);
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

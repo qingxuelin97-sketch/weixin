@@ -24,3 +24,10 @@
   color: var(--color-text-on-brand);
   font-weight: var(--fw-regular);
 }
+/* Real image fill — crops like WeChat rather than letterboxing. */
+.avatar__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
