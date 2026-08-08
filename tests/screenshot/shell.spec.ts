@@ -131,3 +131,31 @@ test('search page with results', async ({ page }) => {
   await page.waitForTimeout(200);
   await expect(page).toHaveScreenshot('search-results.png', { fullPage: false });
 });
+
+test('settings page', async ({ page }) => {
+  await page.goto('/#/settings');
+  await settle(page);
+  await expect(page).toHaveScreenshot('settings.png', { fullPage: false });
+});
+
+test('API config page', async ({ page }) => {
+  await page.goto('/#/settings/api');
+  await settle(page);
+  await expect(page).toHaveScreenshot('settings-api.png', { fullPage: false });
+});
+
+test('persona edit page', async ({ page }) => {
+  await page.goto('/#/chats');
+  await page.waitForTimeout(600);
+  await page.goto('/#/persona/ai_lin');
+  await settle(page);
+  await expect(page).toHaveScreenshot('persona-edit.png', { fullPage: false });
+});
+
+test('red packet detail (手气榜)', async ({ page }) => {
+  await page.goto('/#/chats');
+  await page.waitForTimeout(600);
+  await page.goto('/#/rp/rp_seed_group');
+  await settle(page);
+  await expect(page).toHaveScreenshot('rp-detail.png', { fullPage: false });
+});
