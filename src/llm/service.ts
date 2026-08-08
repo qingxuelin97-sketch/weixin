@@ -264,7 +264,7 @@ export async function diagnoseProvider(vm: ProviderVM): Promise<string[]> {
       }
     })(),
   ]);
-  const chan = isNative ? '原生通道（App 发请求走的路）' : '浏览器 fetch 通道（受 CORS 限制）';
+  const chan = isNative ? '实际请求通道（网页优先→原生兜底）' : '浏览器 fetch 通道（受 CORS 限制）';
   lines.push(`② ${chan}：${bridge.ok ? 'OK' : '失败'}（${bridge.ms}ms，${bridge.detail}）`);
   lines.push(`②b 裸可达性探针（no-cors）：${webview.ok ? 'OK' : '失败'}（${webview.ms}ms，${webview.detail}）`);
 
@@ -286,9 +286,12 @@ export async function diagnoseProvider(vm: ProviderVM): Promise<string[]> {
     }
     if (!bridge.ok) return lines;
   } else {
+    // Transport policy since the device verdict: fetch-first, bridge-fallback —
+    // stage ② already tried BOTH channels in order.
     if (!bridge.ok && webview.ok) {
       lines.push(
-        '→ 判定：手机到服务商的网络是通的，但 App 的原生请求通道坏了/没发出去——是 App 的问题，不是代理的问题',
+        '→ 判定：该域可达，但网页与原生两条请求通道都失败。DeepSeek/MiniMax 支持网页直连，' +
+          '本应直达；若这是不支持网页直连的服务商（如 Zen），说明它依赖的原生兜底通道在本机是坏的',
       );
       return lines;
     }

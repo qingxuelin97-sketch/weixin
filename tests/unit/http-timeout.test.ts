@@ -24,12 +24,15 @@ afterEach(() => {
 });
 
 describe('httpJson on the native bridge', () => {
-  it('rejects with a timeout when the bridge never settles', async () => {
+  it('rejects boundedly when fetch fails and the bridge never settles', async () => {
     (globalThis as G).Capacitor = { isNativePlatform: () => true };
     const t0 = Date.now();
+    // New transport policy: fetch-first, bridge-fallback. When BOTH die the
+    // error is kind 'network' and carries each channel's own message so
+    // neither failure masks the other.
     await expect(
       httpJson({ url: 'https://api.example.test/v1/chat', timeoutMs: 80 }),
-    ).rejects.toMatchObject({ name: 'LlmError', kind: 'timeout' });
+    ).rejects.toMatchObject({ name: 'LlmError', kind: 'network' });
     // Must fail around the deadline, not the 60s default and never "never".
     expect(Date.now() - t0).toBeLessThan(2_000);
   });

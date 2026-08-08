@@ -42,6 +42,19 @@ export async function httpJson(req: HttpRequest): Promise<HttpResponse> {
   const native = await nativeHttp();
 
   if (native) {
+    // TRANSPORT POLICY (M-D device verdict): the WebView's own fetch is the
+    // PRIMARY transport even on native. Live-device diagnosis proved the
+    // CapacitorHttp bridge can fail/hang while in-app fetch works, and both
+    // mainland providers (DeepSeek/MiniMax) serve full CORS today (preflight
+    // verified). The bridge stays as FALLBACK for no-CORS gateways (Zen's
+    // OPTIONS answers 404) — a CORS failure rejects fast, so the fallback
+    // costs nothing when fetch could never have worked.
+    let fetchErr: unknown;
+    try {
+      return await webFetch(req, timeoutMs);
+    } catch (e) {
+      fetchErr = e;
+    }
     try {
       // The bridge cannot be aborted mid-flight, so the JS side must enforce the
       // deadline itself: race the plugin promise against a real rejecting timer.
@@ -59,12 +72,18 @@ export async function httpJson(req: HttpRequest): Promise<HttpResponse> {
         req.signal,
       );
       return { status: res.status, data: res.data };
-    } catch (e) {
-      throw normalizeTransportError(e);
+    } catch (bridgeErr) {
+      const fe = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+      const be = bridgeErr instanceof Error ? bridgeErr.message : String(bridgeErr);
+      throw new LlmError('network', `网页通道: ${fe}；原生通道: ${be}`);
     }
   }
 
-  // Web / dev / test path.
+  return webFetch(req, timeoutMs);
+}
+
+/** The WebView/browser transport, shared by web builds and the native-primary path. */
+async function webFetch(req: HttpRequest, timeoutMs: number): Promise<HttpResponse> {
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
   req.signal?.addEventListener('abort', onAbort);
