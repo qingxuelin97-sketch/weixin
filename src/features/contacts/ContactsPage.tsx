@@ -104,18 +104,13 @@ export function ContactsPage() {
               className="contacts__row"
               role="button"
               onClick={() => {
-                // 群聊 opens the (single) seeded group; the rest are honest
-                // about being shells instead of silently ignoring the tap.
-                if (f.key === 'group') {
-                  const group = useAppStore
-                    .getState()
-                    .conversations.find((c) => c.type === 'group' && !c.isHidden);
-                  if (group) {
-                    navigate(`/chat/${group.id}`);
-                    return;
-                  }
-                }
-                showToast('暂未开放');
+                // M-D3: every visible entry goes somewhere real. 公众号 stays a
+                // deliberate never-do (kept for 1:1 fidelity, light toast).
+                if (f.key === 'group') navigate('/groups');
+                else if (f.key === 'new') navigate('/new-friends');
+                else if (f.key === 'chat-only') navigate('/contacts-chats-only');
+                else if (f.key === 'tag') navigate('/contacts-tags');
+                else showToast('暂未开放');
               }}
             >
               <div className="contacts__fn-icon" style={{ background: f.color }}>

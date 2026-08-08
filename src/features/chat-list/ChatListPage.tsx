@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { NavBar } from '../../components/NavBar';
@@ -10,14 +10,25 @@ import type { ConversationVM } from '../../data/types';
 import './chat-list.css';
 import { useNow } from '../../lib/useNow';
 
+const LONG_PRESS_MS = 500;
 
 export function ChatListPage() {
   const all = useAppStore((s) => s.conversations);
   const showToast = useAppStore((s) => s.showToast);
+  const patchConversation = useAppStore((s) => s.patchConversation);
+  const deleteConversation = useAppStore((s) => s.deleteConversation);
   // Hidden (AI↔AI DM) conversations must never surface here.
   const conversations = useMemo(() => all.filter((c) => !c.isHidden), [all]);
   const navigate = useNavigate();
   const totalUnread = conversations.reduce((n, c) => n + (c.isMuted ? 0 : c.unreadCount), 0);
+
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [menu, setMenu] = useState<{ conv: ConversationVM; y: number } | null>(null);
+
+  const act = (fn: () => Promise<void>) => {
+    setMenu(null);
+    void fn().catch(() => showToast('操作失败'));
+  };
 
   return (
     <>
@@ -28,25 +39,100 @@ export function ChatListPage() {
             <button className="navbar__btn" aria-label="搜索" onClick={() => navigate('/search')}>
               <IconSearch />
             </button>
-            <button className="navbar__btn" aria-label="更多" onClick={() => showToast('暂未开放')}>
+            <button className="navbar__btn" aria-label="更多" onClick={() => setPlusOpen((v) => !v)}>
               <IconPlus />
             </button>
           </>
         }
       />
+      {plusOpen && (
+        <div className="chatlist-overlay" onClick={() => setPlusOpen(false)}>
+          <div className="plus-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+            <button role="menuitem" onClick={() => { setPlusOpen(false); navigate('/group-new'); }}>
+              发起群聊
+            </button>
+            <button role="menuitem" onClick={() => { setPlusOpen(false); navigate('/contact-new'); }}>
+              添加朋友
+            </button>
+            <button role="menuitem" onClick={() => { setPlusOpen(false); showToast('扫一扫暂未开放'); }}>
+              扫一扫
+            </button>
+            <button role="menuitem" onClick={() => { setPlusOpen(false); showToast('收付款暂未开放'); }}>
+              收付款
+            </button>
+          </div>
+        </div>
+      )}
       <div className="page-body chat-list">
         <Virtuoso
           data={conversations}
           itemContent={(_i, conv) => (
-            <ConversationRow conv={conv} onOpen={() => navigate(`/chat/${conv.id}`)} />
+            <ConversationRow
+              conv={conv}
+              onOpen={() => navigate(`/chat/${conv.id}`)}
+              onLongPress={(y) => setMenu({ conv, y })}
+            />
           )}
         />
       </div>
+      {menu && (
+        <div className="chatlist-overlay" onClick={() => setMenu(null)}>
+          <div
+            className="conv-menu"
+            role="menu"
+            style={{ top: Math.min(menu.y, window.innerHeight - 230) }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              role="menuitem"
+              onClick={() => act(() => patchConversation(menu.conv.id, { isPinned: !menu.conv.isPinned }))}
+            >
+              {menu.conv.isPinned ? '取消置顶' : '置顶'}
+            </button>
+            <button
+              role="menuitem"
+              onClick={() => act(() => patchConversation(menu.conv.id, { isMuted: !menu.conv.isMuted }))}
+            >
+              {menu.conv.isMuted ? '开启新消息通知' : '消息免打扰'}
+            </button>
+            <button
+              role="menuitem"
+              onClick={() =>
+                act(() =>
+                  patchConversation(
+                    menu.conv.id,
+                    menu.conv.unreadCount > 0
+                      ? { unreadCount: 0, mentionMe: false }
+                      : { unreadCount: 1 },
+                  ),
+                )
+              }
+            >
+              {menu.conv.unreadCount > 0 ? '标为已读' : '标为未读'}
+            </button>
+            <button
+              role="menuitem"
+              className="conv-menu__danger"
+              onClick={() => act(() => deleteConversation(menu.conv.id))}
+            >
+              删除该聊天
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-function ConversationRow({ conv, onOpen }: { conv: ConversationVM; onOpen: () => void }) {
+function ConversationRow({
+  conv,
+  onOpen,
+  onLongPress,
+}: {
+  conv: ConversationVM;
+  onOpen: () => void;
+  onLongPress: (y: number) => void;
+}) {
   const NOW = useNow();
   const contactById = useAppStore((s) => s.contactById);
   const badge = conv.unreadCount > 0;
@@ -59,10 +145,38 @@ function ConversationRow({ conv, onOpen }: { conv: ConversationVM; onOpen: () =>
     ...m,
     imageRef: conv.memberIds?.[i] ? contactById(conv.memberIds[i])?.avatarRef : undefined,
   }));
+
+  // Long-press via pointer timer; movement/release cancels so scrolling stays natural.
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fired = useRef(false);
+  const cancelPress = () => {
+    if (pressTimer.current) clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  };
+
   return (
     <div
       className={`conv-row hairline-bottom${conv.isPinned ? ' conv-row--pinned' : ''}`}
-      onClick={onOpen}
+      onClick={() => {
+        if (!fired.current) onOpen();
+        fired.current = false;
+      }}
+      onPointerDown={(e) => {
+        fired.current = false;
+        const y = e.clientY;
+        pressTimer.current = setTimeout(() => {
+          fired.current = true;
+          onLongPress(y);
+        }, LONG_PRESS_MS);
+      }}
+      onPointerUp={cancelPress}
+      onPointerMove={cancelPress}
+      onPointerLeave={cancelPress}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        fired.current = true;
+        onLongPress(e.clientY);
+      }}
       role="button"
     >
       <div className="conv-row__avatar">

@@ -26,6 +26,7 @@ import { repo } from '../../db/repo';
 import { canRecall } from '../../lib/recall';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
 import './chat.css';
+import '../settings/settings.css';
 import { useNow } from '../../lib/useNow';
 
 export function ChatPage() {
@@ -83,6 +84,10 @@ export function ChatPage() {
 
   /** Long-press context menu: which message, anchored where. */
   const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
+  const [quote, setQuote] = useState<{ msgId: number; text: string } | null>(null);
+  const [forwarding, setForwarding] = useState<MessageVM | null>(null);
+  const allConversations = useAppStore((s) => s.conversations);
+  const deleteMessage = useAppStore((s) => s.deleteMessage);
   const albumInputRef = useRef<HTMLInputElement>(null);
 
   // Leaving the chat = the conversation went quiet → queue ONE memory
@@ -156,7 +161,9 @@ export function ChatPage() {
       return;
     }
 
-    await sendUserMessage(convId, text, peer, persona, globalTier, hooks);
+    const quoteMeta = quote ? { quote: quote.text } : undefined;
+    setQuote(null);
+    await sendUserMessage(convId, text, peer, persona, globalTier, hooks, quoteMeta);
   };
 
   /**
@@ -258,7 +265,7 @@ export function ChatPage() {
           {isTyping ? '对方正在输入…' : conv.title}
         </div>
         <div className="navbar__right">
-          <button className="navbar__btn" aria-label="更多" onClick={() => showToast('暂未开放')}>
+          <button className="navbar__btn" aria-label="更多" onClick={() => navigate(`/chat/${convId}/info`)}>
             <IconMore />
           </button>
         </div>
@@ -361,6 +368,70 @@ export function ChatPage() {
               撤回
             </button>
           )}
+          {menu.msg.type === 'text' && menu.msg.content && !menu.msg.isRecalled && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                const who = menu.msg.senderId === 'self' ? '我' : (contactById(menu.msg.senderId)?.remark ?? contactById(menu.msg.senderId)?.name ?? '');
+                setQuote({ msgId: menu.msg.id, text: `${who}: ${(menu.msg.content ?? '').slice(0, 40)}` });
+                setMenu(null);
+              }}
+            >
+              引用
+            </button>
+          )}
+          {['text', 'image', 'sticker'].includes(menu.msg.type) && !menu.msg.isRecalled && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setForwarding(menu.msg);
+                setMenu(null);
+              }}
+            >
+              转发
+            </button>
+          )}
+          <button
+            role="menuitem"
+            onClick={() => {
+              const m = menu.msg;
+              setMenu(null);
+              void deleteMessage(convId, m.id).catch(() => showToast('删除失败'));
+            }}
+          >
+            删除
+          </button>
+        </div>
+      )}
+
+      {forwarding && (
+        <div className="forward-mask" onClick={() => setForwarding(null)}>
+          <div className="forward-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="forward-panel__title">发送给</div>
+            {allConversations
+              .filter((c) => !c.isHidden && c.id !== convId)
+              .map((c) => (
+                <div
+                  key={c.id}
+                  className="settings__row settings__row--divided"
+                  onClick={() => {
+                    const m = forwarding;
+                    setForwarding(null);
+                    void appendMessage({
+                      convId: c.id,
+                      senderId: 'self',
+                      type: m.type,
+                      content: m.content,
+                      ...(m.meta ? { meta: { ...m.meta } } : {}),
+                      status: 'sent',
+                      createdAt: Date.now(),
+                    }).then(() => showToast(`已转发给 ${c.title}`));
+                  }}
+                >
+                  <span className="settings__label">{c.title}</span>
+                </div>
+              ))}
+          </div>
         </div>
       )}
 
@@ -369,6 +440,14 @@ export function ChatPage() {
         style={{ paddingBottom: composer.mode === 'none' ? 'var(--safe-bottom)' : 0 }}
         onClick={(e) => e.stopPropagation()}
       >
+        {quote && (
+          <div className="composer__quote">
+            <span className="composer__quote-text">{quote.text}</span>
+            <button className="composer__quote-x" aria-label="取消引用" onClick={() => setQuote(null)}>
+              ×
+            </button>
+          </div>
+        )}
         <div className="composer__bar">
           <button className="composer__icon" aria-label="语音" onClick={() => showToast('语音消息暂未开放')}>
             <IconVoiceCircle />

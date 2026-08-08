@@ -80,18 +80,20 @@ export async function sendUserMessage(
   persona: PersonaVM,
   globalTier: NsfwTierVM,
   hooks: EngineHooks,
+  meta?: Record<string, unknown>,
 ): Promise<void> {
   // Hard-interrupt any in-flight reply for this conversation.
   inFlight.get(convId)?.abort();
   const ctrl = new AbortController();
   inFlight.set(convId, ctrl);
 
-  // 1) Persist the user's message immediately.
+  // 1) Persist the user's message immediately (meta carries e.g. a quote).
   await hooks.appendMessage({
     convId,
     senderId: 'self',
     type: 'text',
     content: text,
+    ...(meta ? { meta } : {}),
     status: 'sent',
     createdAt: hooks.now(),
   });

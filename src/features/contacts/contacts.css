@@ -97,3 +97,22 @@
   color: var(--color-link);
   font-weight: var(--fw-medium);
 }
+
+/* M-D3: group-create checkmarks */
+.group-pick {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--color-text-placeholder);
+  margin-right: 10px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--color-text-on-brand);
+}
+.group-pick--on {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+}

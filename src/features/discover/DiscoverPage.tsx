@@ -139,7 +139,7 @@ interface Row {
 const SECTIONS: Row[][] = [
   [{ key: 'moments', label: '朋友圈', extra: 'avatar-dot' }],
   [
-    { key: 'channels', label: '视频号', extra: 'badge', badge: 62 },
+    { key: 'channels', label: '视频号' },
     { key: 'live', label: '直播' },
   ],
   [

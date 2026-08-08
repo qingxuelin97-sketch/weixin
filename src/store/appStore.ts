@@ -81,6 +81,10 @@ interface AppState {
   appendMessage: (msg: Omit<MessageVM, 'id'>) => Promise<MessageVM>;
   updateMessage: (msg: MessageVM) => Promise<void>;
   patchConversation: (id: string, patch: Partial<ConversationVM>) => Promise<void>;
+  /** 删除聊天：remove the conversation row (history rows stay orphaned, like WeChat). */
+  deleteConversation: (id: string) => Promise<void>;
+  /** Delete one message locally and recompute the conversation preview. */
+  deleteMessage: (convId: string, msgId: number) => Promise<void>;
   /** Insert a conversation (used for hidden AI↔AI DM threads). Idempotent by id. */
   addConversation: (c: ConversationVM) => Promise<void>;
   putPersona: (p: PersonaVM) => Promise<void>;
@@ -267,6 +271,31 @@ export const useAppStore = create<AppState>((set, get) => ({
         lastMsgPreview: previewOf(msg, senderNameOf(s.contacts, msg.senderId)),
       });
     }
+  },
+
+  deleteConversation: async (id) => {
+    await repo.deleteConversation(id);
+    set((s) => {
+      const messages = { ...s.messages };
+      delete messages[id];
+      return { conversations: s.conversations.filter((c) => c.id !== id), messages };
+    });
+  },
+
+  deleteMessage: async (convId, msgId) => {
+    await repo.deleteMessage(msgId);
+    set((s) => ({
+      messages: {
+        ...s.messages,
+        [convId]: (s.messages[convId] ?? []).filter((m) => m.id !== msgId),
+      },
+    }));
+    const s = get();
+    const last = (s.messages[convId] ?? []).at(-1);
+    await s.patchConversation(convId, {
+      lastMsgPreview: last ? previewOf(last, senderNameOf(s.contacts, last.senderId)) : '',
+      ...(last ? { lastMsgAt: last.createdAt } : {}),
+    });
   },
 
   patchConversation: async (id, patch) => {

@@ -48,11 +48,13 @@ export interface Repo {
   getConversations(): Promise<ConversationVM[]>;
   getConversation(id: string): Promise<ConversationVM | undefined>;
   putConversation(c: ConversationVM): Promise<void>;
+  deleteConversation(id: string): Promise<void>;
 
   // messages (autoincrement id; per-conversation cursor pagination)
   getMessages(convId: string, opts?: { limit?: number; beforeId?: number }): Promise<MessageVM[]>;
   addMessage(msg: Omit<MessageVM, 'id'>): Promise<MessageVM>;
   updateMessage(msg: MessageVM): Promise<void>;
+  deleteMessage(id: number): Promise<void>;
 
   // memory
   getMemory(subjectId: string): Promise<MemoryFactVM[]>;
@@ -125,6 +127,9 @@ export class IdbRepo implements Repo {
   async putConversation(c: ConversationVM) {
     await idbPut('conversations', c);
   }
+  async deleteConversation(id: string) {
+    await idbDelete('conversations', id);
+  }
 
   async getMessages(convId: string, opts: { limit?: number; beforeId?: number } = {}) {
     // Descending by id, then reverse so callers get chronological order.
@@ -140,6 +145,9 @@ export class IdbRepo implements Repo {
   }
   async updateMessage(msg: MessageVM) {
     await idbPut('messages', msg);
+  }
+  async deleteMessage(id: number) {
+    await idbDelete('messages', id);
   }
 
   async getMemory(subjectId: string) {

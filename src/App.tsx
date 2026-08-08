@@ -25,6 +25,9 @@ import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
 import { NewContactPage } from './features/contacts/NewContactPage';
+import { GroupCreatePage } from './features/contacts/GroupCreatePage';
+import { ChatInfoPage } from './features/chat/ChatInfoPage';
+import { GroupListPage, NewFriendsPage, SimpleListPage } from './features/contacts/ContactListPages';
 import { CallPage } from './features/call/CallPage';
 import { SearchPage } from './features/search/SearchPage';
 import { useAppStore } from './store/appStore';
@@ -107,6 +110,12 @@ export function App() {
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
               <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />
+              <Route path="/group-new" element={<Push><GroupCreatePage /></Push>} />
+              <Route path="/chat/:convId/info" element={<Push><ChatInfoPage /></Push>} />
+              <Route path="/groups" element={<Push><GroupListPage /></Push>} />
+              <Route path="/new-friends" element={<Push><NewFriendsPage /></Push>} />
+              <Route path="/contacts-chats-only" element={<Push><SimpleListPage kind="chats-only" /></Push>} />
+              <Route path="/contacts-tags" element={<Push><SimpleListPage kind="tags" /></Push>} />
               <Route path="/call/:convId" element={<Push><CallPage /></Push>} />
               <Route path="/rp/send/:convId" element={<Push><RedPacketSendPage /></Push>} />
               <Route path="/rp/open/:rpId" element={<Push><RedPacketOpenPage /></Push>} />
