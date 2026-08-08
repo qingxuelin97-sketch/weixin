@@ -142,9 +142,19 @@ Obtainium 指向本仓 Releases 即可一键升级、且**不再需要卸载**�
 
 排查结束后回到 `release.yml` 出的正常包即可，无需改任何代码。
 
-### Pages 首次启用
+### Pages 首次启用：必须人手开一次
 
-`pages.yml` 里 `actions/configure-pages@v5` 带 `enablement: true`，仓库没开 Pages 时会自动开
-（`build_type=workflow`）。若因权限/环境保护规则失败，手动兜底：
-Settings → Pages → Source 选 **GitHub Actions**；若报部署分支不允许，
-Settings → Environments → `github-pages` → Deployment branches 放行对应分支。
+**实测（run #1）**：`actions/configure-pages@v5` 的 `enablement: true` 在本仓**无效**——
+Actions 的 `GITHUB_TOKEN` 即便给了 `pages: write` 也建不了站点，报
+`Create Pages site failed: Resource not accessible by integration`。
+开发容器里也绕不过去：agent 代理直接拒绝 `/repos/*/pages` 这条 API 路径。
+
+所以首次启用**只能由仓库管理员在网页上点一次**：
+
+> Settings → Pages → Build and deployment → Source 选 **GitHub Actions** → 重跑 `pages.yml`。
+
+`pages.yml` 已把这条指引写进 `::error::`，失败时直接照做即可，不用再翻日志。
+
+若启用后 deploy 报「部署分支不被允许」：
+Settings → Environments → `github-pages` → Deployment branches 放行对应分支
+（本排查分支是 `claude/api-static-link-test-*`）。

@@ -27,6 +27,8 @@ on:
       - 'docs/**'
       - 'specs/**'
       - '**/*.md'
+      # 改 Pages 工作流不影响这个包的内容（包里只有一个 URL），别白跑一次构建。
+      - '.github/workflows/pages.yml'
 
 env:
   DEFAULT_SERVER_URL: https://qingxuelin97-sketch.github.io/weixin/

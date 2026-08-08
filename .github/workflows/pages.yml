@@ -51,11 +51,19 @@ jobs:
       # 没有它，Pages 的 Jekyll 会吞掉下划线开头的文件/目录。
       - run: touch dist/.nojekyll
 
-      # enablement: true —— 仓库还没开 Pages 时由这一步自动开启（build_type=workflow），
-      # 省掉一次手动去 Settings 点选。已开启则是幂等的 no-op。
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
+      # 实测：Actions 的 GITHUB_TOKEN 建不了 Pages 站点（"Resource not accessible by
+      # integration"），`enablement: true` 在本仓无效——首次必须由仓库管理员手动开一次。
+      # 所以这里不硬失败，而是把"该点哪里"直接写进错误里。
+      - name: Configure Pages
+        id: cfg
+        continue-on-error: true
+        uses: actions/configure-pages@v5
+
+      - name: Pages 未启用时给出可执行的指引
+        if: steps.cfg.outcome == 'failure'
+        run: |
+          echo "::error::仓库还没启用 GitHub Pages。请到 Settings → Pages → Build and deployment → Source 选「GitHub Actions」，然后重跑本工作流。"
+          exit 1
 
       - uses: actions/upload-pages-artifact@v3
         with:
