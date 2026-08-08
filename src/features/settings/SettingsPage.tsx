@@ -40,11 +40,15 @@ export function SettingsPage() {
             <span className="settings__value">{providerCount > 0 ? `${providerCount} 个已启用` : '未配置'}</span>
             <span className="settings__chevron">›</span>
           </div>
-          <div className="settings__row" onClick={toggleSound}>
+          <div className="settings__row settings__row--divided" onClick={toggleSound}>
             <span className="settings__label">新消息提示音</span>
             <span className={`switch${sound ? ' switch--on' : ''}`}>
               <span className="switch__knob" />
             </span>
+          </div>
+          <div className="settings__row" onClick={() => navigate('/settings/backup')}>
+            <span className="settings__label">备份与恢复</span>
+            <span className="settings__chevron">›</span>
           </div>
         </div>
 

@@ -134,10 +134,17 @@ export async function idbCount(store: string): Promise<number> {
   return wrap<number>(tx(db, store, 'readonly').count());
 }
 
-/**
- * Query an index for all rows whose indexed value equals `value`, newest-first,
- * optionally paginated with a cursor (return rows with id < cursorId).
- */
+/** Delete every row in a store. Used by restore, which replaces rather than merges. */
+export async function idbClear(store: string): Promise<void> {
+  const db = await openDB();
+  const os = tx(db, store, 'readwrite');
+  return new Promise((resolve, reject) => {
+    const req = os.clear();
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
 /**
  * Equality lookup on an index, unordered, for stores keyed by a string id.
  * Separate from `idbQueryByIndex` because that one assumes numeric autoincrement
@@ -158,6 +165,10 @@ export async function idbGetAllByIndex<T>(
   });
 }
 
+/**
+ * Query an index for all rows whose indexed value equals `value`, newest-first,
+ * optionally paginated with a cursor (return rows with id < cursorId).
+ */
 export async function idbQueryByIndex<T extends { id: number }>(
   store: string,
   indexName: string,

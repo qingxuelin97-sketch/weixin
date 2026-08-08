@@ -107,3 +107,9 @@ test('moments publish page', async ({ page }) => {
   await settle(page);
   await expect(page).toHaveScreenshot('moments-publish.png', { fullPage: false });
 });
+
+test('backup & restore page', async ({ page }) => {
+  await page.goto('/#/settings/backup');
+  await settle(page);
+  await expect(page).toHaveScreenshot('backup.png', { fullPage: false });
+});

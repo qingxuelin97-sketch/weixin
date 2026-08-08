@@ -37,10 +37,13 @@ src/
                 / presets(三家预设) / bubbles(多气泡解析) / router(路由+降级)
                 / service(配置→Provider/Router 的接线)
   ai/           AI 业务纯逻辑：prompt(分层组装) / engine(单聊) / group-engine(群聊)
-                / director(调度决策) / memory(打分+抽取) / heartbeat(排期)
+                / director(调度决策) / memory(打分+抽取) / heartbeat(主动消息排期)
                 / scheduler(唯一时间演化路径) / money-service(红包转账编排)
+                / moments-engine(朋友圈排期+生成) / moments-service(朋友圈编排)
+                / simulate(离线回填规划，纯函数) / backfill(屏障+物化)
   lib/          通用纯函数：money(钱+种子随机) / wallet(红包/账本规则) / time(时间戳)
                 / sound(提示音) / voice(TTS 缓存+播放) / keystore(密钥加密存储)
+                / notify(预调度通知+内容分级) / backup(.aiwx 导出恢复)
   data/         UI 视图模型类型 + 种子数据（占位色豁免颜色检查）
   store/        zustand 状态（由 Repo 水合 + 写穿，选择器签名稳定）
   components/   通用 UI：Avatar / NavBar / SubNav / icons(手写 SVG，零 PNG)
@@ -62,7 +65,12 @@ src/
   三级降级（软化重试+prefix → 宽松链粘性 → 人设化拒绝）。原始拒答永不上屏。
 - **`assembleSystemPrompt()`**：分层顺序固定 = 基底 → 人设 → 关系 → **NSFW 边界层** →
   记忆 → 场景。改顺序=改行为，需评审。
-- **`scheduledActions` 表**：见铁律 5。
+- **`scheduledActions` 表**：见铁律 5。新增时间驱动行为 = 扩 `ActionKind` 联合类型 +
+  `registerHandler`，**不要**新建计时器。目前 6 种：heartbeat / rp_grab / transfer_accept /
+  moment_post / moment_like / moment_comment。
+- **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
+  不调 LLM、不碰存储、不读挂钟。它只产出「何时该发生什么」，由 `backfill.ts` 物化成 fireAt
+  在过去的 scheduled_actions，交给同一个执行器排空。改限额或窗口规则要同步 `specs/backfill.md`。
 
 ## 3. 禁止重写清单（已定型，勿推倒重来）
 
@@ -86,12 +94,22 @@ src/
   边缘算作"没差别"，必须一起调低。现用 `threshold: 0.1 + maxDiffPixels: 40`，同容器内渲染确定性，
   连跑不飘。
 - **`idb.ts` 每加一个 store 必须 `DB_VERSION` +1**，否则 `onupgradeneeded` 不触发，新 store 不存在。
+- **回填时间戳不得早于该会话最后一条消息**：行是「现在」插入的（rowid 递增），时间戳倒挂会破坏
+  `rowid 序 == 时间序`，游标分页随即错乱。`simulate()` 已按会话取 floor，改动那段要保住这条。
+- **AI 的点赞用 `applyLike` 而不是 `toggleLike`**：AI 反应永远是「加」。曾写成先 `putLike`
+  再 `toggleLike`，第二步把刚加的赞又取消了。凡是「幂等加」语义都别复用 toggle。
+- **`PersonaVM` 加字段要走 `makePersona()`**（`src/data/persona-defaults.ts`）：否则种子、
+  测试 fixture、人设编辑页三处都要手改，漏一处就在运行时变成 `undefined`——而 `undefined`
+  在这里会被静默读成「从不发帖」「从不点赞」，不报错、只是功能消失。
+- **Capacitor 插件要对齐主版本**：本项目 core 是 7.x，插件必须装 `@^7`。装成 8.x 只有一行
+  peer warning，不会报错，但原生侧行为未定义。
 
 ## 4. 每个 feature 一份 spec
 
 改动某 feature 前，读 `specs/<feature>.md`（验收清单 + 设计要点 + 已知坑）。新增 feature
 先写 spec 再写码。现有：design-tokens / data-schema / llm-provider / composer / nsfw /
-chat-engine / group-director / money / build-distribution / story-gm（V3 预埋设计）。
+chat-engine / group-director / money / moments / backfill / build-distribution /
+story-gm（V3 预埋设计）。
 
 ## 5. 工程护栏
 

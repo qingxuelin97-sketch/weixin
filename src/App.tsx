@@ -17,6 +17,7 @@ import { TransferSendPage } from './features/money/TransferSendPage';
 import { WalletPage } from './features/money/WalletPage';
 import { MomentsPage } from './features/moments/MomentsPage';
 import { MomentPublishPage } from './features/moments/MomentPublishPage';
+import { BackupPage } from './features/settings/BackupPage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
 
@@ -56,6 +57,7 @@ export function App() {
               <Route path="/moments/publish" element={<MomentPublishPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/settings/api" element={<ApiConfigPage />} />
+              <Route path="/settings/backup" element={<BackupPage />} />
               <Route path="/persona/:contactId" element={<PersonaEditPage />} />
               <Route path="/rp/send/:convId" element={<RedPacketSendPage />} />
               <Route path="/rp/open/:rpId" element={<RedPacketOpenPage />} />

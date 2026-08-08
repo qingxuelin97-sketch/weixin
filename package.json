@@ -5,7 +5,9 @@
   "type": "module",
   "description": "AI 微信 — 个人自用的微信复刻 + 智能体聊天 App（不商用不公开）",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "scripts": {
     "dev": "vite",
@@ -25,6 +27,7 @@
     "@capacitor/core": "^7.0.0",
     "@capacitor/haptics": "^7.0.0",
     "@capacitor/keyboard": "^7.0.0",
+    "@capacitor/local-notifications": "^7.0.7",
     "@capacitor/preferences": "^7.0.0",
     "drizzle-orm": "^0.38.3",
     "react": "^18.3.1",
