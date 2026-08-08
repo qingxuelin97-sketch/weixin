@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
 import { PRESETS } from '../../llm/presets';
-import { testConnection, invalidateRouter } from '../../llm/service';
+import { testConnection, fetchModels, invalidateRouter, ensureFreshModelDefaults } from '../../llm/service';
 import { repo } from '../../db/repo';
 import { setSecret, hasSecret } from '../../lib/keystore';
 import type { ProviderVM } from '../../data/types';
@@ -30,8 +30,10 @@ export function ApiConfigPage() {
   const [keyInput, setKeyInput] = useState('');
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [fetching, setFetching] = useState(false);
 
   const reload = async () => {
+    await ensureFreshModelDefaults();
     setProviders(await repo.getProviders());
     setDefaultId(await repo.getSetting<string>('defaultProviderId'));
     setNsfwId(await repo.getSetting<string>('nsfwProviderId'));
@@ -84,6 +86,26 @@ export function ApiConfigPage() {
       setTestMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const runFetchModels = async () => {
+    if (!editing) return;
+    setFetching(true);
+    setTestMsg(null);
+    try {
+      const ids = await fetchModels(editing);
+      if (ids.length) {
+        const next = { ...editing, models: ids };
+        setEditing(next);
+        await repo.putProvider(next);
+        invalidateRouter();
+        setTestMsg({ ok: true, text: `已拉取 ${ids.length} 个模型，已写入模型列表` });
+      } else {
+        setTestMsg({ ok: false, text: '未拉取到新列表（需先保存密钥；或该服务商不支持 /models）' });
+      }
+    } finally {
+      setFetching(false);
     }
   };
 
@@ -160,6 +182,9 @@ export function ApiConfigPage() {
                 }}
                 spellCheck={false}
               />
+              <span className="field__hint">
+                OpenAI 兼容根地址（自动追加 /chat/completions）；除 DeepSeek 外一般以 /v1 结尾
+              </span>
             </div>
             <div className="field field--divided">
               <span className="field__label">模型（逗号分隔）</span>
@@ -188,6 +213,9 @@ export function ApiConfigPage() {
             </div>
             <button className="btn-primary" onClick={saveKey} disabled={!keyInput.trim()}>
               保存密钥
+            </button>
+            <button className="btn-ghost" onClick={runFetchModels} disabled={fetching}>
+              {fetching ? '拉取中…' : '拉取模型列表'}
             </button>
             <button className="btn-ghost" onClick={runTest} disabled={testing}>
               {testing ? '测试中…' : '测试连接'}

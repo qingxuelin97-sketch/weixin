@@ -45,7 +45,8 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     return this.cfg.kind;
   }
 
-  protected endpoint(base: string): string {
+  protected endpoint(base: string, opts?: GenerateOptions): string {
+    void opts; // subclasses may pick a different path per-request (e.g. DeepSeek /beta)
     return `${base.replace(/\/$/, '')}/chat/completions`;
   }
 
@@ -102,7 +103,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     for (const base of bases) {
       try {
         const res = await httpJson({
-          url: this.endpoint(base),
+          url: this.endpoint(base, opts),
           method: 'POST',
           headers,
           body,
@@ -133,8 +134,29 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     for (const b of bubbles) yield b;
   }
 
+  /**
+   * Live catalog via the OpenAI-compatible GET /models. Gateways rotate their
+   * catalogs (Zen especially), so stale hardcoded ids are the #1 cause of
+   * "protocol looks broken" 400s — always prefer what the server says.
+   * Falls back to the configured defaults when the route is missing or errors.
+   */
   async listModels(): Promise<string[]> {
-    return this.cfg.defaultModels ?? [];
+    try {
+      const key = await this.cfg.getKey();
+      if (!key) return this.cfg.defaultModels ?? [];
+      const res = await httpJson({
+        url: `${this.cfg.baseUrl.replace(/\/$/, '')}/models`,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${key}`, ...this.cfg.extraHeaders },
+        timeoutMs: 15_000,
+      });
+      if (res.status >= 400) return this.cfg.defaultModels ?? [];
+      const data = (res.data as { data?: Array<{ id?: string }> })?.data;
+      const ids = (data ?? []).map((m) => m.id).filter((x): x is string => typeof x === 'string' && !!x);
+      return ids.length ? ids : (this.cfg.defaultModels ?? []);
+    } catch {
+      return this.cfg.defaultModels ?? [];
+    }
   }
 
   protected httpStatusToError(status: number, msg: string): LlmError {

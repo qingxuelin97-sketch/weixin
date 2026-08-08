@@ -4,7 +4,7 @@
  * This is the seam between "what the user configured" and "how a turn is run".
  */
 import type { ChatProvider } from './types';
-import { makeProvider } from './presets';
+import { makeProvider, PRESETS } from './presets';
 import { LlmRouter, type RoutingPolicy, type RouteRequest, type RoutePlan, type Role } from './router';
 import type { ProviderVM } from '../data/types';
 import { getSecret } from '../lib/keystore';
@@ -39,8 +39,37 @@ export interface ResolvedConfig {
   nsfwProviderId?: string;
 }
 
+/**
+ * Model ids that used to ship as preset defaults but have rotated out of the
+ * providers' catalogs (requests with them 400 as "model not found"). Only a
+ * list that still EXACTLY equals the stale default is migrated — a user-edited
+ * list is theirs and stays untouched.
+ */
+const STALE_DEFAULT_MODELS: Record<string, string[]> = {
+  zen: ['deepseek-v3', 'glm-4.6', 'kimi-k2'],
+  minimax: ['MiniMax-Text-01', 'abab6.5s-chat'],
+};
+
+async function migrateStaleModels(providers: ProviderVM[]): Promise<void> {
+  for (const p of providers) {
+    const stale = STALE_DEFAULT_MODELS[p.kind];
+    const fresh = PRESETS[p.kind]?.defaultModels;
+    if (!stale || !fresh) continue;
+    if (p.models.length === stale.length && p.models.every((m, i) => m === stale[i])) {
+      p.models = [...fresh];
+      await repo.putProvider(p);
+    }
+  }
+}
+
+/** Run the stale-id migration for UI surfaces that read providers directly. */
+export async function ensureFreshModelDefaults(): Promise<void> {
+  await migrateStaleModels(await repo.getProviders());
+}
+
 async function loadConfig(): Promise<ResolvedConfig> {
   const providers = (await repo.getProviders()).filter((p) => p.enabled);
+  await migrateStaleModels(providers);
   const defaultProviderId = await repo.getSetting<string>('defaultProviderId');
   const nsfwProviderId = await repo.getSetting<string>('nsfwProviderId');
   return { providers, defaultProviderId, nsfwProviderId };
@@ -117,6 +146,19 @@ export async function hasUsableProvider(): Promise<boolean> {
     if (await getSecret(p.keyAlias)) return true;
   }
   return false;
+}
+
+/**
+ * Live model catalog for the config page's "拉取模型列表" button. Gateways
+ * rotate catalogs (Zen especially); a stale hardcoded id 400s and looks like a
+ * protocol bug. Returns [] (instead of the stale defaults) on failure so the
+ * UI can tell "couldn't fetch" apart from "fetched these".
+ */
+export async function fetchModels(vm: ProviderVM): Promise<string[]> {
+  const ids = await buildProvider(vm).listModels();
+  // listModels falls back to cfg defaults on failure; treat that echo as "no data".
+  if (ids.length === vm.models.length && ids.every((x, i) => x === vm.models[i])) return [];
+  return ids;
 }
 
 /** Quick connectivity probe used by the API config page's "测试连接" button. */
