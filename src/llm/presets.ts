@@ -44,9 +44,9 @@ export const PRESETS: Record<string, PresetDescriptor> = {
     kind: 'zen',
     label: 'OpenCode Zen（走代理，宽松通道）',
     baseUrl: 'https://opencode.ai/zen/v1',
-    defaultModels: ['big-pickle', 'minimax-m2.5-free'],
+    defaultModels: ['big-pickle', 'deepseek-v4-flash-free', 'mimo-v2.5-free'],
     roleDefaults: { chat: 'big-pickle' },
-    note: '精选网关、目录轮换快（旧 id 会 400）——配好 key 后先「拉取模型列表」。作为 NSFW 全开档默认宽松通道。大陆需代理。',
+    note: '精选网关、目录轮换快（旧 id 会报 model not supported）——配好 key 后先「拉取模型列表」。作为 NSFW 全开档默认宽松通道。大陆需代理。',
   },
 };
 
@@ -60,6 +60,14 @@ export class DeepSeekProvider extends OpenAiCompatibleProvider {
     const root = base.replace(/\/$/, '').replace(/\/beta$/, '');
     if (opts?.messages.some((m) => m.prefix)) return `${root}/beta/chat/completions`;
     return `${root}/chat/completions`;
+  }
+  // Only DeepSeek understands the prefix flag (the base class strips it).
+  protected override buildBody(opts: GenerateOptions): Record<string, unknown> {
+    const body = super.buildBody(opts);
+    body.messages = opts.messages.map((m) =>
+      m.prefix ? { role: m.role, content: m.content, prefix: true } : { role: m.role, content: m.content },
+    );
+    return body;
   }
 }
 

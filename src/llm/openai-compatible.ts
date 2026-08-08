@@ -50,13 +50,16 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     return `${base.replace(/\/$/, '')}/chat/completions`;
   }
 
-  /** Hook for subclasses to shape the request body (e.g. MiniMax field names). */
+  /**
+   * Hook for subclasses to shape the request body (e.g. MiniMax field names).
+   * The `prefix` flag is DeepSeek-only and gateways transparently forward it to
+   * upstreams that then 400 (live-verified on Zen) — the base class strips it
+   * and sends a plain trailing assistant message, which every provider accepts.
+   */
   protected buildBody(opts: GenerateOptions): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model: opts.model,
-      messages: opts.messages.map((m) =>
-        m.prefix ? { role: m.role, content: m.content, prefix: true } : { role: m.role, content: m.content },
-      ),
+      messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
       temperature: opts.temperature ?? 0.8,
     };
     if (opts.maxTokens) body.max_tokens = opts.maxTokens;
@@ -160,6 +163,11 @@ export class OpenAiCompatibleProvider implements ChatProvider {
   }
 
   protected httpStatusToError(status: number, msg: string): LlmError {
+    // A retired model id must NOT read as an auth failure: Zen answers 401 with
+    // "Model X is not supported" (live-verified), and kind:'auth' would both
+    // mislead the user ("bad key") and abort the fallback ladder.
+    if (/model\b.*\b(not supported|not found|does not exist)|ModelError/i.test(msg))
+      return new LlmError('unknown', msg, status, this.id);
     if (status === 401 || status === 403) return new LlmError('auth', msg, status, this.id);
     if (status === 429) return new LlmError('rate_limit', msg, status, this.id);
     if (status >= 500) return new LlmError('server', msg, status, this.id);

@@ -45,17 +45,23 @@ export interface ResolvedConfig {
  * list that still EXACTLY equals the stale default is migrated — a user-edited
  * list is theirs and stays untouched.
  */
-const STALE_DEFAULT_MODELS: Record<string, string[]> = {
-  zen: ['deepseek-v3', 'glm-4.6', 'kimi-k2'],
-  minimax: ['MiniMax-Text-01', 'abab6.5s-chat'],
+const STALE_DEFAULT_MODELS: Record<string, string[][]> = {
+  zen: [
+    ['deepseek-v3', 'glm-4.6', 'kimi-k2'],
+    ['big-pickle', 'minimax-m2.5-free'], // shipped briefly; minimax-m2.5-free rotated out
+  ],
+  minimax: [['MiniMax-Text-01', 'abab6.5s-chat']],
 };
 
 async function migrateStaleModels(providers: ProviderVM[]): Promise<void> {
   for (const p of providers) {
-    const stale = STALE_DEFAULT_MODELS[p.kind];
+    const staleLists = STALE_DEFAULT_MODELS[p.kind];
     const fresh = PRESETS[p.kind]?.defaultModels;
-    if (!stale || !fresh) continue;
-    if (p.models.length === stale.length && p.models.every((m, i) => m === stale[i])) {
+    if (!staleLists || !fresh) continue;
+    const isStale = staleLists.some(
+      (stale) => p.models.length === stale.length && p.models.every((m, i) => m === stale[i]),
+    );
+    if (isStale) {
       p.models = [...fresh];
       await repo.putProvider(p);
     }
