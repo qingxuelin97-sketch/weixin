@@ -1,0 +1,125 @@
+name: Android APK（远端源 · API 排查用）
+
+# 与 release.yml 的唯一区别：APK 里不打包 dist/，而是把 WebView 指向一个远端 https
+# 地址（默认 Pages 链接），即 Capacitor 的 `server.url`。
+#
+# 为什么要有这一份：用来验证「App 发不出 API 请求是不是因为页面不是由服务器提供的」。
+# 装上这个 APK 后，页面确实来自 https://qingxuelin97-sketch.github.io/weixin/。
+#
+# 三条必须知道的代价（装之前读）：
+#   1. **离线打不开**。页面每次都从网上拉，没网就是白屏。
+#   2. **数据不互通**。WebView 的 IndexedDB / localStorage 按源隔离，
+#      这个包和正常包（http://localhost）是两套独立数据，聊天记录不共享。
+#      换包前请先 设置 → 备份与恢复 导出 .aiwx。
+#   3. debug 签名每次构建都不同，**不能覆盖升级**，换版本要先卸载。
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'WebView 加载的远端地址（留空=用默认的 Pages 链接）'
+        required: false
+        default: ''
+  push:
+    branches:
+      - 'claude/api-static-link-test-**'
+    paths-ignore:
+      - 'docs/**'
+      - 'specs/**'
+      - '**/*.md'
+
+env:
+  DEFAULT_SERVER_URL: https://qingxuelin97-sketch.github.io/weixin/
+
+jobs:
+  apk:
+    name: build remote-source APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # JDK 21，不是 runner 默认的 17：capacitor-android 7.6.x 以
+      # sourceCompatibility 21 编译，用 17 会在 Gradle 走到那个模块时才报
+      # "invalid source release: 21"——已经过去 100 秒。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve server URL
+        run: |
+          URL="${{ inputs.server_url }}"
+          [ -n "$URL" ] || URL="$DEFAULT_SERVER_URL"
+          case "$URL" in
+            https://*|http://*) ;;
+            *) echo "::error::server_url 必须以 http:// 或 https:// 开头，收到：$URL"; exit 1 ;;
+          esac
+          echo "CAP_SERVER_URL=$URL" >> "$GITHUB_ENV"
+          echo "::notice::APK 的 WebView 将从 $URL 加载"
+
+      # dist/ 仍然要构建：cap sync 会校验 webDir 存在，而且这一步顺带做了类型检查。
+      # 打进包里的那份不会被用到（server.url 优先），留着当 webDir 占位。
+      - name: Build web bundle
+        run: pnpm build
+
+      # android/ 是 gitignore 的生成物，每次现生成。
+      # CAP_SERVER_URL 在这里被 capacitor.config.ts 读到，写进 capacitor.config.json。
+      - name: Generate the native project
+        run: |
+          npx cap add android
+          npx cap sync android
+          echo "--- 生成的 capacitor.config.json ---"
+          cat android/app/src/main/assets/capacitor.config.json
+          # 没写进去就等于打了个普通包，白测一轮真机——硬失败。
+          grep -q "$CAP_SERVER_URL" android/app/src/main/assets/capacitor.config.json \
+            || { echo "::error::server.url 未写入原生配置，构建中止"; exit 1; }
+
+      - name: Stamp version
+        run: |
+          VERSION_NAME="0.0.0-remote.${GITHUB_RUN_NUMBER}"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          sed -i "s/versionCode 1$/versionCode ${GITHUB_RUN_NUMBER}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"${VERSION_NAME}\"/" android/app/build.gradle
+          grep -q "versionCode ${GITHUB_RUN_NUMBER}$" android/app/build.gradle \
+            || { echo "::error::versionCode 未被写入——Capacitor 模板可能已变"; exit 1; }
+
+      - name: Build debug APK
+        run: cd android && ./gradlew --no-daemon assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: weixin-ai-remote-${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### 远端源 APK #${GITHUB_RUN_NUMBER}"
+            echo ""
+            echo "- WebView 加载地址：\`${CAP_SERVER_URL:-?}\`"
+            if [ -f android/app/build/outputs/apk/debug/app-debug.apk ]; then
+              SZ=$(du -h android/app/build/outputs/apk/debug/app-debug.apk | cut -f1)
+              echo "- debug APK：\`$SZ\`（见本次运行的 Artifacts）"
+            else
+              echo "- debug APK：**构建失败**"
+            fi
+            echo ""
+            echo "**这个包的三条代价**"
+            echo "1. 离线打不开——页面每次从网上拉。"
+            echo "2. 与正常包**数据不互通**（WebView 存储按源隔离）。换包前先导出 \`.aiwx\`。"
+            echo "3. debug 签名每次不同，不能覆盖升级，换版本要先卸载。"
+          } >> "$GITHUB_STEP_SUMMARY"

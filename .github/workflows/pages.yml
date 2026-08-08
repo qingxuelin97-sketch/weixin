@@ -1,0 +1,88 @@
+name: Pages (静态浏览器链接)
+
+# 把 dist/ 发布到 GitHub Pages，得到一个真正由服务器提供的 https 链接：
+#   https://qingxuelin97-sketch.github.io/weixin/
+# 两个用途：
+#   1. 手机/电脑浏览器直接打开，秒级预览 UI（不用装包）。
+#   2. 给 apk-remote.yml 当 `server.url`——APK 的 WebView 从这个 https 源加载，
+#      用来排除「本地 http://localhost 源导致发不出 API 请求」的怀疑。
+#
+# 注意：浏览器里走的是 fetch，会受 CORS 限制；APK 里走 CapacitorHttp 原生桥，
+# 不受 CORS 限制。两处失败原因可能完全不同，别把浏览器的 CORS 报错当成 APK 的病因。
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+    paths-ignore:
+      - 'docs/**'
+      - 'specs/**'
+      - '**/*.md'
+
+# 同一时刻只允许一个部署；新推送取消排队中的旧部署，但不打断进行中的那个。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build dist/
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # configure-pages 的 enablement 要写 Pages 设置，默认只读的 token 会 403。
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # 没有它，Pages 的 Jekyll 会吞掉下划线开头的文件/目录。
+      - run: touch dist/.nojekyll
+
+      # enablement: true —— 仓库还没开 Pages 时由这一步自动开启（build_type=workflow），
+      # 省掉一次手动去 Settings 点选。已开启则是幂等的 no-op。
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Summary
+        run: |
+          {
+            echo "### 静态浏览器链接已发布"
+            echo ""
+            echo "- 链接：${{ steps.deployment.outputs.page_url }}"
+            echo "- 浏览器可直接打开（手机 Chrome / 电脑均可）。"
+            echo "- 该链接同时是 \`apk-remote.yml\` 默认使用的 \`server.url\`。"
+            echo ""
+            echo "> 浏览器里 API 请求走 fetch，可能被 CORS 拦；APK 里走原生桥不受 CORS 限制。"
+          } >> "$GITHUB_STEP_SUMMARY"

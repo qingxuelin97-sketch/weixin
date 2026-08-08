@@ -93,3 +93,58 @@ Obtainium 指向本仓 Releases 即可一键升级、且**不再需要卸载**�
 
 ⚠️ keystore 文件与两个密码丢失是**不可逆**的：无法再发可覆盖升级的包。
 除密码管理器外，keystore 文件本体再留一份离线备份（如导出到网盘私密目录）。
+
+---
+
+## 静态浏览器链接（GitHub Pages）与「远端源 APK」
+
+### 为什么有这两样
+
+用户怀疑「App 发不出 API 请求，是不是因为页面不是由服务器提供的」。为验证这条假设，
+增加了两个工作流：
+
+| 工作流 | 产物 | 作用 |
+|---|---|---|
+| `.github/workflows/pages.yml` | `https://qingxuelin97-sketch.github.io/weixin/` | 真·服务器提供的 https 链接，浏览器直接开 |
+| `.github/workflows/apk-remote.yml` | debug APK（artifact） | WebView 从上面那个 https 源加载，而不是包内 `dist/` |
+
+实现方式：`capacitor.config.ts` 读 `CAP_SERVER_URL` 环境变量 → 有值就填 Capacitor 的
+`server.url`。**不设这个变量时配置逐字节等同于以前**，`release.yml` 出的正常包不受任何影响。
+
+`vite.config.ts` 同时加了 `base: './'`：同一份 `dist/` 既要能在根路径下跑（Capacitor 的
+`http://localhost/`），又要能在子路径下跑（Pages 的 `/weixin/`）。因为 App 用的是
+`HashRouter`，document 路径永远不变，相对路径不会漂。
+
+### 这个实验能证明什么、不能证明什么
+
+**不能证明的（重要）**：换成远端源**不会改变 API 请求的走法**。
+`src/llm/http.ts` 是按 `Capacitor.isNativePlatform()` 选传输的，装成 APK 后这个判断恒为
+真，无论 HTML 从哪儿加载，请求一律走 **CapacitorHttp 原生桥**（不经 WebView、不受 CORS
+限制）。所以如果原本就是原生桥在报错，远端源 APK 会**一模一样地**报同一个错。
+
+**能证明的**：
+- 手机到供应商域名的网络通不通（浏览器里打开 Pages 链接直接试）。
+- WebView 能否加载并运行这个应用（排除包内资源损坏、路径错等）。
+- 浏览器路径（`fetch`）与原生路径（原生桥）的报错是否不同——这恰恰是最有用的信号：
+  **浏览器报 CORS / 原生正常**，说明分流逻辑是对的；**两边都报同一个网络错**，
+  说明问题在网络或 key/endpoint，而不在"有没有服务器"。
+
+⚠️ 浏览器里的 CORS 报错**不是** APK 的病因。DeepSeek 等端点不回 CORS 头，浏览器直连必失败——
+原生桥的存在正是为了绕开这一点（见 `src/llm/http.ts` 顶部注释）。
+
+### 远端源 APK 的三条代价（装之前必须知道）
+
+1. **离线打不开**：页面每次从网上拉，没网就是白屏。
+2. **与正常包数据不互通**：WebView 的 IndexedDB / localStorage 按**源**隔离，
+   `https://…github.io` 与 `http://localhost` 是两套独立存储，聊天记录、API key 都不共享。
+   换包前先 设置 → 备份与恢复 导出 `.aiwx`。
+3. debug 签名每次构建都不同 → 不能覆盖升级，换版本要先卸载。
+
+排查结束后回到 `release.yml` 出的正常包即可，无需改任何代码。
+
+### Pages 首次启用
+
+`pages.yml` 里 `actions/configure-pages@v5` 带 `enablement: true`，仓库没开 Pages 时会自动开
+（`build_type=workflow`）。若因权限/环境保护规则失败，手动兜底：
+Settings → Pages → Source 选 **GitHub Actions**；若报部署分支不允许，
+Settings → Environments → `github-pages` → Deployment branches 放行对应分支。
