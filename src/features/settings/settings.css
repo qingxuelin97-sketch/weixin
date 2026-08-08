@@ -183,6 +183,7 @@
   word-break: break-all;
 }
 .test-result {
+  white-space: pre-line;
   margin: 10px 16px 0;
   font-size: var(--fs-small-gray);
   padding: 8px 12px;

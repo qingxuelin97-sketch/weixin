@@ -196,6 +196,89 @@ export async function fetchModels(vm: ProviderVM): Promise<string[]> {
   return live ?? [];
 }
 
+/**
+ * Staged network diagnosis (M-D hotfix: "测试一直卡进度" on device). Each stage
+ * has its own hard deadline and reports elapsed ms + the raw error, so a hang
+ * points at the exact layer: key read → catalog GET → completion POST.
+ * The #1 real-world cause is a per-app proxy not covering this app — the GET
+ * stage times out while the phone browser works fine.
+ */
+export async function diagnoseProvider(vm: ProviderVM): Promise<string[]> {
+  const lines: string[] = [];
+  const t = () => Date.now();
+
+  // Stage 1: key from secure storage (hangs here = keystore/DB problem).
+  let key: string | null = null;
+  const t1 = t();
+  try {
+    key = await withDeadline(getSecret(vm.keyAlias), 5_000);
+    lines.push(key ? `① 密钥读取 OK（${t() - t1}ms）` : '① 密钥读取：未保存密钥——先保存再测');
+  } catch (e) {
+    lines.push(`① 密钥读取卡死/失败（${t() - t1}ms）：${msg(e)}`);
+    return lines;
+  }
+  if (!key) return lines;
+
+  // Stage 2: catalog GET (pure network reachability + auth).
+  const provider = buildProvider(vm) as OpenAiCompatibleProvider;
+  const t2 = t();
+  try {
+    const ids = await withDeadline(provider.listModelsLive(), 12_000);
+    lines.push(
+      ids && ids.length
+        ? `② 连接服务商 OK（${t() - t2}ms，目录 ${ids.length} 个模型）`
+        : `② 连接服务商：请求完成但没拿到目录（${t() - t2}ms）——多半是密钥无效或服务商不支持 /models`,
+    );
+    if (!ids?.length) return lines;
+  } catch (e) {
+    lines.push(
+      `② 连接服务商超时/失败（${t() - t2}ms）：${msg(e)}` +
+        '\n→ 手机浏览器能开该网站但这里超时 = 代理没覆盖本应用：把代理切到 VPN/全局模式，或在分应用代理里勾选本应用',
+    );
+    return lines;
+  }
+
+  // Stage 3: one-token completion (the full call path).
+  const t3 = t();
+  try {
+    const res = await withDeadline(
+      provider.complete({
+        model: modelForRole(vm, 'chat'),
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 4,
+        temperature: 0,
+        timeoutMs: 15_000,
+      }),
+      20_000,
+    );
+    lines.push(`③ 对话补全 OK（${t() - t3}ms）：「${res.text.slice(0, 20)}」`);
+  } catch (e) {
+    lines.push(`③ 对话补全失败（${t() - t3}ms）：${msg(e)}`);
+  }
+  return lines;
+}
+
+function msg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * UI-level hard deadline. The native bridge is supposed to time out on its own,
+ * but the device symptom "spinner forever" proves some layer can still hang —
+ * the UI must never trust lower layers with its own liveness.
+ */
+export function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`等待 ${Math.round(ms / 1000)}s 无响应——请求没有返回，通常是代理未覆盖本应用或断网`)),
+        ms,
+      ),
+    ),
+  ]);
+}
+
 /** Quick connectivity probe used by the API config page's "测试连接" button. */
 export async function testConnection(vm: ProviderVM): Promise<{ ok: boolean; message: string }> {
   try {

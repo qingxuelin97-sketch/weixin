@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
 import { PRESETS } from '../../llm/presets';
-import { testConnection, fetchModels, invalidateRouter, ensureFreshModelDefaults } from '../../llm/service';
+import {
+  testConnection,
+  fetchModels,
+  invalidateRouter,
+  ensureFreshModelDefaults,
+  diagnoseProvider,
+  withDeadline,
+} from '../../llm/service';
 import { repo } from '../../db/repo';
 import { setSecret, hasSecret } from '../../lib/keystore';
 import {
@@ -87,7 +94,7 @@ export function ApiConfigPage() {
     setTestMsg(null);
     const t0 = performance.now();
     try {
-      const r = await testConnection(editing);
+      const r = await withDeadline(testConnection(editing), 25_000);
       const ms = Math.round(performance.now() - t0);
       setTestMsg({ ok: r.ok, text: r.ok ? `${r.message}（${ms}ms）` : r.message });
     } catch (e) {
@@ -99,12 +106,28 @@ export function ApiConfigPage() {
     }
   };
 
+  const runDiagnose = async () => {
+    if (!editing) return;
+    setTesting(true);
+    setTestMsg(null);
+    try {
+      const lines = await diagnoseProvider(editing);
+      const ok = lines.every((l) => l.includes('OK'));
+      setTestMsg({ ok, text: lines.join('\n') });
+    } catch (e) {
+      setTestMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const runFetchModels = async () => {
     if (!editing) return;
     setFetching(true);
     setTestMsg(null);
     try {
-      const ids = await fetchModels(editing);
+      // Belt-and-braces: even if a lower layer hangs, the button recovers.
+      const ids = await withDeadline(fetchModels(editing), 20_000);
       if (ids.length) {
         const next = { ...editing, models: ids };
         setEditing(next);
@@ -229,6 +252,9 @@ export function ApiConfigPage() {
             </button>
             <button className="btn-ghost" onClick={runTest} disabled={testing}>
               {testing ? '测试中…' : '测试连接'}
+            </button>
+            <button className="btn-ghost" onClick={() => void runDiagnose()} disabled={testing}>
+              网络诊断（分段定位）
             </button>
             {testMsg && (
               <div className={`test-result${testMsg.ok ? ' test-result--ok' : ''}`}>{testMsg.text}</div>
