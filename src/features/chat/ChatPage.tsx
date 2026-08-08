@@ -8,6 +8,7 @@ import {
   IconEmoji,
   IconPlus,
 } from '../../components/icons';
+import { Avatar } from '../../components/Avatar';
 import { MessageBubble } from './MessageBubble';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
@@ -172,6 +173,7 @@ export function ChatPage() {
   }
 
   const isGroup = conv.type === 'group';
+  const peerContact = conv.peerId ? contactById(conv.peerId) : undefined;
 
   return (
     <div className="chat-page" onClick={() => composer.mode !== 'none' && composer.closeAll()}>
@@ -245,6 +247,26 @@ export function ChatPage() {
                 onReEdit={(m) => setDraft(m.content ?? '')}
               />
             ),
+          )}
+          {isTyping && !isGroup && (
+            <div className="msg-row msg--enter" aria-label="对方正在输入">
+              <div className="msg-row__avatar">
+                <Avatar
+                  color={peerContact?.avatarColor ?? 'var(--color-brand)'}
+                  text={peerContact?.avatarText ?? '?'}
+                  size={40}
+                />
+              </div>
+              <div className="msg-row__col">
+                <div className="msg-row__body">
+                  <div className="bubble bubble--other typing-bubble">
+                    <span className="typing-bubble__dot" />
+                    <span className="typing-bubble__dot" />
+                    <span className="typing-bubble__dot" />
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>

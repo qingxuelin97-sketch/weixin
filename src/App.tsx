@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, type ReactNode } from 'react';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { TabScaffold } from './app/TabScaffold';
 import { Toast } from './components/Toast';
@@ -23,6 +23,20 @@ import { BackupPage } from './features/settings/BackupPage';
 import { SearchPage } from './features/search/SearchPage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
+
+/**
+ * Full-screen pushed pages slide in from the right (finally consuming the
+ * `--dur-page` token defined in M1). Keyed by location so every navigation —
+ * including chat→chat — replays the entrance. Tabs switch instantly, like WeChat.
+ */
+function Push({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  return (
+    <div className="page-push" key={location.key}>
+      {children}
+    </div>
+  );
+}
 
 /**
  * Navigation model: the four tabs share a persistent scaffold (nav + tabbar);
@@ -73,20 +87,20 @@ export function App() {
                 <Route path="/discover" element={<DiscoverPage />} />
                 <Route path="/me" element={<MePage />} />
               </Route>
-              <Route path="/chat/:convId" element={<ChatPage />} />
-              <Route path="/search" element={<SearchPage />} />
-              <Route path="/moments" element={<MomentsPage />} />
-              <Route path="/moments/publish" element={<MomentPublishPage />} />
-              <Route path="/profile" element={<ProfilePage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/settings/api" element={<ApiConfigPage />} />
-              <Route path="/settings/backup" element={<BackupPage />} />
-              <Route path="/persona/:contactId" element={<PersonaEditPage />} />
-              <Route path="/rp/send/:convId" element={<RedPacketSendPage />} />
-              <Route path="/rp/open/:rpId" element={<RedPacketOpenPage />} />
-              <Route path="/rp/:rpId" element={<RedPacketDetailPage />} />
-              <Route path="/transfer/:convId" element={<TransferSendPage />} />
-              <Route path="/wallet" element={<WalletPage />} />
+              <Route path="/chat/:convId" element={<Push><ChatPage /></Push>} />
+              <Route path="/search" element={<Push><SearchPage /></Push>} />
+              <Route path="/moments" element={<Push><MomentsPage /></Push>} />
+              <Route path="/moments/publish" element={<Push><MomentPublishPage /></Push>} />
+              <Route path="/profile" element={<Push><ProfilePage /></Push>} />
+              <Route path="/settings" element={<Push><SettingsPage /></Push>} />
+              <Route path="/settings/api" element={<Push><ApiConfigPage /></Push>} />
+              <Route path="/settings/backup" element={<Push><BackupPage /></Push>} />
+              <Route path="/persona/:contactId" element={<Push><PersonaEditPage /></Push>} />
+              <Route path="/rp/send/:convId" element={<Push><RedPacketSendPage /></Push>} />
+              <Route path="/rp/open/:rpId" element={<Push><RedPacketOpenPage /></Push>} />
+              <Route path="/rp/:rpId" element={<Push><RedPacketDetailPage /></Push>} />
+              <Route path="/transfer/:convId" element={<Push><TransferSendPage /></Push>} />
+              <Route path="/wallet" element={<Push><WalletPage /></Push>} />
               <Route path="*" element={<Navigate to="/chats" replace />} />
             </Routes>
           )}

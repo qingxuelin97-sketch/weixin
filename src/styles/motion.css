@@ -1,0 +1,169 @@
+/**
+ * Motion system (real-device bug #1: "完全没有动画").
+ *
+ * Everything here is decorative: durations come from tokens, transforms are
+ * GPU-composited, and the whole file collapses under prefers-reduced-motion.
+ * Playwright disables CSS animations during golden capture, so none of this
+ * can destabilize screenshots.
+ */
+
+/* ---- Route push: full-screen pages slide in from the right (WeChat push). */
+.page-push {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Absolutely-positioned pages (.chat-page) anchor here in BOTH animation
+     states — a transform would otherwise flip their containing block mid-flight. */
+  position: relative;
+  animation: page-slide-in var(--dur-page) var(--ease-standard);
+}
+@keyframes page-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* ---- Composer panel rises like the keyboard it replaces. */
+.composer-panel {
+  animation: panel-rise var(--dur-page) var(--ease-standard);
+}
+@keyframes panel-rise {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ---- Fresh message bubbles land with a small pop (history stays still). */
+.msg--enter {
+  animation: msg-pop 180ms var(--ease-standard);
+  transform-origin: var(--msg-origin, left bottom);
+}
+@keyframes msg-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ---- In-flow typing indicator: three breathing dots in a peer bubble. */
+.typing-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 16px;
+}
+.typing-bubble__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-placeholder);
+  animation: typing-breathe 1.2s ease-in-out infinite;
+}
+.typing-bubble__dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing-bubble__dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes typing-breathe {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ---- Long-press menu pops from where the finger is. */
+.msg-menu {
+  animation: menu-pop var(--dur-fast) var(--ease-standard);
+  transform-origin: center bottom;
+}
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ---- Toast fade. */
+.toast {
+  animation: toast-in var(--dur-fast) var(--ease-standard);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* ---- Press feedback: rows and buttons acknowledge the finger everywhere. */
+.settings__row:active,
+.me__row:active,
+.discover__row:active,
+.contacts__row:active,
+.provider-card:active {
+  background: var(--color-cell-bg-pressed);
+}
+.navbar__btn:active,
+.composer__icon:active,
+.composer__mic:active,
+.me__pill:active {
+  opacity: 0.55;
+}
+.composer__send:active {
+  filter: brightness(0.92);
+}
+.tabbar__item:active svg {
+  transform: scale(0.9);
+}
+.tabbar__item svg {
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.moment__like-btn:active,
+.moment__comment-btn:active {
+  opacity: 0.55;
+}
+.error-screen__btn:active {
+  filter: brightness(0.92);
+}
+
+/* ---- Accessibility: one switch turns the whole system off. */
+@media (prefers-reduced-motion: reduce) {
+  .page-push,
+  .composer-panel,
+  .msg--enter,
+  .typing-bubble__dot,
+  .msg-menu,
+  .toast {
+    animation: none !important;
+  }
+  .tabbar__item svg {
+    transition: none;
+  }
+}

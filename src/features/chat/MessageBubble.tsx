@@ -67,8 +67,16 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
     );
   }
 
+  // Only a message that JUST arrived pops in; rendering history stays still.
+  // Live now() is fine here: it's presentation-only and never persisted.
+  const fresh = Date.now() - msg.createdAt < 3_000;
+
   return (
-    <div className={`msg-row${isSelf ? ' msg-row--self' : ''}`} {...pressHandlers}>
+    <div
+      className={`msg-row${isSelf ? ' msg-row--self' : ''}${fresh ? ' msg--enter' : ''}`}
+      style={fresh ? ({ '--msg-origin': isSelf ? 'right bottom' : 'left bottom' } as React.CSSProperties) : undefined}
+      {...pressHandlers}
+    >
       {!isSelf && (
         <div className="msg-row__avatar">
           <Avatar color={sender?.avatarColor ?? 'var(--color-brand)'} text={sender?.avatarText ?? '?'} size={40} />
