@@ -463,7 +463,7 @@ export function ChatPage() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  void send();
+                  void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`));
                 }
               }}
               placeholder=""
@@ -476,7 +476,7 @@ export function ChatPage() {
             <IconEmoji />
           </button>
           {draft.trim() ? (
-            <button className="composer__send" onClick={() => void send()}>
+            <button className="composer__send" onClick={() => void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`))}>
               发送
             </button>
           ) : (

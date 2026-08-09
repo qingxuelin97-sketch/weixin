@@ -22,6 +22,7 @@ import { DEFAULT_VOICE } from '../llm/tts';
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
 import { moodOf, moodParams } from '../lib/mood';
+import { logError } from '../lib/errlog';
 import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 
@@ -117,6 +118,40 @@ export async function sendUserMessage(
  * @param mode 'reply' answers a message the user just sent; 'proactive' opens cold
  */
 async function generateAndPlay(
+  convId: string,
+  peer: ContactVM,
+  persona: PersonaVM,
+  globalTier: NsfwTierVM,
+  hooks: EngineHooks,
+  ctrl: AbortController,
+  extraDirective?: string,
+  mode: 'reply' | 'proactive' = 'reply',
+): Promise<void> {
+  try {
+    await generateAndPlayInner(convId, peer, persona, globalTier, hooks, ctrl, extraDirective, mode);
+  } catch (e) {
+    // NOTHING may fail silently here. Before this guard, an exception in the
+    // context-loading awaits below (storage reads, all OUTSIDE the inner try)
+    // became an unhandled rejection: no reply, no error, not even a typing
+    // indicator — the exact "什么都没发生" the user hit on device while the
+    // browser build worked fine.
+    logError('chat.generate', e);
+    if (ctrl.signal.aborted) return;
+    hooks.setTyping(convId, false);
+    await hooks
+      .appendMessage({
+        convId,
+        senderId: peer.id,
+        type: 'system',
+        content: `消息没能送达：${e instanceof Error ? e.message : String(e)}`,
+        status: 'sent',
+        createdAt: hooks.now(),
+      })
+      .catch(() => {});
+  }
+}
+
+async function generateAndPlayInner(
   convId: string,
   peer: ContactVM,
   persona: PersonaVM,
