@@ -12,7 +12,7 @@ import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { repo } from '../../db/repo';
 import type { MemoryFactVM } from '../../data/types';
-import { groupByEntity, retention } from '../../ai/entity-graph';
+import { groupByEntity, retention, encodeVector } from '../../ai/entity-graph';
 import { useNow } from '../../lib/useNow';
 import { useGuard } from '../../app/useGuard';
 import './settings.css';
@@ -91,6 +91,27 @@ export function MemoryPage() {
             {f.isPinned ? '取消置顶' : '置顶'}
           </button>
         )}
+        {/* Editing, not just deleting (M-E6): when she remembers something
+            slightly wrong, deleting loses the true half with the false half. */}
+        <button
+          className="memory__btn"
+          onClick={() => {
+            const next = window.prompt('改成：', f.fact);
+            if (next?.trim() && next.trim() !== f.fact) {
+              // Edited facts are the user's word: confirmed, and re-vectorized
+              // so retrieval matches the new text rather than the old.
+              guard('memory.edit', () =>
+                update(f, {
+                  fact: next.trim().slice(0, 50),
+                  status: 'confirmed',
+                  embedding: encodeVector(next.trim().slice(0, 50)),
+                }),
+              );
+            }
+          }}
+        >
+          修改
+        </button>
         <button className="memory__btn memory__btn--danger" onClick={() => guard('memory.remove', () => remove(f))}>
           删除
         </button>

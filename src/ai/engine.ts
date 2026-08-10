@@ -28,6 +28,7 @@ import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective } from './lifeline';
+import { refreshConvState, convStateDirective } from './conv-state';
 import {
   detectThreads,
   threadsFromFacts,
@@ -285,6 +286,12 @@ async function generateAndPlayInner(
   const arcs = lifelineAt(persona, hooks.now(), personaEpoch(persona, peer));
   const arcLine = lifelineDirective(arcs);
   if (arcLine) system += `\n\n${arcLine}`;
+  // What this conversation is still in the middle of (M-E6). Channel 1: this
+  // refresh runs on EVERY turn, so an unanswered question is actionable during
+  // the same conversation rather than minutes after you have left it.
+  const convState = await refreshConvState(convId, recent, hooks.now());
+  const stateLine = convStateDirective(convState, hooks.now());
+  if (stateLine) system += `\n\n${stateLine}`;
   if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
 
   const messages = [
@@ -408,6 +415,60 @@ async function generateAndPlayInner(
     hooks.setTyping(convId, false);
     releaseInFlight(convId, ctrl);
   }
+}
+
+/**
+ * Regenerate the AI's last turn (M-E6, the steering wheel).
+ *
+ * An AI going out of character is not an edge case, it is a certainty — and
+ * until now the user had NO way to correct it in the moment. The options were
+ * to live with it or to delete the conversation, and a bad line left standing
+ * poisons every later turn, because it is in the context window from then on.
+ *
+ * `steer` is an optional nudge ("别这么客套" / "换个说法") appended for this
+ * regeneration only: it steers the retry without becoming a permanent
+ * instruction the persona has to carry forever.
+ */
+export async function regenerateLastTurn(
+  convId: string,
+  peer: ContactVM,
+  persona: PersonaVM,
+  globalTier: NsfwTierVM,
+  hooks: EngineHooks & { deleteMessage: (convId: string, msgId: number) => Promise<void> },
+  steer?: string,
+): Promise<void> {
+  inFlight.get(convId)?.abort();
+  const ctrl = new AbortController();
+  inFlight.set(convId, ctrl);
+
+  try {
+    // Remove the AI's trailing run first. Regenerating on top of the bad turn
+    // would leave it in the context — the model would see its own off-character
+    // line and, reasonably, continue in that voice.
+    const recent = await repo.getMessages(convId, { limit: RECENT_WINDOW });
+    for (let i = recent.length - 1; i >= 0; i--) {
+      const m = recent[i];
+      if (m.senderId === 'self') break;
+      if (m.senderId !== peer.id) break;
+      await hooks.deleteMessage(convId, m.id);
+    }
+  } catch (e) {
+    releaseInFlight(convId, ctrl);
+    logError('chat.regenerate.clear', e);
+    throw e;
+  }
+
+  await generateAndPlay(
+    convId,
+    peer,
+    persona,
+    globalTier,
+    hooks,
+    ctrl,
+    steer
+      ? `你刚才那条回复不太对，用户希望你**${steer}**，重新说一次。不要提起这件事本身。`
+      : '你刚才那条回复不太对，换个说法重新回一次。不要提起这件事本身。',
+  );
 }
 
 /**

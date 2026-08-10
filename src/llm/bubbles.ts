@@ -18,15 +18,39 @@ function stripFences(text: string): string {
     .trim();
 }
 
+/**
+ * JSON has null; the schema's optional fields do not accept it. A model that
+ * emits `{"type":"voice","content":"…","emotion":null}` — which they do, all the
+ * time, because "no emotion" is naturally null — failed validation and fell into
+ * the repair path below, which rebuilt it as a plain TEXT bubble. Voice, sticker
+ * and image bubbles were being silently downgraded by a null in a field nobody
+ * needed. Dropping null-valued keys before validation is the whole fix.
+ */
+function dropNulls(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v !== null) out[k] = v;
+  }
+  return out;
+}
+
 function coerceBubble(raw: unknown): Bubble | null {
-  const parsed = BubbleSchema.safeParse(raw);
+  const parsed = BubbleSchema.safeParse(dropNulls(raw));
   if (parsed.success) return clampBubble(parsed.data);
   // Repair common shapes: {message}/{text} → text bubble.
   if (raw && typeof raw === 'object') {
     const o = raw as Record<string, unknown>;
     const content = o.content ?? o.text ?? o.message ?? o.msg;
     if (typeof content === 'string' && content.trim()) {
-      return clampBubble({ type: 'text', content: content.trim() });
+      // Keep the declared type when it is a real one: a repair should never be
+      // the reason a voice message arrives as text.
+      const t = o.type;
+      const type =
+        typeof t === 'string' && ['text', 'voice', 'sticker', 'image', 'recall'].includes(t)
+          ? (t as Bubble['type'])
+          : 'text';
+      return clampBubble({ type, content: content.trim() });
     }
   }
   return null;

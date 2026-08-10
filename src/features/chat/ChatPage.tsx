@@ -15,6 +15,8 @@ import { registerMedia } from '../../data/media-registry';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
 import { useAppStore } from '../../store/appStore';
+import { regenerateLastTurn } from '../../ai/engine';
+import { useGuard } from '../../app/useGuard';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
 import { hasUsableProvider } from '../../llm/service';
 import { sendUserMessage } from '../../ai/engine';
@@ -30,6 +32,7 @@ import '../settings/settings.css';
 import { useNow } from '../../lib/useNow';
 
 export function ChatPage() {
+  const guard = useGuard();
   const NOW = useNow();
   const { convId = '' } = useParams();
   const navigate = useNavigate();
@@ -122,6 +125,37 @@ export function ChatPage() {
   const copyText = (msg: MessageVM) => {
     setMenu(null);
     if (msg.content) void navigator.clipboard?.writeText(msg.content).catch(() => {});
+  };
+
+  /**
+   * 重新生成 (M-E6). An AI going out of character is a certainty, not an edge
+   * case, and until now there was no way to correct it in the moment — the
+   * options were live with it or delete the conversation. A bad line left
+   * standing also poisons every later turn, since it stays in the context.
+   */
+  const regenerate = async (steer?: string) => {
+    setMenu(null);
+    const c = useAppStore.getState().conversationById(convId);
+    const peerId = c?.peerId;
+    if (!peerId) return;
+    const peerC = contactById(peerId);
+    const persona = useAppStore.getState().personaFor(peerId);
+    if (!peerC || !persona) return;
+    const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    await regenerateLastTurn(
+      convId,
+      peerC,
+      persona,
+      tier,
+      {
+        appendMessage,
+        updateMessage,
+        setTyping,
+        now: () => Date.now(),
+        deleteMessage,
+      },
+      steer,
+    );
   };
 
   // Interleave time bars (WeChat shows a centered time when the gap > 5 min).
@@ -324,7 +358,9 @@ export function ChatPage() {
                   // Only open when there is at least one action — an empty
                   // capsule reads as breakage.
                   const hasCopy = m.type === 'text' && Boolean(m.content);
-                  if (hasCopy || canRecall(m, Date.now())) setMenu({ msg: m, x, y });
+                  const canRegen =
+                    m.senderId !== 'self' && !isGroup && messages.at(-1)?.id === m.id;
+                  if (hasCopy || canRecall(m, Date.now()) || canRegen) setMenu({ msg: m, x, y });
                 }}
                 onReEdit={(m) => setDraft(m.content ?? '')}
               />
@@ -386,6 +422,28 @@ export function ChatPage() {
               引用
             </button>
           )}
+          {/* Only on the AI's own last turn: regenerating anything else would
+              rewrite history rather than correct the newest line. */}
+          {menu.msg.senderId !== 'self' &&
+            !isGroup &&
+            !menu.msg.isRecalled &&
+            messages.at(-1)?.senderId === menu.msg.senderId && (
+              <>
+                <button role="menuitem" onClick={() => guard('chat.regenerate', () => regenerate())}>
+                  重新生成
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    const steer = window.prompt('想让她怎么改？（例：别这么客套 / 短一点）');
+                    setMenu(null);
+                    if (steer?.trim()) guard('chat.steer', () => regenerate(steer.trim()));
+                  }}
+                >
+                  让她重说
+                </button>
+              </>
+            )}
           {['text', 'image', 'sticker'].includes(menu.msg.type) && !menu.msg.isRecalled && (
             <button
               role="menuitem"

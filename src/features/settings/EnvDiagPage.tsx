@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { SubNav } from '../../components/SubNav';
+import { getUsage, KIND_LABELS, type DayUsage, type UsageKind } from '../../lib/usage';
 import { repo } from '../../db/repo';
 import { getErrors, clearErrors, type ErrEntry } from '../../lib/errlog';
 import { saveTextFile } from '../../lib/save-file';
@@ -69,6 +70,7 @@ async function runProbes(): Promise<Probe[]> {
 }
 
 export function EnvDiagPage() {
+  const [usage, setUsage] = useState<{ today: DayUsage; history: DayUsage[] } | null>(null);
   const [probes, setProbes] = useState<Probe[] | null>(null);
   const [errors, setErrors] = useState<ErrEntry[]>([]);
 
@@ -89,6 +91,10 @@ export function EnvDiagPage() {
         : ['（无）']),
     ].join('\n');
 
+  useEffect(() => {
+    void getUsage(Date.now()).then(setUsage).catch(() => {});
+  }, []);
+
   return (
     <>
       <SubNav title="环境自检与日志" />
@@ -107,6 +113,26 @@ export function EnvDiagPage() {
             <div className="field">
               <span className="field__hint">检测中…</span>
             </div>
+          )}
+        </div>
+
+        <div className="settings__group">
+          <div className="settings__group-title">今天用掉的 API 调用（{usage?.today.total ?? 0} 次）</div>
+          {Object.entries(usage?.today.counts ?? {}).map(([kind, n]) => (
+            <div className="settings__row settings__row--divided" key={kind}>
+              <span className="settings__label">{KIND_LABELS[kind as UsageKind] ?? kind}</span>
+              <span className="settings__value">{n} 次</span>
+            </div>
+          ))}
+          {(usage?.today.total ?? 0) === 0 && (
+            <p className="settings__hint">今天还没有调用过 API。</p>
+          )}
+          {(usage?.history.length ?? 0) > 1 && (
+            <p className="settings__hint">
+              最近 {usage!.history.length} 天共 {usage!.history.reduce((n, d) => n + d.total, 0)} 次。
+              心跳、记忆整理、群聊调度这些是没人按按钮也会发生的——用的是你自己的 key，
+              所以这里能看见。
+            </p>
           )}
         </div>
 

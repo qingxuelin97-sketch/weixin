@@ -19,6 +19,18 @@ import {
 } from './types';
 import { parseBubbles } from './bubbles';
 import { logError } from '../lib/errlog';
+import { recordUsage, type UsageKind } from '../lib/usage';
+
+/** Attribute a call to what caused it, using the conv key the caller passed. */
+function usageKindFor(role: Role, convKey: string): UsageKind {
+  if (role === 'director') return 'director';
+  if (role === 'memory') return 'memory';
+  if (convKey.startsWith('dm:')) return 'agent_dm';
+  if (convKey.startsWith('story:')) return 'story';
+  if (convKey.startsWith('moments:') || convKey.startsWith('moment:')) return 'moments';
+  if (role === 'reasoning') return 'other';
+  return 'chat';
+}
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -51,15 +63,34 @@ export interface RoutingPolicy {
   plan(req: RouteRequest): RoutePlan;
 }
 
-const REFUSAL_RE =
-  /(抱歉|对不起|我(?:无法|不能|不便)|作为(?:一个)?(?:AI|人工智能|语言模型)|as an ai|i can(?:'|no)t (?:help|assist|comply|continue)|content (?:policy|filter)|违反|不适当的?内容)/i;
+/**
+ * Unambiguous refusals: the model breaking character to talk about itself or
+ * about policy. These fire on their own.
+ */
+const HARD_REFUSAL_RE =
+  /(作为(?:一个)?(?:AI|人工智能|语言模型|助手)|as an ai|i can(?:'|no)t (?:help|assist|comply|continue)|content (?:policy|filter)|违反(?:了)?(?:相关)?(?:政策|规定|准则)|不适当的?内容|无法提供(?:相关)?(?:内容|帮助)|不能协助)/i;
+
+/**
+ * Apologies and "I can't" are ORDINARY SPEECH in Chinese, not refusals.
+ *
+ * The old pattern fired on a bare 抱歉 / 我不能, so a persona writing the
+ * perfectly in-character 「抱歉啊，我今天不太想聊这个」 was classified as a
+ * refusal — burning the entire degradation ladder (a softened retry, then every
+ * permissive fallback in turn) on a reply that had already succeeded, and
+ * eventually showing the user a persona-styled apology instead of the line the
+ * model actually wrote. So a soft marker only counts alongside a policy one.
+ */
+const SOFT_REFUSAL_RE = /(抱歉|对不起|我(?:无法|不能|不便))/;
+const POLICY_RE = /(政策|规定|准则|内容|限制|要求|讨论(?:这|该)|回答(?:这|该)|协助|提供)/;
 
 /** A refusal can arrive as an error, a stop reason, refusal prose, or a schema-parse miss. */
 export function isRefusal(result: CompletionResult): boolean {
   if (result.finishReason === 'content_filter') return true;
   const body = result.text.trim();
   if (!body) return true;
-  if (REFUSAL_RE.test(body) && body.length < 200) return true;
+  if (HARD_REFUSAL_RE.test(body)) return true;
+  // A short apology THAT ALSO talks about policy or about what it can provide.
+  if (body.length < 120 && SOFT_REFUSAL_RE.test(body) && POLICY_RE.test(body)) return true;
   return false;
 }
 
@@ -102,6 +133,11 @@ export class LlmRouter {
     const stickyKey = `${convKey}::${req.nsfwTier}`;
     const pinned = this.sticky.get(stickyKey);
     const primary = pinned ?? { provider: plan.provider, model: plan.model };
+
+    // Every call the app makes passes through here — the one honest place to
+    // count them. The user's own key pays for the heartbeats, memory passes and
+    // group casting that happen with nobody pressing anything (M-E6).
+    void recordUsage(usageKindFor(req.role, convKey), Date.now()).catch(() => {});
 
     // Attempt 0: primary (or sticky) model.
     try {

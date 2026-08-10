@@ -157,3 +157,29 @@ DM = 正式 `conversations` 行，id = `dm_<a>_<b>`（a/b 按字典序，保证�
   首次引用 pending→confirmed）；八卦入库 source:'hearsay' confidence:0.4。
 - **成本**：每会话每静默期 ≤1 次，估 +3~6 次/天；marker 无论有无产出都前移。
 - MemoryPage 显示来源标签（聊出来的/八卦）、低置信提示、引用次数。
+
+---
+
+## M-E 轮新增模块（2026-08）
+
+| 模块 | 文件 | 一句话 |
+|---|---|---|
+| 投影层 | `ai/render-msg.ts` | 模型看见的消息文本的**唯一**来源。红包/转账/图片/语音不再是 `[rp]` 这类占位符。 |
+| 实体图谱 | `ai/entity-graph.ts` | trigram + BM25 话题检索、Ebbinghaus 遗忘曲线（用得越多越牢）、矛盾 supersede。纯函数。 |
+| 情绪脉冲 | `lib/affect.ts` | 事件驱动，叠加在当日心情上，数小时衰减。复用 mood 的 `cpmMul`/`proactMul`。**`simulate()` 不读**。 |
+| 生活线 | `ai/lifeline.ts` | 每人两条并行的慢线 + 日程。种子化纯函数，零 LLM、零存储、可重放。 |
+| 伏笔 | `ai/threads.ts` | 「上次你说要去看牙，去了吗」。零增量 LLM，搭心跳的车。 |
+| 有向立场 | `ai/relationship.ts` | `stance:<a>:<b>` settings 行；`pairKey` 保持对称不动。 |
+| 对话状态 | `ai/conv-state.ts` | 话题栈 / 未答问题 / 承诺。**双通道**：启发式每轮即时更新 + 记忆通道后修。 |
+| 剧情模式 | `ai/story-*.ts` | GM 走图、expr/llm 双轨触发、回档级联撤销。 |
+| 用量 | `lib/usage.ts` | 按来源计每日调用次数。故意是**计数不是账单**。 |
+| handler | `ai/handlers.ts` | 11 个 handler 的纯函数版 + 窄依赖包。 |
+
+### 这一轮定下的规矩
+
+- **调用点不得自报 nsfw tier**——一律由 `lib/nsfw-tier.ts` 从会话派生。见 `specs/nsfw.md`。
+- **自续链的 kind 一律先续链后干活**（`registerChainedHandler`）。一次抛错不能永久终结一条链。
+- **新 handler 必须是 `ai/handlers.ts` 的导出纯函数**——闭包里的 handler 不可测。
+- **新状态一律 settings 行**，不动 `DB_VERSION`（v6 已含 story 两表与 `byFireAt` 索引）。
+- **prompt 六段层序一字不动**，新内容只追加在 scene 之后（前缀缓存）。
+- 尾层每多一句就稀释一分人设：立场/生活线/对话状态在没话说时**一律输出空串**。
