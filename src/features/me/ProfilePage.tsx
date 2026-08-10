@@ -11,10 +11,12 @@ import { Avatar } from '../../components/Avatar';
 import { MediaPicker } from '../../components/MediaPicker';
 import { useAppStore } from '../../store/appStore';
 import { AVATAR_PALETTE } from '../../data/avatar-palette';
+import { useGuard } from '../../app/useGuard';
 import '../settings/settings.css';
 import './me.css';
 
 export function ProfilePage() {
+  const guard = useGuard();
   const navigate = useNavigate();
   const me = useAppStore((s) => s.contactById('self'));
   const putContact = useAppStore((s) => s.putContact);
@@ -119,7 +121,7 @@ export function ProfilePage() {
           </div>
         </div>
 
-        <button className="btn-primary" onClick={() => void save()}>
+        <button className="btn-primary" onClick={() => guard('profile.save', save)}>
           保存
         </button>
       </div>

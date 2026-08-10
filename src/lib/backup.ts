@@ -34,7 +34,12 @@ const NEVER_EXPORT = new Set(['tts_cache']);
  * `{}`, and restoring that husk over a working key bricks the keystore — every
  * later encrypt throws and no API key can ever be saved again (bug H3).
  */
-const NEVER_EXPORT_SETTING_KEYS = new Set(['__crypto_master']);
+const NEVER_EXPORT_SETTING_KEYS = new Set([
+  '__crypto_master',
+  // The in-flight restore marker describes THIS device's restore, not the data.
+  // Exporting it would make every later restore of that file look interrupted.
+  'restoreInProgress',
+]);
 
 function isPortableSettingRow(row: unknown): boolean {
   const k = (row as { key?: unknown })?.key;
@@ -196,22 +201,75 @@ export async function restoreBackup(file: BackupFile, now: number): Promise<Rest
     rows.filter((r) => !isPortableSettingRow(r)),
   );
 
+  // PHASE 1 — prepare everything, touching nothing. Decoding is where a bad or
+  // truncated file actually blows up (a corrupt base64 media blob, a row the
+  // schema no longer accepts), and the old code discovered that AFTER clearing
+  // some stores: the backup was rejected and the user's real data was already
+  // gone, with only an in-memory snapshot standing between them and losing it.
+  const staged: Array<{ store: string; rows: unknown[] }> = [];
   for (const def of STORES) {
     let rows = file.stores[def.name];
     if (!rows) continue; // absent from this backup — leave the store untouched
     if (def.name === 'settings') rows = rows.filter(isPortableSettingRow);
     if (def.name === 'media') rows = rows.map(decodeMediaRow);
-    await idbClear(def.name);
-    for (const row of rows) await idbPut(def.name, row);
-    restored[def.name] = rows.length;
+    staged.push({ store: def.name, rows });
   }
-  for (const row of localMaster) await idbPut('settings', row);
+
+  // PHASE 2 — destructive. A crash between here and the flag's removal leaves a
+  // half-written database that LOOKS fine; the marker is how the next launch
+  // can tell, instead of the user discovering it one missing conversation later.
+  await idbPut('settings', { key: 'restoreInProgress', value: now });
+  try {
+    for (const { store, rows } of staged) {
+      await idbClear(store);
+      // The marker lives in `settings`, so clearing that store erases it. Put it
+      // straight back or the crash window it exists to cover is uncovered.
+      if (store === 'settings') await idbPut('settings', { key: 'restoreInProgress', value: now });
+      for (const row of rows) await idbPut(store, row);
+      restored[store] = rows.length;
+    }
+    for (const row of localMaster) await idbPut('settings', row);
+  } catch (e) {
+    // Roll back from the snapshot we took before touching anything. Best effort
+    // by necessity — IndexedDB gives us no cross-store transaction — but it is
+    // the difference between "restore failed" and "everything is gone".
+    await rollback(snapshot, localMaster).catch(() => {});
+    throw new Error(
+      `恢复失败，已尽力回滚到恢复前的状态：${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  await idbPut('settings', { key: 'restoreInProgress', value: 0 });
 
   // The restored file may be days old; without re-arming the barrier the next
   // foreground pass would "backfill" that whole gap with fabricated activity.
   await idbPut('settings', { key: 'lastForegroundAt', value: now });
 
   return { restored, unknownStores, snapshot };
+}
+
+/** Put the pre-restore snapshot back. Used only on a failed restore. */
+async function rollback(snapshot: BackupFile, localMaster: unknown[]): Promise<void> {
+  for (const def of STORES) {
+    let rows = snapshot.stores[def.name];
+    if (!rows) continue;
+    if (def.name === 'media') rows = rows.map(decodeMediaRow);
+    await idbClear(def.name);
+    for (const row of rows) await idbPut(def.name, row);
+  }
+
+  for (const row of localMaster) await idbPut('settings', row);
+  await idbPut('settings', { key: 'restoreInProgress', value: 0 });
+}
+
+/**
+ * Did a previous restore die partway through? Returns the timestamp it started,
+ * or 0. The restore page surfaces this so a half-written database is announced
+ * rather than silently lived with.
+ */
+export async function pendingRestoreAt(): Promise<number> {
+  const rows = await idbGetAll<{ key?: string; value?: unknown }>('settings');
+  const row = rows.find((r) => r.key === 'restoreInProgress');
+  return typeof row?.value === 'number' ? row.value : 0;
 }
 
 /** Suggested filename, e.g. `weixin-ai-20260808-1430.aiwx`. */

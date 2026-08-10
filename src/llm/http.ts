@@ -21,6 +21,11 @@ export interface HttpResponse {
 
 const DEFAULT_TIMEOUT = 60_000;
 
+/** The one shape callers check for "this was cancelled, not broken". */
+function abortError(): LlmError {
+  return new LlmError('network', 'aborted');
+}
+
 /** Lazily resolve the native bridge; returns null in web/test contexts. */
 async function nativeHttp(): Promise<null | {
   request: (o: unknown) => Promise<{ status: number; data: unknown }>;
@@ -39,7 +44,13 @@ async function nativeHttp(): Promise<null | {
 
 export async function httpJson(req: HttpRequest): Promise<HttpResponse> {
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT;
+  // Already cancelled before we start? Then don't start. `nativeHttp()` awaits a
+  // dynamic import, and the bridge below cannot be interrupted once dispatched —
+  // so an abort that landed while the user was typing their next message still
+  // produced a full, billed request whose answer nobody would ever read.
+  if (req.signal?.aborted) throw abortError();
   const native = await nativeHttp();
+  if (req.signal?.aborted) throw abortError();
 
   if (native) {
     // TRANSPORT POLICY (M-D device verdict): the WebView's own fetch is the
@@ -73,6 +84,10 @@ export async function httpJson(req: HttpRequest): Promise<HttpResponse> {
       );
       return { status: res.status, data: res.data };
     } catch (bridgeErr) {
+      // An abort is not a transport failure: reporting it as "both channels
+      // down" made every interrupted turn look like a network outage in the
+      // error log, drowning the real ones.
+      if (req.signal?.aborted) throw abortError();
       const fe = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
       const be = bridgeErr instanceof Error ? bridgeErr.message : String(bridgeErr);
       throw new LlmError('network', `网页通道: ${fe}；原生通道: ${be}`);

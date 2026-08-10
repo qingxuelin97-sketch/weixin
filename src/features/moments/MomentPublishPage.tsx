@@ -11,6 +11,7 @@ import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { availableRefs, resolveImageRef } from '../../data/moments-images';
 import { scheduleReactionsFor } from '../../ai/moments-service';
+import { logError } from '../../lib/errlog';
 import type { MomentVM } from '../../data/types';
 import './moments.css';
 
@@ -23,6 +24,7 @@ export function MomentPublishPage() {
   const [busy, setBusy] = useState(false);
 
   const addMoment = useAppStore((s) => s.addMoment);
+  const showToast = useAppStore((s) => s.showToast);
   const contacts = useAppStore((s) => s.contacts);
   const personaFor = useAppStore((s) => s.personaFor);
 
@@ -50,12 +52,22 @@ export function MomentPublishPage() {
       isNsfw: false,
       createdAt: now,
     };
-    await addMoment(moment);
+    try {
+      await addMoment(moment);
+    } catch (e) {
+      // Unguarded, a failed write left the 发表 button disabled with the text
+      // still on screen and no explanation — the post looked like it was
+      // mid-flight forever.
+      logError('moment.publish', e);
+      showToast('发表失败，请重试');
+      setBusy(false);
+      return;
+    }
     // Queue who reacts and when. Failure here must not lose the post itself.
     try {
       await scheduleReactionsFor(moment, contacts, personaFor, now);
-    } catch {
-      /* the post stands; it just won't draw reactions this run */
+    } catch (e) {
+      logError('moment.scheduleReactions', e); // the post stands; it just won't draw reactions
     }
     navigate('/moments', { replace: true });
   };

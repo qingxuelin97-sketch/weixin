@@ -9,10 +9,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
+import { useGuard } from '../../app/useGuard';
 import '../settings/settings.css';
 import './chat.css';
 
 export function ChatInfoPage() {
+  const guard = useGuard();
   const { convId = '' } = useParams();
   const navigate = useNavigate();
   const conv = useAppStore((s) => s.conversationById(convId));
@@ -94,12 +96,12 @@ export function ChatInfoPage() {
 
         {isGroup && (
           <div className="settings__group">
-            <div className="settings__row settings__row--divided" onClick={() => void editGroupName()}>
+            <div className="settings__row settings__row--divided" onClick={() => guard('chatinfo.rename', editGroupName)}>
               <span className="settings__label">群聊名称</span>
               <span className="settings__value">{conv.title}</span>
               <span className="settings__chevron">›</span>
             </div>
-            <div className="settings__row" onClick={() => void editAnnouncement()}>
+            <div className="settings__row" onClick={() => guard('chatinfo.announce', editAnnouncement)}>
               <span className="settings__label">群公告</span>
               <span className="settings__value">{conv.announcement ? conv.announcement.slice(0, 10) : '未设置'}</span>
               <span className="settings__chevron">›</span>
@@ -115,13 +117,13 @@ export function ChatInfoPage() {
             <span className="settings__label">查找聊天记录</span>
             <span className="settings__chevron">›</span>
           </div>
-          <div className="settings__row settings__row--divided" onClick={() => void toggle('isPinned')}>
+          <div className="settings__row settings__row--divided" onClick={() => guard('chatinfo.pin', () => toggle('isPinned'))}>
             <span className="settings__label">置顶聊天</span>
             <span className={`switch${conv.isPinned ? ' switch--on' : ''}`}>
               <span className="switch__knob" />
             </span>
           </div>
-          <div className="settings__row" onClick={() => void toggle('isMuted')}>
+          <div className="settings__row" onClick={() => guard('chatinfo.mute', () => toggle('isMuted'))}>
             <span className="settings__label">消息免打扰</span>
             <span className={`switch${conv.isMuted ? ' switch--on' : ''}`}>
               <span className="switch__knob" />
@@ -129,7 +131,7 @@ export function ChatInfoPage() {
           </div>
         </div>
 
-        <button className="btn-ghost" onClick={() => void removeChat()}>
+        <button className="btn-ghost" onClick={() => guard('chatinfo.delete', removeChat)}>
           删除该聊天
         </button>
       </div>

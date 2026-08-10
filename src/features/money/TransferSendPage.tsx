@@ -4,6 +4,7 @@ import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { yuanToFen, fenToYuan } from '../../lib/money';
 import { sendTransfer } from '../../ai/money-service';
+import { logError } from '../../lib/errlog';
 import './money.css';
 
 export function TransferSendPage() {
@@ -17,6 +18,7 @@ export function TransferSendPage() {
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   const fen = yuanToFen(amount || '0') ?? 0;
   const valid = fen > 0;
@@ -25,12 +27,22 @@ export function TransferSendPage() {
   const submit = async () => {
     if (!conv?.peerId || !valid || busy) return;
     setBusy(true);
-    await sendTransfer(convId, conv.peerId, fen, note, {
-      appendMessage,
-      updateMessage,
-      now: () => Date.now(),
-    });
-    navigate(-1);
+    setError('');
+    try {
+      await sendTransfer(convId, conv.peerId, fen, note, {
+        appendMessage,
+        updateMessage,
+        now: () => Date.now(),
+      });
+      navigate(-1);
+    } catch (e) {
+      // Money must never fail invisibly. Unguarded, a throw left the button
+      // disabled forever with no message — indistinguishable, from the user's
+      // side, from a transfer that went through.
+      logError('transfer.send', e);
+      setError(e instanceof Error ? e.message : '转账失败，请重试');
+      setBusy(false);
+    }
   };
 
   return (
@@ -66,7 +78,9 @@ export function TransferSendPage() {
           <div className="amount-display__value">¥{fenToYuan(fen)}</div>
         </div>
 
-        <button className="btn-money" disabled={!valid || busy} onClick={submit}>
+        {error && <div className="money-error">{error}</div>}
+
+        <button className="btn-money" disabled={!valid || busy} onClick={() => void submit()}>
           {busy ? '处理中…' : '转账'}
         </button>
       </div>

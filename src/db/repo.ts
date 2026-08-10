@@ -127,7 +127,19 @@ export class IdbRepo implements Repo {
   async putConversation(c: ConversationVM) {
     await idbPut('conversations', c);
   }
+  /**
+   * Delete a conversation AND everything hanging off it.
+   *
+   * Deleting only the conversation row left its messages orphaned in the store.
+   * They were invisible — until a conversation with the same id was recreated
+   * (a rebuilt group, a re-added contact, a `.aiwx` restore), at which point the
+   * old messages reappeared inside the new thread. `byConv` still indexed them,
+   * so search could surface deleted content too.
+   */
   async deleteConversation(id: string) {
+    const msgs = await idbGetAllByIndex<MessageVM>('messages', 'byConv', id);
+    for (const m of msgs) await idbDelete('messages', m.id);
+    await idbDelete('conv_summaries', id);
     await idbDelete('conversations', id);
   }
 

@@ -25,7 +25,10 @@ import {
 } from '../data/seed';
 import { repo, IdbRepo } from '../db/repo';
 import { registerMedia } from '../data/media-registry';
+import { makePersona } from '../data/persona-defaults';
 import { recordRelEvent } from '../ai/relationship';
+import { cancelActionsForConversation } from '../ai/scheduler';
+import { logError } from '../lib/errlog';
 
 /** A like warms the (liker, author) edge — fire-and-forget, never blocks UI. */
 async function relEventForLike(momentId: string, likerId: string, now: number): Promise<void> {
@@ -160,7 +163,11 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
       .filter((cc) => cc.type === 'ai')
       .map(async (cc) => {
         const p = await repo.getPersona(cc.id);
-        if (p) personas[cc.id] = p;
+        // Through makePersona, always: a persona row written before a field
+        // existed comes back without it, and an absent field is read as
+        // "never posts" / "never likes" rather than erroring — the feature just
+        // silently stops working for every pre-existing agent.
+        if (p) personas[cc.id] = makePersona(p);
       }),
   );
   // Prime the media registry so `idb:` refs (avatars, photo pools) resolve
@@ -274,6 +281,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   deleteConversation: async (id) => {
+    // Cancel the queue BEFORE the row goes: a heartbeat that fires between the
+    // two finds a live conversation and re-chains itself, which is exactly the
+    // orphan chain we're removing. Failure here must not block the delete.
+    await cancelActionsForConversation(id).catch((e) => logError('deleteConv.cancel', e));
     await repo.deleteConversation(id);
     set((s) => {
       const messages = { ...s.messages };

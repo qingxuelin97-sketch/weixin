@@ -20,10 +20,13 @@ import type {
   MemoryFactVM,
   MomentVM,
   PersonaVM,
+  NsfwTierVM,
 } from '../data/types';
 import { seededRng } from '../lib/money';
 import { beginRecordingSuppression, endRecordingSuppression } from '../lib/llm-recorder';
 import { recordRelEvent } from './relationship';
+import { maxTier, globalTier } from '../lib/nsfw-tier';
+import type { NsfwTier } from '../llm/router';
 import { isActiveAt } from './heartbeat';
 
 const HOUR = 3_600_000;
@@ -274,9 +277,22 @@ export interface DmDeps {
   complete: (
     messages: Array<{ role: 'system' | 'user'; content: string }>,
     convKey: string,
+    /**
+     * Effective tier of the topic material. DM topics are copied verbatim from
+     * group messages and memories, so a full-tier source declared as 'off' put
+     * explicit text on a domestic endpoint — and because DMs run under
+     * `beginRecordingSuppression`, it left no local trace (rule #6).
+     */
+    tier?: NsfwTier,
   ) => Promise<string>;
   enqueueGroupSpill: (groupId: string, speakerId: string, hint: string, at: number) => Promise<void>;
   now: () => number;
+  /**
+   * The global NSFW ceiling. Injected rather than read from storage here so this
+   * orchestrator keeps its "no ambient state" property — the participants'
+   * permits still gate the tier, so a call site cannot raise it by lying.
+   */
+  getGlobalTier?: () => Promise<NsfwTierVM>;
 }
 
 /**
@@ -321,7 +337,9 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
   // prompt/reply — the export surface would leak the gossip verbatim.
   beginRecordingSuppression();
   try {
-    const raw = await deps.complete(buildDmPrompt(aName, pa, bName, pb, topic), `dm:${dmId}`);
+    // Both participants' permits gate the material either of them may quote.
+    const dmTier = maxTier(await (deps.getGlobalTier ?? globalTier)(), [pa, pb]);
+    const raw = await deps.complete(buildDmPrompt(aName, pa, bName, pb, topic), `dm:${dmId}`, dmTier);
     script = parseDmScript(raw);
   } catch {
     return false;

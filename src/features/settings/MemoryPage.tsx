@@ -12,12 +12,14 @@ import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { repo } from '../../db/repo';
 import type { MemoryFactVM } from '../../data/types';
+import { useGuard } from '../../app/useGuard';
 import './settings.css';
 
 /** DM gossip writes facts with these framings (see agent-dm gossipFacts). */
 const GOSSIP_RE = /^(和.+聊到：|听.+说：)/;
 
 export function MemoryPage() {
+  const guard = useGuard();
   const { contactId = '' } = useParams();
   const contact = useAppStore((s) => s.contactById(contactId));
   const showToast = useAppStore((s) => s.showToast);
@@ -30,7 +32,7 @@ export function MemoryPage() {
     setFacts(all);
   };
   useEffect(() => {
-    void reload();
+    guard('memory.load', reload);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactId]);
 
@@ -67,15 +69,15 @@ export function MemoryPage() {
       </div>
       <div className="memory__actions">
         {f.status === 'pending' ? (
-          <button className="memory__btn" onClick={() => void update(f, { status: 'confirmed' })}>
+          <button className="memory__btn" onClick={() => guard('memory.confirm', () => update(f, { status: 'confirmed' }))}>
             确认
           </button>
         ) : (
-          <button className="memory__btn" onClick={() => void update(f, { isPinned: !f.isPinned })}>
+          <button className="memory__btn" onClick={() => guard('memory.pin', () => update(f, { isPinned: !f.isPinned }))}>
             {f.isPinned ? '取消置顶' : '置顶'}
           </button>
         )}
-        <button className="memory__btn memory__btn--danger" onClick={() => void remove(f)}>
+        <button className="memory__btn memory__btn--danger" onClick={() => guard('memory.remove', () => remove(f))}>
           删除
         </button>
       </div>

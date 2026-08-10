@@ -12,9 +12,21 @@ import { getSecret } from '../lib/keystore';
 import { repo } from '../db/repo';
 import { Capacitor } from '@capacitor/core';
 
-/** Default model per role for a provider kind (falls back to the first model). */
+/**
+ * Default model per role for a provider kind (falls back to the first model).
+ *
+ * An empty `models` list — a slot the user added but never pulled a catalog for,
+ * or one whose catalog came back empty — used to return `undefined` typed as
+ * `string`. That travelled all the way into the request body as
+ * `"model": undefined`, which JSON.stringify drops, so the provider answered
+ * with an opaque 400 about a missing field and the config page reported it as a
+ * network problem. Fail here, where the message can name the actual cause.
+ */
 function modelForRole(vm: ProviderVM, role: Role): string {
   const m = vm.models;
+  if (m.length === 0) {
+    throw new Error(`Provider「${vm.label || vm.id}」没有配置任何模型——请先在 API 设置里拉取或填写模型 id`);
+  }
   if (vm.kind === 'deepseek') {
     if (role === 'reasoning') return m.find((x) => /reasoner/i.test(x)) ?? m[0];
     return m.find((x) => /chat/i.test(x)) ?? m[0];

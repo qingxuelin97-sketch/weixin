@@ -84,8 +84,16 @@ export class LlmError extends Error {
     message: string,
     public status?: number,
     public providerId?: string,
+    /**
+     * What actually went wrong underneath. The degradation ladder tries several
+     * providers and used to discard every one of their errors, so a total
+     * failure surfaced as the generic "all routes refused" with no way to tell
+     * a bad key from an outage from a rotated model id.
+     */
+    cause?: unknown,
   ) {
     super(message);
     this.name = 'LlmError';
+    if (cause !== undefined) this.cause = cause;
   }
 }

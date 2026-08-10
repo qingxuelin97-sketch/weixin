@@ -8,9 +8,11 @@ import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import type { ConversationVM } from '../../data/types';
+import { useGuard } from '../../app/useGuard';
 import './contacts.css';
 
 export function ContactProfilePage() {
+  const guard = useGuard();
   const { contactId = '' } = useParams();
   const navigate = useNavigate();
   const contact = useAppStore((s) => s.contactById(contactId));
@@ -73,7 +75,7 @@ export function ContactProfilePage() {
         )}
 
         <div className="settings__group">
-          <div className="settings__row settings__row--divided" onClick={() => void openChat()}>
+          <div className="settings__row settings__row--divided" onClick={() => guard('contact.openChat', openChat)}>
             <span className="settings__label contact-card__action">发消息</span>
           </div>
           <div

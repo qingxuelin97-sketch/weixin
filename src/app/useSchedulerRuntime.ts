@@ -22,6 +22,8 @@ import { getEdge, effectiveAffinity, heartbeatAffinityMul } from '../ai/relation
 import { noteProactiveSent, getAgentState } from '../ai/agent-state';
 import { extractMemory, maintainMemory } from '../ai/memory';
 import { getExtractMarker, setExtractMarker } from '../ai/memory-service';
+import { tierFor, globalTier } from '../lib/nsfw-tier';
+import { logError } from '../lib/errlog';
 import { moodOf, moodParams } from '../lib/mood';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
@@ -76,6 +78,11 @@ export function useSchedulerRuntime(enabled: boolean): void {
       const peer = s.contactById(contactId);
       const persona = s.personaFor(contactId);
       if (!peer || !persona) return;
+      // The conversation may have been deleted since this was queued. Returning
+      // here — BEFORE the generation and before re-chaining — is what stops a
+      // deleted thread from burning LLM calls forever: the old code generated a
+      // reply, found nowhere to put it, and dutifully scheduled the next one.
+      if (!s.conversations.some((c) => c.id === convId)) return;
 
       if (body) {
         // A notification may already have shown this exact text on the lock
@@ -114,6 +121,15 @@ export function useSchedulerRuntime(enabled: boolean): void {
     // in ONE cheap role:'memory' call, then retire stale trivia. This is the
     // loop that makes chats actually produce memory (dead code since M2).
     registerHandler('mem_extract', async (payload) => {
+      try {
+        await runMemExtract(payload);
+      } catch (e) {
+        // A refusal from the memory route (content audit) used to vanish here.
+        logError('mem_extract', e);
+      }
+    });
+
+    async function runMemExtract(payload: Record<string, unknown>) {
       const convId = String(payload.convId ?? '');
       const contactId = String(payload.contactId ?? '');
       const upto = Number(payload.uptoMsgId ?? 0);
@@ -124,8 +140,13 @@ export function useSchedulerRuntime(enabled: boolean): void {
         (m) => m.id > marker && m.id <= upto && m.type === 'text' && !m.isRecalled,
       );
       if (msgs.length === 0) return;
+      // Rule #6: this transcript is verbatim chat text. Derive its REAL tier —
+      // declaring 'off' here is what sent full-tier content to a domestic
+      // endpoint. With no permissive channel available the router throws and we
+      // skip extraction entirely: no memory beats a leak.
+      const tier = tierFor(await globalTier(), useAppStore.getState().personaFor(contactId));
       const router = await getRouter();
-      const res = await extractMemory(router, contactId, msgs, Date.now());
+      const res = await extractMemory(router, contactId, msgs, Date.now(), tier);
       if (res.summary) {
         await repo.putConvSummary({
           convId,
@@ -137,7 +158,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
       // Marker advances even when nothing was worth keeping — the span is done.
       await setExtractMarker(convId, upto);
       await maintainMemory(contactId, Date.now());
-    });
+    }
 
     // Flip a sent message to recalled (the send-then-recall drama's second act).
     // Idempotent: a re-fired action finds isRecalled already true and stops.
@@ -212,8 +233,9 @@ export function useSchedulerRuntime(enabled: boolean): void {
         getMemoryFacts: (id) => repo.getMemory(id),
         getGroupMessages: (id) => repo.getMessages(id, { limit: 8 }),
         getMoments: () => repo.getMoments({ limit: 10 }),
-        complete: async (messages, convKey) =>
-          (await router.complete({ role: 'chat', nsfwTier: 'off' }, { messages }, {}, convKey)).text,
+        complete: async (messages, convKey, tier) =>
+          (await router.complete({ role: 'chat', nsfwTier: tier ?? 'off' }, { messages }, {}, convKey))
+            .text,
         enqueueGroupSpill: async (groupId, speakerId, hint, at) => {
           await enqueue({
             kind: 'group_msg',
@@ -224,6 +246,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
           });
         },
         now: () => Date.now(),
+        getGlobalTier: globalTier,
       });
       // Chain the next session regardless of outcome — one failed exchange
       // must not end the whole mechanism.

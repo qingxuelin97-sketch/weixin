@@ -14,9 +14,15 @@ import {
   type GenerateOptions,
   type CompletionResult,
   type Bubble,
+  type LlmErrorKind,
   LlmError,
 } from './types';
 import { parseBubbles } from './bubbles';
+import { logError } from '../lib/errlog';
+
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 export type Role = 'chat' | 'director' | 'memory' | 'reasoning';
 export type NsfwTier = 'off' | 'ambiguous' | 'full';
@@ -79,6 +85,15 @@ export class LlmRouter {
     ctx: GenerateContext = {},
     convKey = 'default',
   ): Promise<CompletionResult> {
+    // Every rung's failure is recorded. Pre-M-E all three catches were bare
+    // `{}` blocks: a user whose key had expired saw a persona-styled "我现在不太
+    // 想聊这个" and there was no trace anywhere of the 401 that caused it.
+    const failures: Array<{ rung: string; providerId: string; err: unknown }> = [];
+    const note = (rung: string, providerId: string, err: unknown) => {
+      failures.push({ rung, providerId, err });
+      logError(`llm.${rung}[${providerId}]`, err);
+    };
+
     const plan = this.policy.plan(req);
     // Stickiness is scoped per (conversation, tier): a provider pinned on a lower
     // tier must never carry a later full-tier turn (constitution rule #6 — the
@@ -97,7 +112,11 @@ export class LlmRouter {
         return r;
       }
     } catch (e) {
+      note('primary', primary.provider.id, e);
       if (e instanceof LlmError && e.kind === 'auth') throw e; // no point laddering on bad key
+      // A sticky pin that just failed must not be retried by the next turn —
+      // otherwise one dead fallback keeps hijacking the conversation.
+      if (pinned) this.sticky.delete(stickyKey);
       // fall through to ladder on network/server/rate/content
     }
 
@@ -110,8 +129,8 @@ export class LlmRouter {
       try {
         const r = await primary.provider.complete({ ...opts, messages: withPrefill, model: primary.model });
         if (!isRefusal(r)) return r;
-      } catch {
-        /* continue to tier 2 */
+      } catch (e) {
+        note('soften', primary.provider.id, e);
       }
     }
 
@@ -123,13 +142,25 @@ export class LlmRouter {
           this.sticky.set(stickyKey, { provider: fb.provider, model: fb.model, remaining: 10 });
           return r;
         }
-      } catch {
-        /* try next fallback */
+      } catch (e) {
+        note('fallback', fb.provider.id, e);
       }
     }
 
     // Tier 3: give up cleanly. Caller decides how to present (persona refusal).
-    throw new LlmError('content_filter', 'all routes refused or failed', undefined, primary.provider.id);
+    // The kind now reflects what actually happened: calling an outage or an
+    // expired key a "content_filter" sent every diagnosis down the wrong path.
+    const first = failures[0]?.err;
+    const kind: LlmErrorKind =
+      failures.length === 0
+        ? 'content_filter'
+        : first instanceof LlmError
+          ? first.kind
+          : 'unknown';
+    const detail = failures.length
+      ? failures.map((f) => `${f.rung}/${f.providerId}: ${errText(f.err)}`).join(' | ')
+      : 'all routes refused';
+    throw new LlmError(kind, detail.slice(0, 400), undefined, primary.provider.id, first);
   }
 
   /** Bubble generation with the same ladder; tier-3 yields the persona refusal. */

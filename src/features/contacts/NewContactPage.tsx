@@ -15,6 +15,7 @@ import { AVATAR_PALETTE } from '../../data/avatar-palette';
 import type { ContactVM, ConversationVM } from '../../data/types';
 import '../settings/settings.css';
 import '../me/me.css';
+import { logError } from '../../lib/errlog';
 import './contacts.css';
 
 export function NewContactPage() {
@@ -68,9 +69,19 @@ export function NewContactPage() {
       lastMsgPreview: '',
       lastMsgAt: Date.now(),
     };
-    await putContact(contact);
-    await putPersona(persona);
-    await addConversation(conv);
+    try {
+      await putContact(contact);
+      await putPersona(persona);
+      await addConversation(conv);
+    } catch (e) {
+      // Three writes with no transaction: a throw on the second leaves a contact
+      // with no persona, which reads downstream as "not an AI" and quietly makes
+      // the new friend mute. Say so and let them retry rather than navigating on.
+      logError('contact.create', e);
+      showToast('创建失败，请重试');
+      setBusy(false);
+      return;
+    }
     showToast('已添加');
     // Land on the full persona editor so the new friend can be fleshed out.
     navigate(`/persona/${id}`, { replace: true });

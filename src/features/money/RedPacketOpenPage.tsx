@@ -4,6 +4,7 @@ import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import { repo } from '../../db/repo';
 import { claimRedPacket } from '../../ai/money-service';
+import { logError } from '../../lib/errlog';
 import type { RedPacketVM } from '../../data/types';
 import './money.css';
 
@@ -21,19 +22,25 @@ export function RedPacketOpenPage() {
   const [rp, setRp] = useState<RedPacketVM | null>(null);
   const [flipping, setFlipping] = useState(false);
   const [emptied, setEmptied] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const found = await repo.getRedPacket(rpId);
-      if (!alive) return;
-      setRp(found ?? null);
-      if (found) {
-        const claims = await repo.getClaims(rpId);
+      try {
+        const found = await repo.getRedPacket(rpId);
         if (!alive) return;
-        const mine = claims.some((c) => c.claimerId === 'self');
-        if (mine) navigate(`/rp/${rpId}`, { replace: true });
-        else if (claims.length >= found.count) setEmptied(true);
+        setRp(found ?? null);
+        if (found) {
+          const claims = await repo.getClaims(rpId);
+          if (!alive) return;
+          const mine = claims.some((c) => c.claimerId === 'self');
+          if (mine) navigate(`/rp/${rpId}`, { replace: true });
+          else if (claims.length >= found.count) setEmptied(true);
+        }
+      } catch (e) {
+        logError('rp.open.load', e);
+        if (alive) setError('红包信息读取失败');
       }
     })();
     return () => {
@@ -44,16 +51,26 @@ export function RedPacketOpenPage() {
   const open = async () => {
     if (!rp || flipping || emptied) return;
     setFlipping(true);
-    const claim = await claimRedPacket(rp.id, 'self', contactById('self')?.name ?? '我', {
-      appendMessage,
-      updateMessage,
-      now: () => Date.now(),
-    });
-    // Let the coin finish its spin before the detail page takes over.
-    setTimeout(() => {
-      if (claim) navigate(`/rp/${rp.id}`, { replace: true });
-      else setEmptied(true);
-    }, 850);
+    setError('');
+    try {
+      const claim = await claimRedPacket(rp.id, 'self', contactById('self')?.name ?? '我', {
+        appendMessage,
+        updateMessage,
+        now: () => Date.now(),
+      });
+      // Let the coin finish its spin before the detail page takes over.
+      setTimeout(() => {
+        if (claim) navigate(`/rp/${rp.id}`, { replace: true });
+        else setEmptied(true);
+      }, 850);
+    } catch (e) {
+      // The coin was left spinning on a throw, with the packet unopenable for
+      // the rest of the session. `claimRedPacket` is idempotent per claimer, so
+      // clearing the flag and letting them tap again is safe.
+      logError('rp.claim', e);
+      setFlipping(false);
+      setError(e instanceof Error ? e.message : '开红包失败，请重试');
+    }
   };
 
   const sender = rp ? contactById(rp.senderId) : undefined;
@@ -82,12 +99,13 @@ export function RedPacketOpenPage() {
           ) : (
             <button
               className={`rp-open__coin${flipping ? ' rp-open__coin--flip' : ''}`}
-              onClick={open}
+              onClick={() => void open()}
               aria-label="开红包"
             >
               開
             </button>
           )}
+          {error && <div className="rp-open__expired">{error}</div>}
         </>
       )}
     </div>

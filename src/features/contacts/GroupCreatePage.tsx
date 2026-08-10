@@ -8,6 +8,7 @@ import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import '../settings/settings.css';
+import { logError } from '../../lib/errlog';
 import './contacts.css';
 
 export function GroupCreatePage() {
@@ -50,7 +51,15 @@ export function GroupCreatePage() {
       lastMsgPreview: '你创建了群聊',
       lastMsgAt: now,
     };
-    await addConversation(conv);
+    try {
+      await addConversation(conv);
+    } catch (e) {
+      // Navigating on a failed write dropped the user into a chat backed by no
+      // conversation row — an empty screen with no way to tell what went wrong.
+      logError('group.create', e);
+      showToast('创建群聊失败，请重试');
+      return;
+    }
     navigate(`/chat/${conv.id}`, { replace: true });
   };
 

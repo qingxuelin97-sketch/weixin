@@ -18,6 +18,7 @@ import { VOICE_OPTIONS, DEFAULT_VOICE } from '../../llm/tts';
 import { repo } from '../../db/repo';
 import type { PersonaVM, ProviderVM } from '../../data/types';
 import { makePersona } from '../../data/persona-defaults';
+import { useGuard } from '../../app/useGuard';
 import './settings.css';
 
 function emptyPersona(contactId: string): PersonaVM {
@@ -40,6 +41,7 @@ const MOMENTS_PRESETS: Array<{ v: number; label: string }> = [
 ];
 
 export function PersonaEditPage() {
+  const guard = useGuard();
   const { contactId = '' } = useParams();
   const navigate = useNavigate();
   const contact = useAppStore((s) => s.contactById(contactId));
@@ -404,7 +406,7 @@ export function PersonaEditPage() {
           </div>
         </div>
 
-        <button className="btn-primary" onClick={() => void save()} disabled={!p.core.trim()}>
+        <button className="btn-primary" onClick={() => guard('persona.save', save)} disabled={!p.core.trim()}>
           保存
         </button>
       </div>

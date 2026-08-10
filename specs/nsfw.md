@@ -23,9 +23,32 @@
   永不出境到 MiniMax）。
 - 拒答降级见 `llm-provider.md`；原始拒答永不上屏。
 
+### 调用点自报 tier 禁令（M-E0，`tests/unit/nsfw-callsite.test.ts` 钉死）
+
+M-C1 把闭集堵在**路由器**，但路由器只能相信调用点声明的档位——没有任何机制阻止新代码写
+`nsfwTier: 'off'`。M-D2 的记忆循环就从这个侧门把破口重新捅开：三个后台任务各自携带聊天原文，
+却一律自报 off，全部路由到 `defaultProviderId`（大陆用户几乎必然是 DeepSeek 官方端点）。
+
+| 破口 | 携带内容 | 修复 |
+|---|---|---|
+| `memory.ts` `extractMemory` | 逐字聊天原文 | tier 变必传参数，由 `tierFor()` 派生 |
+| `director.ts` `callDirector` | 最近 20 条群消息原文 | tier 由 `maxTier(成员)` 派生；**> off 时原文按 `redactForTier` 截断**——选角只需要"谁说了大概什么" |
+| `agent-dm` 话题素材 | 复制的群消息 | tier 由双方 permit 派生；该路径跑在录制抑制下，**泄漏无痕迹** |
+
+**规则**：任何携带会话内容的 LLM 调用，其 tier 一律由 `src/lib/nsfw-tier.ts` 从**会话本身**
+派生（`tierFor` / `maxTier` / `tierOfConversation`），调用点不得自造。全开档无宽松通道时
+`makePolicy` 抛错 → **宁可跳过该次抽取，也不降档发出**。
+
 ## 隔离
 - nsfw 事实**独立表 + 注入器白名单**：仅"单聊 ∧ 全开 ∧ 该 AI permit"可注入，且强制抽象化存储；
   群聊/朋友圈/导演永不注入；关档冻结不删，PIN 解锁后可见可删。
+- **注入白名单已实现（M-E0）**：`extractMemory` 按来源 tier 打 `sensitivity`
+  （full→nsfw / ambiguous→sensitive / off→normal），`selectFactsForInjection(facts, now,
+  {surface, tier})` 用 `mayInjectFact()` 过滤。此前抽取器硬编码 `'normal'`，
+  露骨事实对朋友圈与群聊 prompt 是**完全敞开**的。
+  - `nsfw`：仅 `surface==='single' ∧ tier==='full'`
+  - `sensitive`：仅 `surface==='single' ∧ tier!=='off'`
+  - `normal`：不限
 - 朋友圈**无条件 SFW**；NSFW 位好友系统通知一律 `[新消息]` 无预览。
 
 ## 交互
@@ -36,3 +59,7 @@
 ## 验收（prompt.test.ts 覆盖 prompt 层）
 - [ ] 三档 prompt 文案正确；全开档用世界事实化措辞、不含"你被允许"、含"永远不提规则"。
 - [ ] （M2 真机+抓包）全开档零流量流向国内官方端点；语音降敏或转文字。
+- [x] `nsfw-callsite.test.ts` 绿：mem_extract / director / agent_dm 三条后台路径在全开档下
+      落在宽松 providerId 上；无宽松通道时抛错而非降档发出。
+- [x] 真机验收补充项：全开档聊过后**退出聊天页两分钟**（触发 `mem_extract`），抓包确认
+      无原文出网到 DeepSeek/MiniMax。

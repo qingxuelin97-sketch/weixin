@@ -10,6 +10,7 @@ import {
   withDeadline,
 } from '../../llm/service';
 import { repo } from '../../db/repo';
+import { logError } from '../../lib/errlog';
 import { setSecret, hasSecret } from '../../lib/keystore';
 import {
   isRecordingEnabled,
@@ -50,29 +51,48 @@ export function ApiConfigPage() {
   const [recCount, setRecCount] = useState(() => getRecordings().length);
 
   const reload = async () => {
-    await ensureFreshModelDefaults();
-    setProviders(await repo.getProviders());
-    setDefaultId(await repo.getSetting<string>('defaultProviderId'));
-    setNsfwId(await repo.getSetting<string>('nsfwProviderId'));
+    try {
+      await ensureFreshModelDefaults();
+      setProviders(await repo.getProviders());
+      setDefaultId(await repo.getSetting<string>('defaultProviderId'));
+      setNsfwId(await repo.getSetting<string>('nsfwProviderId'));
+    } catch (e) {
+      // This page is the only place a broken storage layer can be diagnosed
+      // from. If its own read throws, it must say so rather than render an
+      // empty provider list that looks like "you never configured anything".
+      logError('apiConfig.reload', e);
+      setTestMsg({ ok: false, text: `读取配置失败：${e instanceof Error ? e.message : String(e)}` });
+    }
   };
   useEffect(() => {
     void reload();
   }, []);
 
-  const addPreset = async (kind: keyof typeof PRESETS) => {
-    const vm = presetToVm(kind);
-    await repo.putProvider(vm);
-    // First provider added becomes the default chat route; Zen becomes NSFW route.
-    if (!(await repo.getSetting<string>('defaultProviderId')) && kind !== 'zen') {
-      await repo.putSetting('defaultProviderId', vm.id);
+  /** Every mutator goes through here: a failed write must never look like success. */
+  const guard = async (scope: string, fn: () => Promise<void>) => {
+    try {
+      await fn();
+    } catch (e) {
+      logError(`apiConfig.${scope}`, e);
+      setTestMsg({ ok: false, text: `操作失败：${e instanceof Error ? e.message : String(e)}` });
     }
-    if (kind === 'zen') await repo.putSetting('nsfwProviderId', vm.id);
-    invalidateRouter();
-    await reload();
-    setEditing(vm);
-    setKeyInput('');
-    setTestMsg(null);
   };
+
+  const addPreset = (kind: keyof typeof PRESETS) =>
+    guard('addPreset', async () => {
+      const vm = presetToVm(kind);
+      await repo.putProvider(vm);
+      // First provider added becomes the default chat route; Zen becomes NSFW route.
+      if (!(await repo.getSetting<string>('defaultProviderId')) && kind !== 'zen') {
+        await repo.putSetting('defaultProviderId', vm.id);
+      }
+      if (kind === 'zen') await repo.putSetting('nsfwProviderId', vm.id);
+      invalidateRouter();
+      await reload();
+      setEditing(vm);
+      setKeyInput('');
+      setTestMsg(null);
+    });
 
   const saveKey = async () => {
     if (!editing || !keyInput.trim()) return;
@@ -137,27 +157,35 @@ export function ApiConfigPage() {
       } else {
         setTestMsg({ ok: false, text: '未拉取到新列表（需先保存密钥；或该服务商不支持 /models）' });
       }
+    } catch (e) {
+      // withDeadline rejects on a hang; without this the button recovered but
+      // the reason vanished into an unhandled rejection.
+      logError('apiConfig.fetchModels', e);
+      setTestMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
       setFetching(false);
     }
   };
 
-  const setAsDefault = async (id: string) => {
-    await repo.putSetting('defaultProviderId', id);
-    invalidateRouter();
-    await reload();
-  };
-  const setAsNsfw = async (id: string) => {
-    await repo.putSetting('nsfwProviderId', id);
-    invalidateRouter();
-    await reload();
-  };
-  const removeProvider = async (id: string) => {
-    await repo.deleteProvider(id);
-    invalidateRouter();
-    if (editing?.id === id) setEditing(null);
-    await reload();
-  };
+  const setAsDefault = (id: string) =>
+    guard('setDefault', async () => {
+      await repo.putSetting('defaultProviderId', id);
+      invalidateRouter();
+      await reload();
+    });
+  const setAsNsfw = (id: string) =>
+    guard('setNsfw', async () => {
+      await repo.putSetting('nsfwProviderId', id);
+      invalidateRouter();
+      await reload();
+    });
+  const removeProvider = (id: string) =>
+    guard('removeProvider', async () => {
+      await repo.deleteProvider(id);
+      invalidateRouter();
+      if (editing?.id === id) setEditing(null);
+      await reload();
+    });
 
   const notAdded = (Object.keys(PRESETS) as Array<keyof typeof PRESETS>).filter(
     (k) => !providers.some((p) => p.id === `prov_${k}`),

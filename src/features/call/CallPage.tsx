@@ -11,6 +11,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import { startRingback } from '../../lib/sound';
+import { logError } from '../../lib/errlog';
 import './call.css';
 
 type Phase = 'dialing' | 'active' | 'ended';
@@ -55,15 +56,21 @@ export function CallPage() {
     finished.current = true;
     setPhase('ended');
     const durationMs = connectedAt.current ? Date.now() - connectedAt.current : undefined;
-    await appendMessage({
-      convId,
-      senderId: 'self',
-      type: 'call',
-      content: durationMs == null ? '已取消' : undefined,
-      meta: durationMs == null ? { direction: 'out' } : { direction: 'out', durationMs },
-      status: 'sent',
-      createdAt: Date.now(),
-    });
+    try {
+      await appendMessage({
+        convId,
+        senderId: 'self',
+        type: 'call',
+        content: durationMs == null ? '已取消' : undefined,
+        meta: durationMs == null ? { direction: 'out' } : { direction: 'out', durationMs },
+        status: 'sent',
+        createdAt: Date.now(),
+      });
+    } catch (e) {
+      // Losing the call record is bad; being unable to leave a full-screen call
+      // is worse. Hanging up must always end with the user off this screen.
+      logError('call.hangUp', e);
+    }
     setTimeout(() => navigate(-1), 400);
   };
 

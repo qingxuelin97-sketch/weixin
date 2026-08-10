@@ -6,7 +6,8 @@
  * no evidence is a hallucination and is dropped at the door.
  */
 import type { MemoryFactVM, MessageVM } from '../data/types';
-import type { LlmRouter } from '../llm/router';
+import type { LlmRouter, NsfwTier } from '../llm/router';
+import { sensitivityForTier, mayInjectFact } from '../lib/nsfw-tier';
 import { repo } from '../db/repo';
 
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -32,11 +33,24 @@ export function scoreFact(fact: MemoryFactVM, now: number): number {
 export function selectFactsForInjection(
   facts: MemoryFactVM[],
   now: number,
-  opts: { maxPinned?: number; topK?: number } = {},
+  opts: {
+    maxPinned?: number;
+    topK?: number;
+    /** Where these facts are headed. Gates nsfw/sensitive rows (specs/nsfw.md). */
+    surface?: 'single' | 'group' | 'moments' | 'director' | 'dm';
+    /** Effective tier of that surface. Defaults to 'off' — the safe direction. */
+    tier?: NsfwTier;
+  } = {},
 ): { pinned: string[]; topK: string[]; ids: string[] } {
   const maxPinned = opts.maxPinned ?? MAX_PINNED;
   const k = opts.topK ?? TOP_K;
-  const live = facts.filter((f) => f.status !== 'archived');
+  const surface = opts.surface ?? 'single';
+  const tier = opts.tier ?? 'off';
+  // The injection whitelist specs/nsfw.md always required and nothing built:
+  // graded facts only reach surfaces cleared for them.
+  const live = facts.filter(
+    (f) => f.status !== 'archived' && mayInjectFact(f.sensitivity, surface, tier),
+  );
 
   const pinned = live
     .filter((f) => f.isPinned)
@@ -122,6 +136,13 @@ export async function extractMemory(
   subjectId: string,
   messages: MessageVM[],
   now: number,
+  /**
+   * Effective tier of the material being sent. REQUIRED, and never invented
+   * here: this transcript is verbatim chat content, so declaring 'off' for a
+   * full-tier conversation routes explicit text to a domestic endpoint
+   * (constitution rule #6). Callers derive it via lib/nsfw-tier.
+   */
+  tier: NsfwTier = 'off',
 ): Promise<ExtractResult> {
   if (messages.length === 0) return { facts: [] };
   const transcript = messages
@@ -129,7 +150,7 @@ export async function extractMemory(
     .join('\n');
 
   const res = await router.complete(
-    { role: 'memory', nsfwTier: 'off' },
+    { role: 'memory', nsfwTier: tier },
     {
       messages: [
         { role: 'system', content: EXTRACT_SYSTEM },
@@ -159,8 +180,12 @@ export async function extractMemory(
       id: `mem_${subjectId}_${now}_${saved.length}`,
       subjectId,
       fact: f.fact.trim().slice(0, 50),
-      importance: clamp(Math.round(f.importance ?? 3), 1, 5),
-      sensitivity: 'normal',
+      // Grade at the source: a fact extracted from full-tier talk is nsfw and
+      // must stay behind the injection whitelist (specs/nsfw.md), not leak into
+      // Moments or group prompts. NaN-safe: a non-numeric importance used to
+      // persist as NaN forever.
+      importance: clamp(Math.round(Number(f.importance) || 3), 1, 5),
+      sensitivity: sensitivityForTier(tier),
       evidenceMsgIds: f.evidence_msg_ids,
       status: 'pending',
       isPinned: false,

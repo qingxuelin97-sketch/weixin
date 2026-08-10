@@ -198,6 +198,7 @@ describe('runAgentDm (scripted end-to-end, no real API)', () => {
       enqueueGroupSpill: async (groupId, speakerId, hint) =>
         void spills.push({ groupId, speakerId, hint }),
       now: () => NOON + 9 * HOUR,
+      getGlobalTier: async () => 'off',
     };
     return { deps, appended, memories, convs, spills };
   }

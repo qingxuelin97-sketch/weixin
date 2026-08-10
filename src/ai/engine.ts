@@ -39,6 +39,21 @@ export interface EngineHooks {
 /** Per-conversation in-flight controller so a new send cancels the old reply. */
 const inFlight = new Map<string, AbortController>();
 
+/**
+ * Release the slot, but only if it is still ours — a newer send may have taken
+ * it over, and deleting unconditionally would let two replies play at once.
+ *
+ * The slot doubles as the "she is mid-conversation" guard for heartbeats, so a
+ * leaked entry does not merely waste a Map key: it permanently silences that
+ * AI's proactive messages for the rest of the process. It leaked whenever a
+ * storage read threw between claiming the slot and entering the generator's
+ * own try/finally — i.e. exactly on the failure paths, where losing her voice
+ * is least recoverable and hardest to notice.
+ */
+function releaseInFlight(convId: string, ctrl: AbortController): void {
+  if (inFlight.get(convId) === ctrl) inFlight.delete(convId);
+}
+
 const RECENT_WINDOW = 30; // messages of context sent to the model
 
 /** Persona row → the prompt layer's view. Shared with the Moments engine. */
@@ -89,15 +104,23 @@ export async function sendUserMessage(
   inFlight.set(convId, ctrl);
 
   // 1) Persist the user's message immediately (meta carries e.g. a quote).
-  await hooks.appendMessage({
-    convId,
-    senderId: 'self',
-    type: 'text',
-    content: text,
-    ...(meta ? { meta } : {}),
-    status: 'sent',
-    createdAt: hooks.now(),
-  });
+  try {
+    await hooks.appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'text',
+      content: text,
+      ...(meta ? { meta } : {}),
+      status: 'sent',
+      createdAt: hooks.now(),
+    });
+  } catch (e) {
+    // A failed write must not keep the slot: the user would see their message
+    // vanish AND the AI would go quiet forever.
+    releaseInFlight(convId, ctrl);
+    logError('chat.persistUserMsg', e);
+    throw e;
+  }
 
   // Relationship + anti-spam bookkeeping: a reply warms the edge and resets
   // the proactive-consec counter (forgiveness is immediate). Fire-and-forget —
@@ -148,6 +171,11 @@ async function generateAndPlay(
         createdAt: hooks.now(),
       })
       .catch(() => {});
+  } finally {
+    // Belt and braces: the inner generator releases the slot on its own paths,
+    // but only this finally covers a throw from the context-loading awaits that
+    // run before the generator's try is even entered.
+    releaseInFlight(convId, ctrl);
   }
 }
 
@@ -317,7 +345,7 @@ async function generateAndPlayInner(
     }
   } finally {
     hooks.setTyping(convId, false);
-    if (inFlight.get(convId) === ctrl) inFlight.delete(convId);
+    releaseInFlight(convId, ctrl);
   }
 }
 
@@ -346,28 +374,38 @@ export async function sendProactiveMessage(
   // Backfilled messages carry their planned past timestamp; live ones use now().
   const stamped: EngineHooks = at == null ? hooks : { ...hooks, now: () => at };
 
-  const lastMsg = (await repo.getMessages(convId, { limit: 1 }))[0];
-  const silentMs = lastMsg ? (at ?? hooks.now()) - lastMsg.createdAt : 0;
-  const gap = describeGap(silentMs);
-
-  // What to open WITH: a nudge about the unanswered message, a remembered fact
-  // to follow up on, their own fresh moment to share — or a plain greeting.
-  // "有事找你" reads human; "打招呼" reads like a bot on a timer.
+  let gap: string;
   let material = '';
-  if (opts.nudge) {
-    material =
-      '你上一条消息对方一直没回。轻轻问一下（"在忙？"这类），一句就好——' +
-      '不要连环追问，不要表现出不满，问完就等。';
-  } else {
-    const facts = await repo.getMemory(peer.id);
-    const moments = await repo.getMoments({ limit: 10 });
-    const own = moments.find(
-      (m) =>
-        m.authorId === peer.id &&
-        m.text &&
-        (at ?? hooks.now()) - m.createdAt < 24 * 3_600_000,
-    );
-    material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+  // Every storage read below runs while we hold the slot. A throw here used to
+  // escape without releasing it — one transient IDB error and this AI never
+  // reached out again.
+  try {
+    const lastMsg = (await repo.getMessages(convId, { limit: 1 }))[0];
+    const silentMs = lastMsg ? (at ?? hooks.now()) - lastMsg.createdAt : 0;
+    gap = describeGap(silentMs);
+
+    // What to open WITH: a nudge about the unanswered message, a remembered fact
+    // to follow up on, their own fresh moment to share — or a plain greeting.
+    // "有事找你" reads human; "打招呼" reads like a bot on a timer.
+    if (opts.nudge) {
+      material =
+        '你上一条消息对方一直没回。轻轻问一下（"在忙？"这类），一句就好——' +
+        '不要连环追问，不要表现出不满，问完就等。';
+    } else {
+      const facts = await repo.getMemory(peer.id);
+      const moments = await repo.getMoments({ limit: 10 });
+      const own = moments.find(
+        (m) =>
+          m.authorId === peer.id &&
+          m.text &&
+          (at ?? hooks.now()) - m.createdAt < 24 * 3_600_000,
+      );
+      material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+    }
+  } catch (e) {
+    releaseInFlight(convId, ctrl);
+    logError('chat.proactivePrep', e);
+    return;
   }
 
   await generateAndPlay(

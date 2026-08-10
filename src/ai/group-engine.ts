@@ -16,6 +16,7 @@ import { effectiveTier, voiceMeta, preferredRoute, type EngineHooks } from './en
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
 import { getAllEdges, pairKey, recordRelEvent } from './relationship';
+import { maxTier } from '../lib/nsfw-tier';
 import { playMessageSound } from '../lib/sound';
 import { moodOf } from '../lib/mood';
 import { repo } from '../db/repo';
@@ -79,7 +80,15 @@ export async function sendGroupMessage(
       const cliqueLine = await cliqueLineFor(members, nameOf, now);
       const decision = await callDirector(
         router,
-        { candidates: pre.candidates, recent, nameOf, prevTopic, cliqueLine },
+        {
+          candidates: pre.candidates,
+          recent,
+          nameOf,
+          prevTopic,
+          cliqueLine,
+          // The transcript's real tier — never 'off' by assumption (rule #6).
+          tier: maxTier(globalTier, members.map((m) => m.persona)),
+        },
         convId,
         ctrl.signal,
       );

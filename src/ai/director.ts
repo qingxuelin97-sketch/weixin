@@ -12,8 +12,9 @@
  * Everything in layer 1 is deterministic (seeded RNG) so a turn can be replayed.
  */
 import { z } from 'zod';
+import { redactForTier } from '../lib/nsfw-tier';
 import type { MessageVM, PersonaVM } from '../data/types';
-import type { LlmRouter } from '../llm/router';
+import type { LlmRouter, NsfwTier } from '../llm/router';
 import { seededRng } from '../lib/money';
 
 /** A group member the director can choose from. `persona` may be missing. */
@@ -192,6 +193,14 @@ export interface DirectorContext {
   prevTopic?: string;
   /** One line of social intel, e.g. "小雨和阿哲走得近" (derived from edges). */
   cliqueLine?: string;
+  /**
+   * Effective tier of the transcript being sent. The director quotes the last
+   * 20 group messages verbatim, so declaring 'off' for a full-tier group routed
+   * explicit text to a domestic endpoint (constitution rule #6). Callers derive
+   * it from the members' permits; above 'off' the transcript is also redacted —
+   * casting decisions need who-said-roughly-what, never the words themselves.
+   */
+  tier?: NsfwTier;
 }
 
 /**
@@ -208,10 +217,14 @@ export async function callDirector(
   const roster = ctx.candidates
     .map((m) => `- ${m.contactId} | ${m.name} | ${m.persona?.core?.slice(0, 40) ?? ''}`)
     .join('\n');
-  const transcript = ctx.recent
-    .slice(-20)
-    .map((m) => `${ctx.nameOf(m.senderId)}: ${m.content ?? `[${m.type}]`}`)
-    .join('\n');
+  const tier = ctx.tier ?? 'off';
+  const tail = ctx.recent.slice(-20);
+  // Above 'off' the words never leave in full: redaction keeps the routing
+  // decision honest even if a permissive channel is unavailable.
+  const transcript =
+    tier === 'off'
+      ? tail.map((m) => `${ctx.nameOf(m.senderId)}: ${m.content ?? `[${m.type}]`}`).join('\n')
+      : redactForTier(tail, ctx.nameOf);
   const extras = [
     ctx.prevTopic ? `【上次话题】${ctx.prevTopic}` : '',
     ctx.cliqueLine ? `【关系】${ctx.cliqueLine}` : '',
@@ -221,7 +234,7 @@ export async function callDirector(
 
   try {
     const res = await router.complete(
-      { role: 'director', nsfwTier: 'off' },
+      { role: 'director', nsfwTier: tier },
       {
         messages: [
           { role: 'system', content: DIRECTOR_SYSTEM },

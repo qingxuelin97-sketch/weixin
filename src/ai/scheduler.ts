@@ -97,6 +97,58 @@ export async function hasPendingFor(kind: ActionKind, contactId: string): Promis
   });
 }
 
+/**
+ * Cancel every pending action whose payload matches. Used when the thing an
+ * action refers to stops existing — deleting a conversation used to leave its
+ * heartbeat chain running forever: the handler generated a reply, found no
+ * conversation, dropped it, and re-chained. An invisible, permanent LLM burn
+ * that survived restarts because the chain lives in the DB, not in memory.
+ *
+ * Cancelled (not deleted) so the row's stable id still blocks `enqueue` from
+ * reviving a once-ever action.
+ */
+export async function cancelPendingWhere(
+  match: (payload: Record<string, unknown>, action: ScheduledAction) => boolean,
+): Promise<number> {
+  const all = await idbGetAll<ScheduledAction>('scheduled_actions');
+  let n = 0;
+  for (const a of all) {
+    if (a.status !== 'pending') continue;
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(a.payloadJson) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (!match(payload, a)) continue;
+    await idbPut('scheduled_actions', { ...a, status: 'cancelled' });
+    n++;
+  }
+  return n;
+}
+
+/** Cancel everything queued against one conversation id. */
+export async function cancelActionsForConversation(convId: string): Promise<number> {
+  return cancelPendingWhere((p) => p.convId === convId);
+}
+
+/**
+ * Cancel everything queued against one contact — for contact deletion, where
+ * the chains are keyed by person rather than thread. Deliberately separate from
+ * the conversation sweep: deleting one GROUP must not silence its members'
+ * single chats, and the payload field names differ per handler.
+ */
+export async function cancelActionsForContact(contactId: string): Promise<number> {
+  return cancelPendingWhere(
+    (p) =>
+      p.contactId === contactId ||
+      p.speakerId === contactId ||
+      p.authorId === contactId ||
+      p.a === contactId ||
+      p.b === contactId,
+  );
+}
+
 /** Handlers are registered by the app shell so this module stays dependency-free. */
 export type ActionHandler = (payload: Record<string, unknown>, action: ScheduledAction) => Promise<void>;
 
