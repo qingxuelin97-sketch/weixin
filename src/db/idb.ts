@@ -10,11 +10,12 @@
 
 const DB_NAME = 'weixin-ai';
 // v2 adds the money stores; v3 adds the TTS audio cache; v4 adds Moments;
-// v5 adds the runtime media library.
+// v5 adds the runtime media library; v6 adds the story-mode tables and the
+// scheduled_actions byFireAt index (the queue is scanned every second).
 // Bump this on EVERY new store or onupgradeneeded never runs (see CLAUDE.md §3.5).
 // Exported for tests/unit/idb-migration.test.ts, whose ledger machine-enforces
 // that rule — register new stores there when bumping.
-export const DB_VERSION = 5;
+export const DB_VERSION = 6;
 
 export interface StoreDef {
   name: string;
@@ -35,7 +36,17 @@ export const STORES: StoreDef[] = [
   },
   { name: 'memory_facts', keyPath: 'id', indexes: [{ name: 'bySubject', keyPath: 'subjectId' }] },
   { name: 'conv_summaries', keyPath: 'convId' },
-  { name: 'scheduled_actions', keyPath: 'id', indexes: [{ name: 'byStatus', keyPath: 'status' }] },
+  {
+    name: 'scheduled_actions',
+    keyPath: 'id',
+    indexes: [
+      { name: 'byStatus', keyPath: 'status' },
+      // v6: the foreground tick asks "what is due?" every second and used to
+      // answer it with a full-table getAll(). The queue only grows (done rows
+      // were never removed), so the cost of an idle app rose forever.
+      { name: 'byFireAt', keyPath: 'fireAt' },
+    ],
+  },
   { name: 'providers', keyPath: 'id' },
   { name: 'settings', keyPath: 'key' },
   // --- money (v2) ---
@@ -61,6 +72,12 @@ export const STORES: StoreDef[] = [
   // CI-built, so a build-time asset slot is unreachable from the device — the
   // library must be writable at runtime. Blobs are structured-clone friendly.
   { name: 'media', keyPath: 'id' },
+  // --- story mode (v6) ---
+  // Defined in schema.ts since M1 but never mounted here, so the tables existed
+  // on paper only. Registered now, ahead of the runtime, so story mode ships
+  // without its own migration.
+  { name: 'story_scripts', keyPath: 'id' },
+  { name: 'story_saves', keyPath: 'id', indexes: [{ name: 'byScript', keyPath: 'scriptId' }] },
 ];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -71,13 +88,20 @@ export function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      const upgradeTx = req.transaction!;
       for (const s of STORES) {
-        if (db.objectStoreNames.contains(s.name)) continue;
-        const os = db.createObjectStore(s.name, {
-          keyPath: s.keyPath,
-          autoIncrement: s.autoIncrement ?? false,
-        });
+        const os = db.objectStoreNames.contains(s.name)
+          ? upgradeTx.objectStore(s.name)
+          : db.createObjectStore(s.name, {
+              keyPath: s.keyPath,
+              autoIncrement: s.autoIncrement ?? false,
+            });
+        // Indexes are reconciled on EVERY upgrade, not just at store creation.
+        // The old loop skipped existing stores wholesale, so an index added to a
+        // store that already shipped could never come into being — the code
+        // would then query an index the device does not have.
         for (const idx of s.indexes ?? []) {
+          if (os.indexNames.contains(idx.name)) continue;
           os.createIndex(idx.name, idx.keyPath, { unique: idx.unique ?? false });
         }
       }
@@ -176,6 +200,38 @@ export async function idbGetAllByIndex<T>(
   const os = tx(db, store, 'readonly');
   return new Promise((resolve, reject) => {
     const req = os.index(indexName).getAll(value);
+    req.onsuccess = () => resolve(req.result as T[]);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Rows whose indexed value falls in a key range, in index order.
+ *
+ * Distinct from `idbGetAllByIndex` (equality only): the scheduler asks "every
+ * action whose fireAt is ≤ now", which is a range, and answering it with a
+ * full-table scan is what made an idle app get slower the longer it was used.
+ */
+export async function idbRangeByIndex<T>(
+  store: string,
+  indexName: string,
+  bounds: { from?: IDBValidKey; upTo?: IDBValidKey; limit?: number } = {},
+): Promise<T[]> {
+  const db = await openDB();
+  const os = tx(db, store, 'readonly');
+  // The range is built HERE, not by the caller: `IDBKeyRange` is a browser
+  // global, and ai/ modules must not depend on one (they'd stop being testable
+  // outside a DOM, which is most of this repo's test suite).
+  const range =
+    bounds.from != null && bounds.upTo != null
+      ? IDBKeyRange.bound(bounds.from, bounds.upTo)
+      : bounds.upTo != null
+        ? IDBKeyRange.upperBound(bounds.upTo)
+        : bounds.from != null
+          ? IDBKeyRange.lowerBound(bounds.from)
+          : null;
+  return new Promise((resolve, reject) => {
+    const req = os.index(indexName).getAll(range ?? undefined, bounds.limit);
     req.onsuccess = () => resolve(req.result as T[]);
     req.onerror = () => reject(req.error);
   });

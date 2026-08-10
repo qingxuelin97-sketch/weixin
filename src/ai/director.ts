@@ -13,6 +13,7 @@
  */
 import { z } from 'zod';
 import { redactForTier } from '../lib/nsfw-tier';
+import { renderTranscript } from './render-msg';
 import type { MessageVM, PersonaVM } from '../data/types';
 import type { LlmRouter, NsfwTier } from '../llm/router';
 import { seededRng } from '../lib/money';
@@ -223,7 +224,7 @@ export async function callDirector(
   // decision honest even if a permissive channel is unavailable.
   const transcript =
     tier === 'off'
-      ? tail.map((m) => `${ctx.nameOf(m.senderId)}: ${m.content ?? `[${m.type}]`}`).join('\n')
+      ? renderTranscript(tail, { nameOf: ctx.nameOf, maxChars: 120 })
       : redactForTier(tail, ctx.nameOf);
   const extras = [
     ctx.prevTopic ? `【上次话题】${ctx.prevTopic}` : '',

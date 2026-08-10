@@ -6,6 +6,9 @@
 import { useEffect } from 'react';
 import {
   registerHandler,
+  registerChainedHandler,
+  setHandlerErrorSink,
+  gcActions,
   startScheduler,
   stopScheduler,
   hasPendingFor,
@@ -29,6 +32,22 @@ import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
+import {
+  type HandlerDeps,
+  handleRpGrab,
+  handleTransferAccept,
+  handleRecall,
+  handleGroupMsg,
+  handleMemExtract,
+  handleMomentLike,
+  handleMomentComment,
+  handleHeartbeat,
+  handleAgentDm,
+  handleMomentPost,
+  chainHeartbeat as chainHeartbeatStep,
+  chainAgentDm as chainAgentDmStep,
+  chainMomentPost as chainMomentPostStep,
+} from '../ai/handlers';
 import { Capacitor } from '@capacitor/core';
 import { getRouter } from '../llm/service';
 import { seededRng } from '../lib/money';
@@ -39,7 +58,6 @@ import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
 import { repo } from '../db/repo';
 import { useAppStore } from '../store/appStore';
-import type { NsfwTierVM } from '../data/types';
 
 export function useSchedulerRuntime(enabled: boolean): void {
   useEffect(() => {
@@ -52,206 +70,61 @@ export function useSchedulerRuntime(enabled: boolean): void {
       now: () => Date.now(),
     };
 
-    // An AI member grabs a share of a red packet.
-    registerHandler('rp_grab', async (payload) => {
-      const contactId = String(payload.contactId ?? '');
-      const rpId = String(payload.rpId ?? '');
-      if (!contactId || !rpId) return;
-      const who = useAppStore.getState().contactById(contactId);
-      await claimRedPacket(rpId, contactId, who?.remark ?? who?.name ?? contactId, hooks);
-    });
+    // Handlers live in ai/handlers.ts as plain functions; this bag is the only
+    // place they touch the store, the repo, or the network. Registration is all
+    // that remains here.
+    const deps: HandlerDeps = {
+      contactById: (id) => useAppStore.getState().contactById(id),
+      personaFor: (id) => useAppStore.getState().personaFor(id),
+      conversationById: (id) => useAppStore.getState().conversationById(id),
+      messagesFor: (id) => useAppStore.getState().messagesFor(id),
+      conversationExists: (id) => useAppStore.getState().conversations.some((c) => c.id === id),
 
-    // The peer accepts a transfer the user sent.
-    registerHandler('transfer_accept', async (payload) => {
-      const transferId = String(payload.transferId ?? '');
-      if (transferId) await acceptTransfer(transferId, hooks);
-    });
+      hooks,
+      updateMessage: (m) => useAppStore.getState().updateMessage(m),
 
-    // An AI reaches out on its own, then queues its next one.
-    registerHandler('heartbeat', async (payload, action) => {
-      const contactId = String(payload.contactId ?? '');
-      const convId = String(payload.convId ?? '');
-      const at = typeof payload.at === 'number' ? payload.at : undefined;
-      const body = typeof payload.body === 'string' ? payload.body : undefined;
-      if (!contactId || !convId) return;
-      const s = useAppStore.getState();
-      const peer = s.contactById(contactId);
-      const persona = s.personaFor(contactId);
-      if (!peer || !persona) return;
-      // The conversation may have been deleted since this was queued. Returning
-      // here — BEFORE the generation and before re-chaining — is what stops a
-      // deleted thread from burning LLM calls forever: the old code generated a
-      // reply, found nowhere to put it, and dutifully scheduled the next one.
-      if (!s.conversations.some((c) => c.id === convId)) return;
+      getMessages: (convId, opts) => repo.getMessages(convId, opts),
+      getMemory: (id) => repo.getMemory(id),
+      putConvSummary: (row) => repo.putConvSummary(row),
+      getGlobalTier: globalTier,
+      getMoment: (id) => repo.getMoment(id),
 
-      if (body) {
-        // A notification may already have shown this exact text on the lock
-        // screen. Persist it verbatim, stamped at the time it was advertised —
-        // regenerating here would contradict what the user already read.
-        const stamp = at ?? action.fireAt;
-        await hooks.appendMessage({
-          convId,
-          senderId: peer.id,
-          type: 'text',
-          content: body,
-          status: 'sent',
-          createdAt: stamp,
+      getRouter,
+      now: () => Date.now(),
+
+      claimRedPacket: (rpId, contactId, name, h) => claimRedPacket(rpId, contactId, name, h),
+      acceptTransfer: (transferId, h) => acceptTransfer(transferId, h),
+      sendProactiveMessage,
+      sendGroupProactiveMessage,
+      runMemExtract,
+      runAgentDm: (plan) => runDmSession(plan),
+      runMomentPost: async (persona, peer, at) => {
+        const s = useAppStore.getState();
+        await runMomentPost(persona, peer, s.contacts, s.personaFor, momentsHooks, at);
+      },
+      runMomentLike: (momentId, contactId, at) =>
+        runMomentLike(momentId, contactId, momentsHooks, at),
+      runMomentComment: (momentId, commenter, persona, authorName, at) =>
+        runMomentComment(momentId, commenter, persona, authorName, momentsHooks, at),
+
+      chainHeartbeat: async (persona, convId, lastMsgAt) => {
+        // Anti-spam bookkeeping: two unanswered reaches in a row → 24h cooldown.
+        const now = Date.now();
+        const state = await noteProactiveSent(persona.contactId, now);
+        const edge = await getEdge('self', persona.contactId, now);
+        await scheduleHeartbeat(persona, convId, now, lastMsgAt, {
+          affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
+          proactMul: moodParams(moodOf(persona.contactId, now).key).proactMul,
+          notBefore: state.cooldownUntil || undefined,
         });
-        // Stamped so a backfilled past message stays silent; a live one dings.
-        playMessageSound(stamp);
-      } else {
-        const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-        const nudge = payload.nudge === true;
-        await sendProactiveMessage(convId, peer, persona, tier, hooks, at, { nudge });
-      }
-      // Anti-spam bookkeeping: two unanswered reaches in a row → 24h cooldown.
-      const state = await noteProactiveSent(contactId, Date.now());
-      // Chain the next one, paced by the live relationship + today's mood.
-      const now = Date.now();
-      const edge = await getEdge('self', contactId, now);
-      const last = s.messagesFor(convId).at(-1)?.createdAt;
-      await scheduleHeartbeat(persona, convId, now, last, {
-        affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
-        proactMul: moodParams(moodOf(contactId, now).key).proactMul,
-        notBefore: state.cooldownUntil || undefined,
-      });
-    });
+      },
+      chainAgentDm: scheduleNextAgentDm,
+      chainMomentPost: (persona) => scheduleNextMoment(persona, Date.now()),
 
-    // Post-conversation memory pass: extract stable facts + a rolling summary
-    // in ONE cheap role:'memory' call, then retire stale trivia. This is the
-    // loop that makes chats actually produce memory (dead code since M2).
-    registerHandler('mem_extract', async (payload) => {
-      try {
-        await runMemExtract(payload);
-      } catch (e) {
-        // A refusal from the memory route (content audit) used to vanish here.
-        logError('mem_extract', e);
-      }
-    });
-
-    async function runMemExtract(payload: Record<string, unknown>) {
-      const convId = String(payload.convId ?? '');
-      const contactId = String(payload.contactId ?? '');
-      const upto = Number(payload.uptoMsgId ?? 0);
-      if (!convId || !contactId || !upto) return;
-      const marker = await getExtractMarker(convId);
-      if (upto <= marker) return; // a later run already covered this span
-      const msgs = (await repo.getMessages(convId, { limit: 60 })).filter(
-        (m) => m.id > marker && m.id <= upto && m.type === 'text' && !m.isRecalled,
-      );
-      if (msgs.length === 0) return;
-      // Rule #6: this transcript is verbatim chat text. Derive its REAL tier —
-      // declaring 'off' here is what sent full-tier content to a domestic
-      // endpoint. With no permissive channel available the router throws and we
-      // skip extraction entirely: no memory beats a leak.
-      const tier = tierFor(await globalTier(), useAppStore.getState().personaFor(contactId));
-      const router = await getRouter();
-      const res = await extractMemory(router, contactId, msgs, Date.now(), tier);
-      if (res.summary) {
-        await repo.putConvSummary({
-          convId,
-          summary: res.summary,
-          uptoMsgId: upto,
-          updatedAt: Date.now(),
-        });
-      }
-      // Marker advances even when nothing was worth keeping — the span is done.
-      await setExtractMarker(convId, upto);
-      await maintainMemory(contactId, Date.now());
-    }
-
-    // Flip a sent message to recalled (the send-then-recall drama's second act).
-    // Idempotent: a re-fired action finds isRecalled already true and stops.
-    registerHandler('recall', async (payload) => {
-      const msgId = Number(payload.msgId);
-      const convId = String(payload.convId ?? '');
-      if (!msgId || !convId) return;
-      const s = useAppStore.getState();
-      const msg = s.messagesFor(convId).find((m) => m.id === msgId);
-      if (!msg || msg.isRecalled) return;
-      await s.updateMessage({ ...msg, isRecalled: true });
-
-      // The cover line — sometimes they can't leave the recall alone.
-      if (msg.senderId !== 'self' && shouldFollowUpAfterRecall(msgId)) {
-        const persona = s.personaFor(msg.senderId);
-        if (persona) {
-          await hooks.appendMessage({
-            convId,
-            senderId: msg.senderId,
-            type: 'text',
-            content: recallFollowUpLine(persona, msgId),
-            status: 'sent',
-            createdAt: Date.now(),
-          });
-          playMessageSound(Date.now());
-        }
-      }
-    });
-
-    // A group member says something unprompted (offline backfill chatter).
-    registerHandler('group_msg', async (payload, action) => {
-      const convId = String(payload.convId ?? '');
-      const contactId = String(payload.contactId ?? '');
-      const at = typeof payload.at === 'number' ? payload.at : action.fireAt;
-      if (!convId || !contactId) return;
-      const s = useAppStore.getState();
-      const conv = s.conversationById(convId);
-      const persona = s.personaFor(contactId);
-      if (!conv || conv.type !== 'group' || !persona) return;
-
-      const members = (conv.memberIds ?? []).map((id) => {
-        const c = s.contactById(id);
-        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: s.personaFor(id) };
-      });
-      const speaker = members.find((m) => m.contactId === contactId);
-      if (!speaker?.persona) return;
-
-      const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-      const hint = typeof payload.hint === 'string' ? payload.hint : undefined;
-      await sendGroupProactiveMessage(conv, speaker, members, tier, hooks, s.contactById, at, hint);
-    });
-
-    // Two agents have a private exchange the user never sees; its gossip lands
-    // in both memories and maybe spills a starter into their shared group.
-    registerHandler('agent_dm', async (payload) => {
-      const plan: DmPlan = {
-        a: String(payload.a ?? ''),
-        b: String(payload.b ?? ''),
-        groupId: String(payload.groupId ?? ''),
-        fireAt: Number(payload.fireAt ?? Date.now()),
-      };
-      if (!plan.a || !plan.b || !plan.groupId) return;
-      const s = useAppStore.getState();
-      const router = await getRouter();
-      await runAgentDm(plan, {
-        getPersona: s.personaFor,
-        getContact: s.contactById,
-        getConversation: (id) => repo.getConversation(id),
-        addConversation: s.addConversation,
-        appendMessage: s.appendMessage,
-        putMemory: (f) => repo.putMemory(f),
-        getMemoryFacts: (id) => repo.getMemory(id),
-        getGroupMessages: (id) => repo.getMessages(id, { limit: 8 }),
-        getMoments: () => repo.getMoments({ limit: 10 }),
-        complete: async (messages, convKey, tier) =>
-          (await router.complete({ role: 'chat', nsfwTier: tier ?? 'off' }, { messages }, {}, convKey))
-            .text,
-        enqueueGroupSpill: async (groupId, speakerId, hint, at) => {
-          await enqueue({
-            kind: 'group_msg',
-            fireAt: at,
-            payload: { convId: groupId, contactId: speakerId, hint },
-            now: Date.now(),
-            id: `dmspill_${groupId}_${speakerId}_${at}`,
-          });
-        },
-        now: () => Date.now(),
-        getGlobalTier: globalTier,
-      });
-      // Chain the next session regardless of outcome — one failed exchange
-      // must not end the whole mechanism.
-      await scheduleNextAgentDm();
-    });
+      playMessageSound,
+      shouldFollowUpAfterRecall,
+      recallFollowUpLine,
+    };
 
     const momentsHooks = {
       addMoment: store.addMoment,
@@ -260,39 +133,31 @@ export function useSchedulerRuntime(enabled: boolean): void {
       now: () => Date.now(),
     };
 
-    // An AI publishes a post, which in turn queues the reactions it draws.
-    registerHandler('moment_post', async (payload) => {
-      const contactId = String(payload.contactId ?? '');
-      const at = typeof payload.at === 'number' ? payload.at : undefined;
-      const s = useAppStore.getState();
-      const peer = s.contactById(contactId);
-      const persona = s.personaFor(contactId);
-      if (!peer || !persona) return;
-      await runMomentPost(persona, peer, s.contacts, s.personaFor, momentsHooks, at);
-    });
+    // Failures inside a handler are dropped (never retried into a loop) — but
+    // they are no longer silent, which is how "她突然不说话了" stayed invisible.
+    setHandlerErrorSink(logError);
 
-    registerHandler('moment_like', async (payload) => {
-      const momentId = String(payload.momentId ?? '');
-      const contactId = String(payload.contactId ?? '');
-      const at = typeof payload.at === 'number' ? payload.at : undefined;
-      if (momentId && contactId) await runMomentLike(momentId, contactId, momentsHooks, at);
-    });
+    registerHandler('rp_grab', (p) => handleRpGrab(deps, p));
+    registerHandler('transfer_accept', (p) => handleTransferAccept(deps, p));
+    registerHandler('recall', (p) => handleRecall(deps, p));
+    registerHandler('group_msg', (p, a) => handleGroupMsg(deps, p, a));
+    registerHandler('mem_extract', (p) => handleMemExtract(deps, p));
+    registerHandler('moment_like', (p) => handleMomentLike(deps, p));
+    registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
 
-    registerHandler('moment_comment', async (payload) => {
-      const momentId = String(payload.momentId ?? '');
-      const contactId = String(payload.contactId ?? '');
-      const at = typeof payload.at === 'number' ? payload.at : undefined;
-      if (!momentId || !contactId) return;
-      const s = useAppStore.getState();
-      const commenter = s.contactById(contactId);
-      const persona = s.personaFor(contactId);
-      if (!commenter || !persona) return;
-      const moment = await repo.getMoment(momentId);
-      if (!moment) return;
-      const author = s.contactById(moment.authorId);
-      const authorName =
-        moment.authorId === 'self' ? '你' : (author?.remark ?? author?.name ?? '朋友');
-      await runMomentComment(momentId, commenter, persona, authorName, momentsHooks, at);
+    // Self-chaining kinds: the successor is queued BEFORE the work that can
+    // fail, so one bad night does not end the chain forever (see scheduler.ts).
+    registerChainedHandler('heartbeat', {
+      chain: (p) => chainHeartbeatStep(deps, p),
+      work: (p, a) => handleHeartbeat(deps, p, a),
+    });
+    registerChainedHandler('agent_dm', {
+      chain: () => chainAgentDmStep(deps),
+      work: (p) => handleAgentDm(deps, p),
+    });
+    registerChainedHandler('moment_post', {
+      chain: (p) => chainMomentPostStep(deps, p),
+      work: (p) => handleMomentPost(deps, p),
     });
 
     startScheduler();
@@ -322,6 +187,67 @@ export function useSchedulerRuntime(enabled: boolean): void {
   // once at hydrate, so on a phone — where background→foreground is the normal
   // path and the WebView never remounts — backfill effectively never fired.
   useForegroundLifecycle(enabled, { onForeground: foregroundPass });
+}
+
+/**
+ * The memory pass proper. Lives here rather than in handlers.ts because it is
+ * the one handler that owns a rule of its own: rule #6 says this transcript's
+ * tier is derived from the conversation, never declared — with no permissive
+ * channel the router throws and the extraction is SKIPPED, not downgraded.
+ */
+async function runMemExtract(args: {
+  convId: string;
+  contactId: string;
+  uptoMsgId: number;
+}): Promise<void> {
+  const { convId, contactId, uptoMsgId } = args;
+  const marker = await getExtractMarker(convId);
+  if (uptoMsgId <= marker) return; // a later run already covered this span
+  const msgs = (await repo.getMessages(convId, { limit: 60 })).filter(
+    (m) => m.id > marker && m.id <= uptoMsgId && m.type === 'text' && !m.isRecalled,
+  );
+  if (msgs.length === 0) return;
+  const tier = tierFor(await globalTier(), useAppStore.getState().personaFor(contactId));
+  const router = await getRouter();
+  const now = Date.now();
+  const res = await extractMemory(router, contactId, msgs, now, tier);
+  if (res.summary) {
+    await repo.putConvSummary({ convId, summary: res.summary, uptoMsgId, updatedAt: now });
+  }
+  // Marker advances even when nothing was worth keeping — the span is done.
+  await setExtractMarker(convId, uptoMsgId);
+  await maintainMemory(contactId, now);
+}
+
+/** One AI↔AI DM session, with the store/repo wiring runAgentDm expects. */
+async function runDmSession(plan: DmPlan): Promise<boolean> {
+  const s = useAppStore.getState();
+  const router = await getRouter();
+  return runAgentDm(plan, {
+    getPersona: s.personaFor,
+    getContact: s.contactById,
+    getConversation: (id) => repo.getConversation(id),
+    addConversation: s.addConversation,
+    appendMessage: s.appendMessage,
+    putMemory: (f) => repo.putMemory(f),
+    getMemoryFacts: (id) => repo.getMemory(id),
+    getGroupMessages: (id) => repo.getMessages(id, { limit: 8 }),
+    getMoments: () => repo.getMoments({ limit: 10 }),
+    complete: async (messages, convKey, tier) =>
+      (await router.complete({ role: 'chat', nsfwTier: tier ?? 'off' }, { messages }, {}, convKey))
+        .text,
+    enqueueGroupSpill: async (groupId, speakerId, hint, at) => {
+      await enqueue({
+        kind: 'group_msg',
+        fireAt: at,
+        payload: { convId: groupId, contactId: speakerId, hint },
+        now: Date.now(),
+        id: `dmspill_${groupId}_${speakerId}_${at}`,
+      });
+    },
+    now: () => Date.now(),
+    getGlobalTier: globalTier,
+  });
 }
 
 /**
@@ -419,6 +345,15 @@ async function runForegroundPass(): Promise<void> {
     if (!(await hasPendingOfKind('agent_dm'))) await scheduleNextAgentDm();
   } catch {
     /* chemistry is a bonus; never block the foreground path on it */
+  }
+
+  // 3.5) Retire settled rows. The queue was append-only since M4: the store grew
+  //      forever and the once-a-second `duePending` scanned all of it. Cheap,
+  //      idempotent, and safely outside every once-ever action's window.
+  try {
+    await gcActions(now);
+  } catch (e) {
+    logError('gcActions', e);
   }
 
   // 4) Rebuild the lock-screen notifications from the (now current) queue.

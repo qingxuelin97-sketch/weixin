@@ -180,7 +180,9 @@ export async function generateMomentPost(
   now: number,
 ): Promise<{ text: string; imageRefs: string[] } | null> {
   const facts = await repo.getMemory(peer.id);
-  const memory = selectFactsForInjection(facts, now);
+  // Moments are unconditionally SFW (constitution #6), so the surface is
+  // declared and the tier pinned at 'off' — not left to the default.
+  const memory = selectFactsForInjection(facts, now, { surface: 'moments', tier: 'off' });
   const system = assembleSystemPrompt({
     persona: toPersonaView(persona, peer.remark ?? peer.name),
     nsfwTier: 'off', // constitution #6: Moments are never NSFW

@@ -59,7 +59,12 @@ function comparable(dump: Record<string, unknown[]>): Record<string, unknown[]> 
   return {
     ...rest,
     settings: (settings as Array<{ key?: string }>).filter(
-      (r) => r.key !== '__crypto_master' && r.key !== 'lastForegroundAt',
+      // Device-local runtime state, not user data: the crypto key, the backfill
+      // barrier, and the in-flight-restore marker a restore necessarily writes.
+      (r) =>
+        r.key !== '__crypto_master' &&
+        r.key !== 'lastForegroundAt' &&
+        r.key !== 'restoreInProgress',
     ),
   };
 }

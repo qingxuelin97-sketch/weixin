@@ -25,6 +25,7 @@ import { moodOf, moodParams } from '../lib/mood';
 import { logError } from '../lib/errlog';
 import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
+import { renderTurns } from './render-msg';
 
 export interface EngineHooks {
   /** Persist + push a new message to the UI. Returns the saved message (with id). */
@@ -191,12 +192,14 @@ async function generateAndPlayInner(
 ): Promise<void> {
   const recent = await repo.getMessages(convId, { limit: RECENT_WINDOW });
   const facts = await repo.getMemory(peer.id);
-  const memory = selectFactsForInjection(facts, hooks.now());
+  const tier = effectiveTier(globalTier, persona.nsfwPermit);
+  // Declared surface + tier: single chat is the ONE place graded facts may be
+  // injected, and only up to this conversation's own tier (specs/nsfw.md).
+  const memory = selectFactsForInjection(facts, hooks.now(), { surface: 'single', tier });
   // Rolling summary from the memory loop — "上次聊到哪" survives the 30-message
   // context window. (Was a settings read that nothing ever wrote, M2–M-D1.)
   const summaryRow = await repo.getConvSummary(convId);
   if (summaryRow?.summary) memory.topK = [`上次你们聊到：${summaryRow.summary}`, ...memory.topK];
-  const tier = effectiveTier(globalTier, persona.nsfwPermit);
 
   // Relations keyed by contactId are translated to display names — the model
   // must never see internal ids, or it will echo them into dialogue.
@@ -228,10 +231,10 @@ async function generateAndPlayInner(
 
   const messages = [
     { role: 'system' as const, content: system },
-    ...recent.map((m) => ({
-      role: m.senderId === 'self' ? ('user' as const) : ('assistant' as const),
-      content: m.content ?? `[${m.type}]`,
-    })),
+    // Through the projection layer: red packets, transfers, photos and voice
+    // notes are now things she can actually see. Single chat keeps the voice
+    // transcript — "你刚才说啥" has to be answerable.
+    ...renderTurns(recent, 'self', { includeVoiceText: true }),
   ];
 
   // Pacing before 正在输入 lights up. A direct reply gets only a short "saw it"

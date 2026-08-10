@@ -20,6 +20,7 @@ import { maxTier } from '../lib/nsfw-tier';
 import { playMessageSound } from '../lib/sound';
 import { moodOf } from '../lib/mood';
 import { repo } from '../db/repo';
+import { renderMessageBody } from './render-msg';
 
 const RECENT_WINDOW = 30;
 const MAX_BUBBLES_PER_ACTOR = 3;
@@ -190,7 +191,9 @@ async function generateActorLines(
   const persona = member.persona as PersonaVM;
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
   const facts = await repo.getMemory(member.contactId);
-  const memory = selectFactsForInjection(facts, now);
+  // Groups never carry graded facts, whatever the tier — the other members'
+  // personas are not party to what was said in a private chat.
+  const memory = selectFactsForInjection(facts, now, { surface: 'group', tier });
 
   let system = assembleSystemPrompt({
     persona: {
@@ -230,13 +233,16 @@ async function generateActorLines(
 
   const messages = [
     { role: 'system' as const, content: system },
-    ...recent.map((m) => ({
-      role: m.senderId === member.contactId ? ('assistant' as const) : ('user' as const),
-      content:
-        m.senderId === member.contactId
-          ? (m.content ?? `[${m.type}]`)
-          : `${nameOf(m.senderId)}: ${m.content ?? `[${m.type}]`}`,
-    })),
+    ...recent.map((m) => {
+      // Own lines unprefixed (they are this actor's assistant turns); everyone
+      // else's carry a display name. Bodies go through the shared projection so
+      // a red packet in the group is a red packet, not the string "[rp]".
+      const body = renderMessageBody(m, { maxChars: 200 });
+      return {
+        role: m.senderId === member.contactId ? ('assistant' as const) : ('user' as const),
+        content: m.senderId === member.contactId ? body : `${nameOf(m.senderId)}: ${body}`,
+      };
+    }),
   ];
 
   try {

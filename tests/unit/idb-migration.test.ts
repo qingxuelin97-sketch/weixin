@@ -36,6 +36,8 @@ const STORE_INTRODUCED_IN: Record<string, number> = {
   moment_likes: 4,
   moment_comments: 4,
   media: 5,
+  story_scripts: 6,
+  story_saves: 6,
 };
 
 describe('DB migration guards', () => {
@@ -94,13 +96,16 @@ describe('DB migration guards', () => {
         const req = indexedDB.open('weixin-ai', DB_VERSION);
         req.onupgradeneeded = () => {
           const db = req.result;
+          const upgradeTx = req.transaction!;
           for (const s of STORES) {
-            if (db.objectStoreNames.contains(s.name)) continue;
-            const os = db.createObjectStore(s.name, {
-              keyPath: s.keyPath,
-              autoIncrement: s.autoIncrement ?? false,
-            });
+            const os = db.objectStoreNames.contains(s.name)
+              ? upgradeTx.objectStore(s.name)
+              : db.createObjectStore(s.name, {
+                  keyPath: s.keyPath,
+                  autoIncrement: s.autoIncrement ?? false,
+                });
             for (const idx of s.indexes ?? []) {
+              if (os.indexNames.contains(idx.name)) continue;
               os.createIndex(idx.name, idx.keyPath, { unique: idx.unique ?? false });
             }
           }
@@ -112,6 +117,22 @@ describe('DB migration guards', () => {
       // 3) Every store — old and new — must exist after the upgrade.
       for (const s of STORES) {
         expect(newDb.objectStoreNames.contains(s.name), `升级后缺 store "${s.name}"`).toBe(true);
+      }
+      // 4) …and every declared index, INCLUDING ones added to a store that
+      //    already existed at v(N-1). The old upgrade routine skipped existing
+      //    stores entirely, so such an index could never be created and the
+      //    query using it would throw on exactly the devices that had upgraded.
+      const t = newDb.transaction(
+        STORES.map((s) => s.name),
+        'readonly',
+      );
+      for (const s of STORES) {
+        for (const idx of s.indexes ?? []) {
+          expect(
+            t.objectStore(s.name).indexNames.contains(idx.name),
+            `升级后 store "${s.name}" 缺索引 "${idx.name}"`,
+          ).toBe(true);
+        }
       }
       newDb.close();
     });

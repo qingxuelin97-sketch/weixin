@@ -7,7 +7,7 @@
  * anywhere in the app: one queue means offline backfill (M4) is the same code
  * path as live execution, just with a wider time window.
  */
-import { idbGet, idbGetAll, idbPut } from '../db/idb';
+import { idbGet, idbGetAll, idbPut, idbDelete, idbRangeByIndex } from '../db/idb';
 import type { ScheduledActionKind } from '../db/schema';
 
 /**
@@ -48,11 +48,48 @@ export async function enqueue(opts: {
   return row;
 }
 
+/**
+ * Everything past due and still pending, oldest first.
+ *
+ * Indexed on `fireAt` (v6). This runs once a SECOND while the app is open, and
+ * used to be a full-table `getAll()` — over a store that only ever grew, since
+ * completed rows were never removed. A month of ordinary use turned the idle
+ * tick into a scan of thousands of rows, on a phone, forever.
+ */
 export async function duePending(now: number): Promise<ScheduledAction[]> {
+  const rows = await idbRangeByIndex<ScheduledAction>('scheduled_actions', 'byFireAt', {
+    upTo: now,
+  });
+  return rows.filter((a) => a.status === 'pending').sort((a, b) => a.fireAt - b.fireAt);
+}
+
+/**
+ * How long a settled row is kept. Not zero: `enqueue` upserts by id, so
+ * `actionExists()` on a completed row is what stops a once-ever action (a nudge)
+ * from being queued again. Delete it too early and the nudge fires forever.
+ *
+ * 14 days is far outside every once-ever window in the app (the widest is the
+ * nudge's 6–48h), so a GC'd row can no longer be re-triggered by its own rule.
+ */
+export const ACTION_RETENTION_MS = 14 * 24 * 3_600_000;
+
+/**
+ * Drop settled rows older than the retention window. Idempotent and cheap to
+ * call on every foreground pass; returns how many rows went.
+ */
+export async function gcActions(now: number): Promise<number> {
+  const cutoff = now - ACTION_RETENTION_MS;
   const all = await idbGetAll<ScheduledAction>('scheduled_actions');
-  return all
-    .filter((a) => a.status === 'pending' && a.fireAt <= now)
-    .sort((a, b) => a.fireAt - b.fireAt);
+  let n = 0;
+  for (const a of all) {
+    if (a.status === 'pending') continue;
+    // `fireAt` can be far in the past for backfilled rows; createdAt is when
+    // this device actually learned about it, which is the honest age.
+    if (Math.max(a.createdAt, a.fireAt) > cutoff) continue;
+    await idbDelete('scheduled_actions', a.id);
+    n++;
+  }
+  return n;
 }
 
 export async function markDone(a: ScheduledAction): Promise<void> {
@@ -158,6 +195,40 @@ export function registerHandler(kind: ActionKind, fn: ActionHandler): void {
   handlers.set(kind, fn);
 }
 
+/**
+ * Register a SELF-CHAINING kind — one whose handler is responsible for queueing
+ * its own successor (heartbeats, Moments posts, agent DMs). The chain step runs
+ * FIRST, before the work that can fail.
+ *
+ * Order is the whole point. Written the natural way — do the work, then chain —
+ * a single thrown error ends that chain permanently: the row is already marked
+ * done, no successor was queued, and nothing else in the app ever queues one.
+ * One transient failure at 3am and that AI never speaks again, on a phone, with
+ * no error anywhere. Chaining first costs nothing (a stale successor is
+ * harmless; every enqueue is id-idempotent) and makes the failure survivable.
+ */
+export function registerChainedHandler(
+  kind: ActionKind,
+  steps: { chain: ActionHandler; work: ActionHandler },
+): void {
+  handlers.set(kind, async (payload, action) => {
+    try {
+      await steps.chain(payload, action);
+    } catch (e) {
+      // A failed chain still must not stop the work — and vice versa.
+      onHandlerError(`chain:${kind}`, e);
+    }
+    await steps.work(payload, action);
+  });
+}
+
+/** Where handler failures go. Set by the app shell; defaults to a no-op. */
+let onHandlerError: (scope: string, err: unknown) => void = () => {};
+
+export function setHandlerErrorSink(fn: (scope: string, err: unknown) => void): void {
+  onHandlerError = fn;
+}
+
 let running = false;
 
 /**
@@ -189,8 +260,10 @@ export async function runDueActions(now: number): Promise<number> {
       try {
         await fn(JSON.parse(action.payloadJson) as Record<string, unknown>, action);
         n++;
-      } catch {
-        /* a failed action is dropped, never retried into an infinite loop */
+      } catch (e) {
+        // Dropped, never retried into an infinite loop — but no longer silent.
+        // This catch is where "她突然不说话了" went to die for four milestones.
+        onHandlerError(`action:${action.kind}`, e);
       }
     }
   } finally {

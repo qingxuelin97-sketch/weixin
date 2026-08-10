@@ -9,6 +9,7 @@ import type { MemoryFactVM, MessageVM } from '../data/types';
 import type { LlmRouter, NsfwTier } from '../llm/router';
 import { sensitivityForTier, mayInjectFact } from '../lib/nsfw-tier';
 import { repo } from '../db/repo';
+import { renderTranscript } from './render-msg';
 
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const MAX_PINNED = 10;
@@ -145,9 +146,9 @@ export async function extractMemory(
   tier: NsfwTier = 'off',
 ): Promise<ExtractResult> {
   if (messages.length === 0) return { facts: [] };
-  const transcript = messages
-    .map((m) => `[${m.id}] ${m.senderId === 'self' ? '用户' : 'TA'}: ${m.content ?? `[${m.type}]`}`)
-    .join('\n');
+  // Projected, so a fact like "他转了我 52 块请我喝奶茶" is extractable at all —
+  // the raw `[transfer]` placeholder carried none of it.
+  const transcript = renderTranscript(messages, { withIds: true, includeVoiceText: true });
 
   const res = await router.complete(
     { role: 'memory', nsfwTier: tier },
