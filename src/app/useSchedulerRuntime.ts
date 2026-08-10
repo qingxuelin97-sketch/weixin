@@ -25,7 +25,7 @@ import { getEdge, effectiveAffinity, heartbeatAffinityMul } from '../ai/relation
 import { noteProactiveSent, getAgentState } from '../ai/agent-state';
 import { extractMemory, maintainMemory } from '../ai/memory';
 import { getExtractMarker, setExtractMarker } from '../ai/memory-service';
-import { tierFor, globalTier } from '../lib/nsfw-tier';
+import { tierFor, maxTier, globalTier } from '../lib/nsfw-tier';
 import { logError } from '../lib/errlog';
 import { moodOf, moodParams } from '../lib/mood';
 import { affectFor } from '../lib/affect';
@@ -211,7 +211,17 @@ async function runMemExtract(args: {
     (m) => m.id > marker && m.id <= uptoMsgId && m.type === 'text' && !m.isRecalled,
   );
   if (msgs.length === 0) return;
-  const tier = tierFor(await globalTier(), useAppStore.getState().personaFor(contactId));
+  // Rule #6 again, and the group case is NOT the single case: for a group,
+  // `contactId` is the conversation id, so personaFor() answers undefined and a
+  // naive tierFor() would declare 'off' for a transcript that may be full-tier.
+  // The tier of a group's material is the max over its members' permits.
+  const store = useAppStore.getState();
+  const conv = store.conversationById(convId);
+  const g = await globalTier();
+  const tier =
+    conv?.type === 'group'
+      ? maxTier(g, (conv.memberIds ?? []).map(store.personaFor))
+      : tierFor(g, store.personaFor(contactId));
   const router = await getRouter();
   const now = Date.now();
   const res = await extractMemory(router, contactId, msgs, now, tier);

@@ -165,3 +165,129 @@ export function tierDirective(tier: RelationTier): string {
 export function heartbeatAffinityMul(aff: number): number {
   return (1.6 - aff / 200) / 1.5;
 }
+
+/* ==================================================================== */
+/* Directional stance (M-E4)                                             */
+/* ==================================================================== */
+
+/**
+ * `pairKey` is symmetric, and deliberately stays that way — the edge is a bond,
+ * and bonds are mutual. But a slight is not: when the director stages 阿哲
+ * disagreeing with 小雨, it is 小雨 who has been needled, and 阿哲 who did the
+ * needling. Recording that as a symmetric `teased` cooled BOTH sides equally,
+ * which reads as "everyone drifts apart whenever anyone is teased".
+ *
+ * Stance is the directional half, kept in its own settings rows so the existing
+ * `pairKey` format is untouched (a migration there would be destructive and
+ * would break `.aiwx` rollback — guardrail G7).
+ */
+export interface Stance {
+  /** How `from` currently feels about `to`: −100 … +100. */
+  value: number;
+  /** Day bucket of the last decay pass. */
+  day: number;
+}
+
+const STANCE_PREFIX = 'stance:';
+const STANCE_DECAY_PER_DAY = 0.12;
+
+function stanceKey(from: string, to: string): string {
+  return `${STANCE_PREFIX}${from}:${to}`;
+}
+
+/** Stance decays toward neutral: nobody stays annoyed forever. Pure. */
+export function decayStance(s: Stance, now: number): Stance {
+  const day = Math.floor(now / DAY_MS);
+  const days = Math.max(0, day - s.day);
+  if (days === 0) return s;
+  return { value: s.value * Math.pow(1 - STANCE_DECAY_PER_DAY, days), day };
+}
+
+export async function getStance(from: string, to: string, now: number): Promise<number> {
+  try {
+    const row = await repo.getSetting<Stance>(stanceKey(from, to));
+    if (!row || typeof row.value !== 'number') return 0;
+    return decayStance(row, now).value;
+  } catch {
+    return 0;
+  }
+}
+
+/** Nudge how `from` feels about `to`. Directional and one-way by construction. */
+export async function recordStance(
+  from: string,
+  to: string,
+  delta: number,
+  now: number,
+): Promise<void> {
+  if (from === to) return;
+  try {
+    const row = (await repo.getSetting<Stance>(stanceKey(from, to))) ?? {
+      value: 0,
+      day: Math.floor(now / DAY_MS),
+    };
+    const decayed = decayStance(row, now);
+    await repo.putSetting(stanceKey(from, to), {
+      value: clamp(decayed.value + delta, -100, 100),
+      day: Math.floor(now / DAY_MS),
+    });
+  } catch {
+    /* social bookkeeping is a nicety; never break a turn over it */
+  }
+}
+
+/**
+ * Being needled in front of everyone, recorded ONE-WAY.
+ *
+ * The needler loses nothing; the needled cools toward them. That asymmetry is
+ * what lets a group develop actual dynamics instead of uniformly drifting apart.
+ */
+export async function recordTease(
+  teaser: string,
+  target: string,
+  now: number,
+): Promise<void> {
+  await recordStance(target, teaser, REL_SCORES.teased.aff * 3, now);
+}
+
+export type StanceTier = 'hostile' | 'cool' | 'neutral' | 'warm';
+
+export function stanceTier(value: number): StanceTier {
+  if (value <= -35) return 'hostile';
+  if (value <= -12) return 'cool';
+  if (value >= 25) return 'warm';
+  return 'neutral';
+}
+
+/**
+ * How this actor should carry themselves toward the OTHER members, as one short
+ * line for the prompt's relation layer.
+ *
+ * This is the payoff of the whole social layer: two agents who argued last week
+ * pick each other up differently in the group today, and you can tell. Capped
+ * hard — the tail of the prompt is a token budget, and a long social briefing
+ * dilutes the persona it is attached to (guardrails G3/G10).
+ */
+export async function describePeerEdges(
+  selfId: string,
+  peers: Array<{ contactId: string; name: string }>,
+  now: number,
+  maxLines = 3,
+): Promise<string> {
+  const lines: string[] = [];
+  for (const p of peers) {
+    if (p.contactId === selfId) continue;
+    const value = await getStance(selfId, p.contactId, now);
+    const tier = stanceTier(value);
+    if (tier === 'neutral') continue; // saying "you feel normal about X" is noise
+    const how =
+      tier === 'hostile'
+        ? `你现在挺不待见${p.name}，接话会绕开或带刺`
+        : tier === 'cool'
+          ? `你对${p.name}有点疙瘩，没到翻脸，但不太想接他的话`
+          : `你和${p.name}最近挺投缘，容易接住对方的话`;
+    lines.push(`- ${how}`);
+    if (lines.length >= maxLines) break;
+  }
+  return lines.length ? `【你和群里其他人】\n${lines.join('\n')}` : '';
+}

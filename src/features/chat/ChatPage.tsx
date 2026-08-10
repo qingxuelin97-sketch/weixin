@@ -97,6 +97,12 @@ export function ChatPage() {
       const c = useAppStore.getState().conversationById(convId);
       if (c?.type === 'single' && c.peerId) {
         void maybeScheduleMemExtract(convId, c.peerId, Date.now()).catch(() => {});
+      } else if (c?.type === 'group' && !c.isHidden) {
+        // Groups remember too (M-E4). The subject is the CONVERSATION, not a
+        // person: "群里说下周要一起吃饭" belongs to the group, and every member
+        // should be able to refer to it. Without this the group had no memory at
+        // all — every round started from the last 30 messages and nothing else.
+        void maybeScheduleMemExtract(convId, convId, Date.now()).catch(() => {});
       }
     };
   }, [convId]);

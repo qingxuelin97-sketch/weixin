@@ -15,7 +15,7 @@ import { selectFactsForInjection } from './memory';
 import { effectiveTier, voiceMeta, preferredRoute, type EngineHooks } from './engine';
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
-import { getAllEdges, pairKey, recordRelEvent } from './relationship';
+import { getAllEdges, pairKey, recordRelEvent, recordTease, describePeerEdges } from './relationship';
 import { maxTier } from '../lib/nsfw-tier';
 import { playMessageSound } from '../lib/sound';
 import { moodOf } from '../lib/mood';
@@ -124,6 +124,7 @@ export async function sendGroupMessage(
           nameOf,
           now,
           ctrl.signal,
+          members.map((m) => ({ contactId: m.contactId, name: m.name })),
         );
         return { plan, member, bubbles };
       }),
@@ -167,7 +168,10 @@ export async function sendGroupMessage(
       const { plan } = ordered[i];
       void recordRelEvent('self', member.contactId, 'group_chat', hooks.now(), persona.affinityInit).catch(() => {});
       if (plan.intent === 'disagree' && plan.target && plan.target !== 'user' && byId.has(plan.target)) {
-        void recordRelEvent(member.contactId, plan.target, 'teased', hooks.now()).catch(() => {});
+        // One-way (M-E4): the needled cools toward the needler, not both ways.
+        // Symmetric accounting read as "everyone drifts apart whenever anyone
+        // is teased", which is the opposite of a group developing dynamics.
+        void recordTease(member.contactId, plan.target, hooks.now()).catch(() => {});
       }
     }
   } finally {
@@ -187,13 +191,18 @@ async function generateActorLines(
   nameOf: (id: string) => string,
   now: number,
   signal: AbortSignal,
+  /** The other members, for the stance line (M-E4). */
+  peers: Array<{ contactId: string; name: string }> = [],
 ): Promise<Bubble[]> {
   const persona = member.persona as PersonaVM;
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
   const facts = await repo.getMemory(member.contactId);
+  // The GROUP's own memory, keyed by convId (M-E4): shared history every member
+  // can refer to, distinct from what each of them privately knows.
+  const groupFacts = await repo.getMemory(conv.id);
   // Groups never carry graded facts, whatever the tier — the other members'
   // personas are not party to what was said in a private chat.
-  const memory = selectFactsForInjection(facts, now, {
+  const memory = selectFactsForInjection([...facts, ...groupFacts], now, {
     surface: 'group',
     tier,
     // Topical retrieval for the actor too: what the group is talking about now.
@@ -238,6 +247,11 @@ async function generateActorLines(
   ]
     .filter(Boolean)
     .join('\n');
+  // How this actor currently carries themselves toward the other members
+  // (M-E4). Appended after the scene layer, never inserted into it — the
+  // six-layer order is fixed and the prefix has to stay cacheable.
+  const stanceLine = await describePeerEdges(member.contactId, peers, now);
+  if (stanceLine) system += `\n\n${stanceLine}`;
   system += `\n\n# 本轮导演提示\n${direction}`;
 
   const messages = [
@@ -372,6 +386,7 @@ export async function sendGroupProactiveMessage(
       nameOf,
       stamp,
       ctrl.signal,
+      members.map((m) => ({ contactId: m.contactId, name: m.name })),
     );
     if (ctrl.signal.aborted || bubbles.length === 0) return;
 

@@ -112,8 +112,11 @@ export function prefilter(
     if (!isActive(m.persona, now)) return false;
     const lastSpoke = [...tail].reverse().find((x) => x.senderId === m.contactId);
     if (lastSpoke && now - lastSpoke.createdAt < cooldownMs) return false;
-    const streak = countTrailingStreak(tail, m.contactId);
-    if (streak >= maxStreak) return false;
+    // Hogging check. This used to call countTrailingStreak on the raw tail —
+    // which is dead code in practice: prefilter runs right after the USER sent
+    // a message, so the trailing sender is always 'self' and the streak is
+    // always 0. Counting the run among the AI-only tail is what the rule meant.
+    if (aiStreak(tail, m.contactId) >= maxStreak) return false;
     return true;
   });
 
@@ -140,11 +143,19 @@ export function prefilter(
   return { mode: 'director', candidates, speakers: [], reason: 'ambiguous' };
 }
 
-/** How many messages at the tail were consecutively from this sender. */
-function countTrailingStreak(tail: MessageVM[], contactId: string): number {
+/**
+ * How many of the trailing AI messages were consecutively from this member.
+ *
+ * The user's own messages are skipped rather than treated as interruptions: a
+ * member who sent the last four AI lines is hogging the group whether or not
+ * you said something in between.
+ */
+export function aiStreak(tail: MessageVM[], contactId: string): number {
   let n = 0;
   for (let i = tail.length - 1; i >= 0; i--) {
-    if (tail[i].senderId === contactId) n++;
+    const senderId = tail[i].senderId;
+    if (senderId === 'self') continue;
+    if (senderId === contactId) n++;
     else break;
   }
   return n;
