@@ -12,6 +12,8 @@ import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { repo } from '../../db/repo';
 import type { MemoryFactVM } from '../../data/types';
+import { groupByEntity, retention } from '../../ai/entity-graph';
+import { useNow } from '../../lib/useNow';
 import { useGuard } from '../../app/useGuard';
 import './settings.css';
 
@@ -46,8 +48,15 @@ export function MemoryPage() {
     await reload();
   };
 
+  const now = useNow();
   const pending = facts.filter((f) => f.status === 'pending');
-  const confirmed = facts.filter((f) => f.status !== 'pending');
+  const confirmed = facts.filter((f) => f.status !== 'pending' && f.status !== 'archived');
+  // Archived facts are not deleted — a superseded one is how you find out she
+  // learned something new, and a wrongly-superseded one has to be recoverable.
+  const archived = facts.filter((f) => f.status === 'archived');
+  // Grouped by who/what each fact is about, so a memory page with 60 rows is
+  // browsable instead of being one undifferentiated list (M-E2).
+  const groups = groupByEntity(confirmed);
 
   const renderFact = (f: MemoryFactVM) => (
     <div key={f.id} className="memory__item">
@@ -65,6 +74,11 @@ export function MemoryPage() {
           {new Date(f.createdAt).toLocaleDateString('zh-CN')} · 重要度 {f.importance}
           {f.confidence != null && f.confidence < 0.7 ? ' · 听说的，不一定准' : ''}
           {(f.refCount ?? 0) > 0 ? ` · 提过 ${f.refCount} 次` : ''}
+          {/* How firmly it is still held, so "她怎么忘了" has a visible answer. */}
+          {!f.isPinned && f.status !== 'archived'
+            ? ` · 记得 ${Math.round(retention(f, now) * 100)}%`
+            : ''}
+          {f.supersededBy ? ' · 已被更新的说法取代' : ''}
         </span>
       </div>
       <div className="memory__actions">
@@ -94,15 +108,29 @@ export function MemoryPage() {
             {pending.map(renderFact)}
           </div>
         )}
-        <div className="settings__group">
-          <div className="settings__group-title">
-            {confirmed.length ? `全部记忆（${confirmed.length}）` : '还没有记忆'}
+        {groups.map((g) => (
+          <div className="settings__group" key={g.entity}>
+            <div className="settings__group-title">
+              {g.entity === '其他' ? `其他（${g.facts.length}）` : `关于 ${g.entity}（${g.facts.length}）`}
+            </div>
+            {g.facts.map(renderFact)}
           </div>
-          {confirmed.map(renderFact)}
-          {confirmed.length === 0 && pending.length === 0 && (
+        ))}
+        {confirmed.length === 0 && pending.length === 0 && (
+          <div className="settings__group">
+            <div className="settings__group-title">还没有记忆</div>
             <p className="settings__hint">聊得越多，Ta 记住的越多。置顶的记忆每次都会带上。</p>
-          )}
-        </div>
+          </div>
+        )}
+        {archived.length > 0 && (
+          <div className="settings__group">
+            <div className="settings__group-title">已淡忘 / 被取代（{archived.length}）</div>
+            <p className="settings__hint">
+              这些不再进入对话，但没有删除——她记错了或忘早了，可以在这里删掉重新聊起。
+            </p>
+            {archived.map(renderFact)}
+          </div>
+        )}
       </div>
     </>
   );

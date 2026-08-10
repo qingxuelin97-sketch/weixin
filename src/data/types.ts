@@ -184,6 +184,21 @@ export interface MemoryFactVM {
   confidence?: number;
   /** Times this fact was injected into a prompt that produced a reply. */
   refCount?: number;
+  /**
+   * Who/what the fact is about (schema column since M1, first used in M-E2).
+   * Free text — a display name or a noun, not an internal id — because facts
+   * are about "他妹妹" and "那家咖啡店" as often as about a contact.
+   */
+  aboutId?: string;
+  /**
+   * Character-trigram term vector for BM25 retrieval (`embedding` column, which
+   * the schema reserved for a real embedding we still cannot compute offline).
+   * Serialized by `entity-graph.encodeVector`; recomputed on the fly when absent,
+   * so an older row is never wrong, only slower.
+   */
+  embedding?: string;
+  /** Set when a newer fact contradicts this one; the row is archived, not deleted. */
+  supersededBy?: string;
 }
 
 /** One rolling summary per conversation (conv_summaries store). */

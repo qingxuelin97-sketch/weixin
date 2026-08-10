@@ -10,8 +10,15 @@ import type { LlmRouter, NsfwTier } from '../llm/router';
 import { sensitivityForTier, mayInjectFact } from '../lib/nsfw-tier';
 import { repo } from '../db/repo';
 import { renderTranscript } from './render-msg';
+import {
+  retention,
+  encodeVector,
+  entityOf,
+  findSuperseded,
+  selectForInjection,
+  isForgotten,
+} from './entity-graph';
 
-const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const MAX_PINNED = 10;
 export const TOP_K = 20;
 
@@ -20,10 +27,10 @@ export const TOP_K = 20;
  * Pure and deterministic — `now` is injected.
  */
 export function scoreFact(fact: MemoryFactVM, now: number): number {
-  const ref = fact.lastRefAt ?? fact.createdAt;
-  const ageMs = Math.max(0, now - ref);
-  const decay = Math.pow(0.5, ageMs / HALF_LIFE_MS);
-  return fact.importance * decay;
+  // Was a fixed 30-day half-life. Now the Ebbinghaus curve from entity-graph,
+  // whose stability grows with how often the fact has actually been recalled —
+  // so a memory she uses every day stops decaying like one used once.
+  return fact.importance * retention(fact, now);
 }
 
 /**
@@ -41,38 +48,27 @@ export function selectFactsForInjection(
     surface?: 'single' | 'group' | 'moments' | 'director' | 'dm';
     /** Effective tier of that surface. Defaults to 'off' — the safe direction. */
     tier?: NsfwTier;
+    /**
+     * What the conversation is currently about (M-E2). With it, retrieval is
+     * topical; without it, ranking degrades to importance × retention, which is
+     * still strictly better than the old importance × age.
+     */
+    query?: string;
   } = {},
 ): { pinned: string[]; topK: string[]; ids: string[] } {
-  const maxPinned = opts.maxPinned ?? MAX_PINNED;
-  const k = opts.topK ?? TOP_K;
   const surface = opts.surface ?? 'single';
   const tier = opts.tier ?? 'off';
   // The injection whitelist specs/nsfw.md always required and nothing built:
-  // graded facts only reach surfaces cleared for them.
+  // graded facts only reach surfaces cleared for them. Applied BEFORE ranking,
+  // so a blocked fact cannot even influence the corpus statistics.
   const live = facts.filter(
     (f) => f.status !== 'archived' && mayInjectFact(f.sensitivity, surface, tier),
   );
-
-  const pinned = live
-    .filter((f) => f.isPinned)
-    .sort((a, b) => b.importance - a.importance || a.createdAt - b.createdAt)
-    .slice(0, maxPinned);
-
-  const pinnedIds = new Set(pinned.map((f) => f.id));
-  const rest = live
-    .filter((f) => !pinnedIds.has(f.id))
-    .map((f) => ({ f, s: scoreFact(f, now) }))
-    .sort((a, b) => b.s - a.s || a.f.createdAt - b.f.createdAt)
-    .slice(0, k)
-    .map((x) => x.f);
-
-  return {
-    pinned: pinned.map((f) => f.fact),
-    topK: rest.map((f) => f.fact),
-    // Injected fact ids, so a successful reply can bump their refCount (the
-    // pending→confirmed signal): a memory that got USED is a memory that held.
-    ids: [...pinned, ...rest].map((f) => f.id),
-  };
+  return selectForInjection(live, now, {
+    query: opts.query,
+    topK: opts.topK ?? TOP_K,
+    maxPinned: opts.maxPinned ?? MAX_PINNED,
+  });
 }
 
 /** Mark injected facts as referenced; first use flips pending → confirmed. */
@@ -93,14 +89,23 @@ export async function touchFacts(subjectId: string, factIds: string[], now: numb
 
 const ARCHIVE_AFTER_MS = 30 * 24 * 3_600_000;
 
-/** Retire trivia: low-importance facts unreferenced for 30 days go to archive. */
+/**
+ * Retire what has genuinely faded.
+ *
+ * Two rules, and the second is the M-E2 one: a fact whose retention has fallen
+ * below the floor is forgotten, whatever its importance — but retention now
+ * grows with use, so a fact she keeps bringing up never reaches the floor. The
+ * original rule (importance ≤ 2 and untouched for 30 days) stays as a cheap
+ * fast path for trivia that was never worth much to begin with.
+ */
 export async function maintainMemory(subjectId: string, now: number): Promise<number> {
   const all = await repo.getMemory(subjectId);
   let archived = 0;
   for (const f of all) {
     if (f.status === 'archived' || f.isPinned) continue;
     const lastTouch = f.lastRefAt ?? f.createdAt;
-    if (f.importance <= 2 && now - lastTouch > ARCHIVE_AFTER_MS) {
+    const trivia = f.importance <= 2 && now - lastTouch > ARCHIVE_AFTER_MS;
+    if (trivia || isForgotten(f, now)) {
       await repo.putMemory({ ...f, status: 'archived' });
       archived++;
     }
@@ -171,16 +176,24 @@ export async function extractMemory(
     return { facts: [] }; // unparseable → extract nothing rather than store garbage
   }
 
+  // Existing memory, read once: new facts are checked against it for
+  // contradictions before anything is written.
+  const existing = await repo.getMemory(subjectId);
   const saved: MemoryFactVM[] = [];
   for (const f of parsed.facts ?? []) {
     // Evidence gate: no citation, no fact.
     if (!f?.fact?.trim() || !Array.isArray(f.evidence_msg_ids) || f.evidence_msg_ids.length === 0) {
       continue;
     }
+    const text = f.fact.trim().slice(0, 50);
     const vm: MemoryFactVM = {
       id: `mem_${subjectId}_${now}_${saved.length}`,
       subjectId,
-      fact: f.fact.trim().slice(0, 50),
+      fact: text,
+      // Graph fields (M-E2), on columns the schema has carried since M1:
+      // who it is about, and its trigram vector for topical retrieval.
+      ...(entityOf(text) ? { aboutId: entityOf(text) } : {}),
+      embedding: encodeVector(text),
       // Grade at the source: a fact extracted from full-tier talk is nsfw and
       // must stay behind the injection whitelist (specs/nsfw.md), not leak into
       // Moments or group prompts. NaN-safe: a non-numeric importance used to
@@ -196,6 +209,15 @@ export async function extractMemory(
       refCount: 0,
     };
     await repo.putMemory(vm);
+    // Contradiction handling: a newer fact filling the same mutually-exclusive
+    // slot RETIRES the old one instead of coexisting with it. Without this,
+    // "他住在北京" and "他搬到成都了" were both injected forever and the model
+    // picked one at random each turn. Preferences are deliberately excluded —
+    // liking both coffee and tea is not a contradiction.
+    const { superseded } = findSuperseded([...existing, ...saved], vm);
+    for (const old of superseded) {
+      await repo.putMemory({ ...old, status: 'archived', supersededBy: vm.id });
+    }
     saved.push(vm);
   }
   const summary = parsed.summary?.trim().slice(0, 80) || undefined;

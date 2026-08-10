@@ -195,7 +195,19 @@ async function generateAndPlayInner(
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
   // Declared surface + tier: single chat is the ONE place graded facts may be
   // injected, and only up to this conversation's own tier (specs/nsfw.md).
-  const memory = selectFactsForInjection(facts, hooks.now(), { surface: 'single', tier });
+  // The query that makes retrieval topical (M-E2): the last few turns. Without
+  // it the twenty "most important" facts get injected whatever you are talking
+  // about — mention your sister and she recalls nothing about her.
+  const query = recent
+    .slice(-4)
+    .map((m) => m.content ?? '')
+    .join(' ')
+    .slice(0, 200);
+  const memory = selectFactsForInjection(facts, hooks.now(), {
+    surface: 'single',
+    tier,
+    query,
+  });
   // Rolling summary from the memory loop — "上次聊到哪" survives the 30-message
   // context window. (Was a settings read that nothing ever wrote, M2–M-D1.)
   const summaryRow = await repo.getConvSummary(convId);

@@ -272,6 +272,14 @@ export const memoryFacts = sqliteTable(
     createdAt: integer('created_at').notNull(),
     lastRefAt: integer('last_ref_at'),
     refCount: integer('ref_count').notNull().default(0),
+    /**
+     * Set when a newer fact fills the same mutually-exclusive slot (M-E2):
+     * "他住在北京" superseded by "他搬到成都了". The old row is archived rather
+     * than deleted so the memory page can show what changed and when — and so a
+     * wrong supersede is recoverable instead of being a silent data loss.
+     * IndexedDB stores whole objects, so this needs no DB_VERSION bump.
+     */
+    supersededBy: text('superseded_by'),
   },
   (t) => ({
     bySubject: index('idx_mem_subject').on(t.subjectId, t.status),

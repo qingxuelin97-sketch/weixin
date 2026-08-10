@@ -25,9 +25,31 @@ describe('scoreFact', () => {
     expect(scoreFact(fact({ importance: 4, createdAt: NOW }), NOW)).toBeCloseTo(4, 5);
   });
 
-  it('halves the score after one 30-day half-life', () => {
+  it('has roughly halved after 30 days for an ordinary unused fact', () => {
+    // M-E2 replaced the fixed 30-day half-life with an Ebbinghaus curve whose
+    // stability depends on importance, confidence and USE. It is deliberately
+    // calibrated so this baseline case still lands near the old behaviour —
+    // everything the new curve buys is in how it differs elsewhere.
     const f = fact({ importance: 4, createdAt: NOW - 30 * day });
-    expect(scoreFact(f, NOW)).toBeCloseTo(2, 5);
+    expect(scoreFact(f, NOW)).toBeGreaterThan(1.6);
+    expect(scoreFact(f, NOW)).toBeLessThan(2.4);
+  });
+
+  it('a fact that keeps getting used stops decaying (reconsolidation)', () => {
+    // The property the old fixed half-life could not express at all: a memory
+    // recalled fifty times faded on exactly the same schedule as one recalled
+    // once. Retrieval is what makes a memory durable.
+    const at = NOW - 60 * day;
+    const unused = fact({ importance: 3, createdAt: at, lastRefAt: at, refCount: 0 });
+    const wellWorn = fact({ importance: 3, createdAt: at, lastRefAt: at, refCount: 12 });
+    expect(scoreFact(wellWorn, NOW)).toBeGreaterThan(scoreFact(unused, NOW) * 3);
+  });
+
+  it('hearsay fades faster than something you were told directly', () => {
+    const at = NOW - 30 * day;
+    const firsthand = fact({ importance: 3, createdAt: at, confidence: 0.9 });
+    const gossip = fact({ importance: 3, createdAt: at, confidence: 0.4, source: 'hearsay' });
+    expect(scoreFact(firsthand, NOW)).toBeGreaterThan(scoreFact(gossip, NOW));
   });
 
   it('uses lastRefAt when present (a re-referenced fact stays fresh)', () => {

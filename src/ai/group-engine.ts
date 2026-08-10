@@ -193,7 +193,16 @@ async function generateActorLines(
   const facts = await repo.getMemory(member.contactId);
   // Groups never carry graded facts, whatever the tier — the other members'
   // personas are not party to what was said in a private chat.
-  const memory = selectFactsForInjection(facts, now, { surface: 'group', tier });
+  const memory = selectFactsForInjection(facts, now, {
+    surface: 'group',
+    tier,
+    // Topical retrieval for the actor too: what the group is talking about now.
+    query: recent
+      .slice(-4)
+      .map((m) => m.content ?? '')
+      .join(' ')
+      .slice(0, 200),
+  });
 
   let system = assembleSystemPrompt({
     persona: {
