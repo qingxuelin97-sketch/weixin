@@ -100,6 +100,13 @@ export function SettingsPage() {
           </div>
           <div
             className="settings__row settings__row--divided"
+            onClick={() => navigate('/story')}
+          >
+            <span className="settings__label">剧情模式</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
             onClick={() => navigate('/settings/media')}
           >
             <span className="settings__label">素材库（头像与照片）</span>

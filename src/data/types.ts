@@ -199,6 +199,15 @@ export interface MemoryFactVM {
   embedding?: string;
   /** Set when a newer fact contradicts this one; the row is archived, not deleted. */
   supersededBy?: string;
+  /** Story mode: which run wrote this (schema column since M1). */
+  storySaveId?: string;
+  /**
+   * `scriptId#seq` — the tag rollback finds rows by. Without it a story-written
+   * fact is indistinguishable from something the user actually said, and would
+   * survive a rollback forever ("the character remembers a future that no
+   * longer happens").
+   */
+  storyTag?: string;
 }
 
 /** One rolling summary per conversation (conv_summaries store). */
@@ -241,6 +250,10 @@ export interface MomentVM {
   imageRefs: string[];
   isNsfw: boolean;
   createdAt: number;
+  /** Story mode: which run caused this post. */
+  storySaveId?: string;
+  /** `scriptId#seq` — see MemoryFactVM.storyTag. Rollback finds posts by this. */
+  storyTag?: string;
 }
 
 /** A like. `id` is `${momentId}:${contactId}` — one like per person per moment. */

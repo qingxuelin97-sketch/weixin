@@ -33,6 +33,7 @@ import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
+import { runStoryBeat, seedBuiltinScripts } from '../ai/story-service';
 import {
   type HandlerDeps,
   handleRpGrab,
@@ -148,6 +149,42 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerHandler('mem_extract', (p) => handleMemExtract(deps, p));
     registerHandler('moment_like', (p) => handleMomentLike(deps, p));
     registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
+
+    // Story mode's beat (M-E5). `story_tick` has been a reserved kind since M1;
+    // this is its handler. Chained like the others so a failed beat pauses the
+    // story rather than ending it permanently.
+    registerHandler('story_tick', async (p) => {
+      const saveId = String(p.saveId ?? '');
+      if (!saveId) return;
+      await runStoryBeat(saveId, {
+        appendMessage: (m) => useAppStore.getState().appendMessage(m),
+        playBeat: async (convId, directives, goal) => {
+          const st = useAppStore.getState();
+          const c = st.conversationById(convId);
+          if (!c) return;
+          const members = (c.memberIds ?? []).map((id) => {
+            const ct = st.contactById(id);
+            return { contactId: id, name: ct?.remark ?? ct?.name ?? id, persona: st.personaFor(id) };
+          });
+          const speaker = members.find((m) => directives[m.contactId]);
+          if (!speaker?.persona) return;
+          // The GM's beat rides in as the director hint — per character, and
+          // ONLY that character's own instruction (never the whole script).
+          await sendGroupProactiveMessage(
+            c,
+            speaker,
+            members,
+            await globalTier(),
+            hooks,
+            st.contactById,
+            Date.now(),
+            `${goal}｜${directives[speaker.contactId]}`.slice(0, 200),
+          );
+        },
+        contactById: (id) => useAppStore.getState().contactById(id),
+        now: () => Date.now(),
+      });
+    });
 
     // Self-chaining kinds: the successor is queued BEFORE the work that can
     // fail, so one bad night does not end the chain forever (see scheduler.ts).
@@ -359,6 +396,15 @@ async function runForegroundPass(): Promise<void> {
     if (!(await hasPendingOfKind('agent_dm'))) await scheduleNextAgentDm();
   } catch {
     /* chemistry is a bonus; never block the foreground path on it */
+  }
+
+  // 3.4) Seed the built-in example scripts. Idempotent, and re-adds one the
+  //      user deleted — the examples are the working reference for "write me a
+  //      story", so having none is a worse default than having two.
+  try {
+    await seedBuiltinScripts(now);
+  } catch (e) {
+    logError('story.seed', e);
   }
 
   // 3.5) Retire settled rows. The queue was append-only since M4: the store grew

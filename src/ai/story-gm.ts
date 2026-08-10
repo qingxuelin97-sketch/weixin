@@ -1,0 +1,463 @@
+/**
+ * Story mode runtime (M-E5): the GM that walks a script's graph.
+ *
+ * Pipeline per specs/story-gm.md — serial **GM → director → actors**, all on the
+ * one global queue (`story_tick`, a kind reserved since M1 that finally has a
+ * handler). The GM owns where the story goes and what each character is doing;
+ * the ordinary director still decides who speaks; the actors still write their
+ * own lines. Narration is a grey system message.
+ *
+ * Two invariants carry most of the risk in this feature:
+ *
+ *  1. **Directives are injected per character, in isolation.** A character is
+ *     never handed the script — they receive their own beat, their own secret,
+ *     and nothing else. Giving an actor the whole graph is how a mystery gets
+ *     spoiled in its second line.
+ *
+ *  2. **Rollback undoes side effects, not just the cursor.** A node that wrote
+ *     a memory or posted to Moments has reached OUTSIDE the story. Restoring a
+ *     save without retracting those leaves characters remembering a future that
+ *     no longer happens — an irreversible contamination of ordinary chat. Every
+ *     story-caused row is tagged `(scriptId, seq)` precisely so it can be found
+ *     and removed, and `story-rollback.test.ts` deliberately omits one to prove
+ *     the check turns red.
+ */
+import { idbGet, idbGetAll, idbPut, idbDelete } from '../db/idb';
+import { repo } from '../db/repo';
+import type { MemoryFactVM, MomentVM } from '../data/types';
+import {
+  type Script,
+  type StoryNode,
+  type Trigger,
+  type Vars,
+  applyVarEffects,
+  evaluateTriggers,
+  directiveTextFor,
+  effectiveStoryLevel,
+  validateScript,
+} from './story-script';
+
+/* ==================================================================== */
+/* Persistence shapes                                                    */
+/* ==================================================================== */
+
+export interface StoryScriptRow {
+  id: string;
+  title: string;
+  genre?: string;
+  nsfwLevel: number;
+  /** The validated Script, stored whole. */
+  dagJson: string;
+  createdAt: number;
+  /** 'builtin' rows are re-seeded on upgrade; the rest are the user's. */
+  origin?: 'builtin' | 'import' | 'generated';
+}
+
+export interface StorySaveRow {
+  id: string;
+  scriptId: string;
+  name?: string;
+  /** Current node id. */
+  nodeId: string;
+  vars: Vars;
+  /** Monotonic beat counter. Every side effect is tagged with it. */
+  seq: number;
+  /** Turns spent in the current node, for `timeout`. */
+  turnsInNode: number;
+  /** The conversation the story is playing in. */
+  convId: string;
+  /** Cast binding: script charId → real contactId. */
+  bindings: Record<string, string>;
+  /** Tier snapshot taken at start; the run never re-reads the global setting. */
+  effectiveLevel: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+  /** Snapshots for rollback, newest last. */
+  history: StorySnapshot[];
+}
+
+export interface StorySnapshot {
+  seq: number;
+  nodeId: string;
+  vars: Vars;
+  /** Newest message id at the moment of the snapshot. */
+  msgCursor: number;
+  at: number;
+}
+
+const SCRIPTS = 'story_scripts';
+const SAVES = 'story_saves';
+
+/* ==================================================================== */
+/* Script storage                                                        */
+/* ==================================================================== */
+
+export async function listScripts(): Promise<StoryScriptRow[]> {
+  const rows = await idbGetAll<StoryScriptRow>(SCRIPTS);
+  return rows.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function getScript(id: string): Promise<Script | null> {
+  const row = await idbGet<StoryScriptRow>(SCRIPTS, id);
+  if (!row) return null;
+  try {
+    const parsed = validateScript(JSON.parse(row.dagJson));
+    return parsed.script ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Store a script. Validation is NOT optional — an invalid graph is rejected
+ * here rather than stranding a run three scenes in.
+ */
+export async function saveScript(
+  script: unknown,
+  origin: StoryScriptRow['origin'],
+  now: number,
+): Promise<{ ok: true; id: string } | { ok: false; issues: string[] }> {
+  const result = validateScript(script);
+  if (!result.ok || !result.script) {
+    return { ok: false, issues: result.issues.map((i) => i.message) };
+  }
+  const s = result.script;
+  await idbPut<StoryScriptRow>(SCRIPTS, {
+    id: s.scriptId,
+    title: s.title,
+    genre: s.genre,
+    nsfwLevel: s.nsfwLevel,
+    dagJson: JSON.stringify(s),
+    createdAt: now,
+    origin,
+  });
+  return { ok: true, id: s.scriptId };
+}
+
+export async function deleteScript(id: string): Promise<void> {
+  await idbDelete(SCRIPTS, id);
+}
+
+/* ==================================================================== */
+/* Save storage                                                          */
+/* ==================================================================== */
+
+export async function getSave(id: string): Promise<StorySaveRow | undefined> {
+  return idbGet<StorySaveRow>(SAVES, id);
+}
+
+export async function listSaves(scriptId?: string): Promise<StorySaveRow[]> {
+  const rows = await idbGetAll<StorySaveRow>(SAVES);
+  return rows
+    .filter((r) => !scriptId || r.scriptId === scriptId)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export async function putSave(save: StorySaveRow): Promise<void> {
+  await idbPut(SAVES, save);
+}
+
+/** The run currently playing in a conversation, if any. */
+export async function activeSaveFor(convId: string): Promise<StorySaveRow | undefined> {
+  const rows = await idbGetAll<StorySaveRow>(SAVES);
+  return rows.find((r) => r.isActive && r.convId === convId);
+}
+
+/* ==================================================================== */
+/* Starting a run                                                        */
+/* ==================================================================== */
+
+export interface StartOptions {
+  script: Script;
+  convId: string;
+  /** script charId → contactId. Missing entries make the run refuse to start. */
+  bindings: Record<string, string>;
+  globalTier: 'off' | 'ambiguous' | 'full';
+  now: number;
+}
+
+export function makeSave(opts: StartOptions): StorySaveRow {
+  const { script, now } = opts;
+  return {
+    id: `save_${script.scriptId}_${now}`,
+    scriptId: script.scriptId,
+    nodeId: script.entry,
+    vars: { ...script.vars },
+    seq: 0,
+    turnsInNode: 0,
+    convId: opts.convId,
+    bindings: opts.bindings,
+    // Snapshotted at start and never re-read (specs/story-gm.md): lowering the
+    // global setting mid-run must not rewrite a story already in progress, and
+    // raising it must not silently escalate one the user started at a lower tier.
+    effectiveLevel: effectiveStoryLevel(opts.globalTier, script),
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+    history: [],
+  };
+}
+
+/** Every cast member must be bound to a real contact before a run can begin. */
+export function missingBindings(script: Script, bindings: Record<string, string>): string[] {
+  return script.cast.filter((c) => !bindings[c.charId]).map((c) => c.charId);
+}
+
+/* ==================================================================== */
+/* The beat                                                              */
+/* ==================================================================== */
+
+export interface BeatPlan {
+  node: StoryNode;
+  /** Grey narration to post on entering this node, if any. */
+  narrate?: string;
+  /** Per-character directive text, keyed by REAL contactId. Isolated by design. */
+  directives: Record<string, string>;
+  /** One line for the director: what this beat is for. */
+  goal: string;
+  /** Set when this beat ends the run. */
+  ending: boolean;
+}
+
+/** Build the beat for a save's current node. Pure. */
+export function planBeat(script: Script, save: StorySaveRow): BeatPlan | null {
+  const node = script.nodes.find((n) => n.id === save.nodeId);
+  if (!node) return null;
+  const directives: Record<string, string> = {};
+  for (const d of node.directives) {
+    const contactId = save.bindings[d.charId];
+    if (!contactId) continue;
+    const cast = script.cast.find((c) => c.charId === d.charId);
+    const text = directiveTextFor(node, save.effectiveLevel, d);
+    // The character's own secret rides along — and ONLY in their own prompt.
+    directives[contactId] = cast?.secret ? `${text}\n（只有你知道：${cast.secret}）` : text;
+  }
+  return {
+    node,
+    narrate: node.onEnter?.narrate,
+    directives,
+    goal: node.goal,
+    ending: node.ending === true,
+  };
+}
+
+export interface AdvanceResult {
+  save: StorySaveRow;
+  /** The trigger that fired, if any. */
+  fired?: Trigger;
+  /** Triggers whose `llm:` condition still needs the GM's judgement. */
+  pending: Trigger[];
+  /** True when the run just moved to a different node. */
+  moved: boolean;
+  /** Side effects to materialize (the caller owns storage). */
+  effects: { memWrite: Array<{ charId: string; fact: string }>; moment?: { authorId: string; text: string } };
+}
+
+/**
+ * Advance the run one turn: evaluate local triggers, else count toward timeout.
+ *
+ * Pure. It decides; the caller materializes. That split is what lets the whole
+ * graph walk — including rollback — be tested without a database.
+ */
+export function advance(script: Script, save: StorySaveRow, now: number): AdvanceResult {
+  const node = script.nodes.find((n) => n.id === save.nodeId);
+  const none = { memWrite: [], moment: undefined } as AdvanceResult['effects'];
+  if (!node) return { save, pending: [], moved: false, effects: none };
+
+  const { fired, pending } = evaluateTriggers(node, save.vars);
+  if (fired) return { ...applyTrigger(save, fired, now), fired, pending: [], moved: true };
+
+  const turns = save.turnsInNode + 1;
+  if (node.timeout && turns >= node.timeout.turns) {
+    // The forced exit. Without it a beat whose condition never comes true traps
+    // the run silently — the story just stops responding and nothing says why.
+    const timed: Trigger = { when: 'expr:false', to: node.timeout.to };
+    return { ...applyTrigger(save, timed, now), fired: timed, pending: [], moved: true };
+  }
+  return {
+    save: { ...save, turnsInNode: turns, updatedAt: now },
+    pending,
+    moved: false,
+    effects: none,
+  };
+}
+
+/** Move to a trigger's destination, snapshotting first. Pure. */
+export function applyTrigger(
+  save: StorySaveRow,
+  trigger: Trigger,
+  now: number,
+  msgCursor = 0,
+): { save: StorySaveRow; effects: AdvanceResult['effects'] } {
+  const seq = save.seq + 1;
+  const snapshot: StorySnapshot = {
+    seq: save.seq,
+    nodeId: save.nodeId,
+    vars: { ...save.vars },
+    msgCursor,
+    at: now,
+  };
+  return {
+    save: {
+      ...save,
+      nodeId: trigger.to,
+      vars: applyVarEffects(save.vars, trigger.effects),
+      seq,
+      turnsInNode: 0,
+      updatedAt: now,
+      // Bounded: 50 beats of history is more than any script this app will run,
+      // and an unbounded array in a row read on every tick grows without limit.
+      history: [...save.history, snapshot].slice(-50),
+    },
+    effects: {
+      memWrite: trigger.effects?.memWrite ?? [],
+      moment: trigger.effects?.moment,
+    },
+  };
+}
+
+/* ==================================================================== */
+/* Side effects (the part rollback has to be able to undo)               */
+/* ==================================================================== */
+
+/** Story-caused rows carry this tag so rollback can find every one of them. */
+export function storyTag(scriptId: string, seq: number): string {
+  return `${scriptId}#${seq}`;
+}
+
+export interface MaterializeDeps {
+  putMemory: (f: MemoryFactVM) => Promise<void>;
+  putMoment: (m: MomentVM) => Promise<void>;
+}
+
+/**
+ * Write a beat's side effects, each tagged with `(scriptId, seq)`.
+ *
+ * The tag is not bookkeeping — it is the ONLY thing that makes rollback
+ * possible. An untagged story-written fact is indistinguishable from something
+ * the user actually said, and would survive a rollback forever.
+ */
+export async function materializeEffects(
+  save: StorySaveRow,
+  effects: AdvanceResult['effects'],
+  bindings: Record<string, string>,
+  now: number,
+  deps: MaterializeDeps,
+): Promise<void> {
+  const tag = storyTag(save.scriptId, save.seq);
+  for (const [i, w] of effects.memWrite.entries()) {
+    const subjectId = bindings[w.charId] ?? w.charId;
+    await deps.putMemory({
+      id: `story_${tag}_${i}`,
+      subjectId,
+      fact: w.fact.slice(0, 50),
+      importance: 4,
+      sensitivity: 'normal',
+      evidenceMsgIds: [],
+      status: 'confirmed',
+      isPinned: false,
+      createdAt: now,
+      source: 'story',
+      confidence: 1,
+      refCount: 0,
+      storySaveId: save.id,
+      storyTag: tag,
+    } as MemoryFactVM);
+  }
+  if (effects.moment) {
+    await deps.putMoment({
+      id: `story_moment_${tag}`,
+      authorId: bindings[effects.moment.authorId] ?? effects.moment.authorId,
+      text: effects.moment.text,
+      imageRefs: [],
+      isNsfw: false,
+      createdAt: now,
+      storySaveId: save.id,
+      storyTag: tag,
+    } as MomentVM);
+  }
+}
+
+/* ==================================================================== */
+/* Rollback                                                              */
+/* ==================================================================== */
+
+export interface RollbackResult {
+  save: StorySaveRow;
+  /** Memory facts retracted. */
+  memoryRemoved: string[];
+  /** Moments posts retracted. */
+  momentsRemoved: string[];
+}
+
+/**
+ * Restore a save to an earlier beat, retracting everything the undone beats did.
+ *
+ * The cascade is the whole point. Restoring only the cursor leaves a character
+ * remembering something that, after the rollback, never happened — and unlike
+ * everything else in story mode, that contamination escapes into ordinary chat
+ * and cannot be undone by playing on. Anything tagged with a seq greater than
+ * the target is removed, unconditionally.
+ */
+export async function rollbackTo(
+  save: StorySaveRow,
+  targetSeq: number,
+  now: number,
+): Promise<RollbackResult> {
+  const snapshot = [...save.history].reverse().find((h) => h.seq <= targetSeq);
+  const restored: StorySaveRow = snapshot
+    ? {
+        ...save,
+        nodeId: snapshot.nodeId,
+        vars: { ...snapshot.vars },
+        seq: snapshot.seq,
+        turnsInNode: 0,
+        updatedAt: now,
+        history: save.history.filter((h) => h.seq < snapshot.seq),
+      }
+    : { ...save, updatedAt: now };
+
+  const memoryRemoved: string[] = [];
+  const momentsRemoved: string[] = [];
+
+  // Every story-tagged row from a beat after the target, across BOTH surfaces.
+  // Missing one surface is exactly the failure the tests deliberately provoke.
+  const facts = await idbGetAll<MemoryFactVM & { storyTag?: string }>('memory_facts');
+  for (const f of facts) {
+    if (!isFromLaterBeat(f.storyTag, save.scriptId, restored.seq)) continue;
+    await repo.deleteMemory(f.id);
+    memoryRemoved.push(f.id);
+  }
+
+  const moments = await idbGetAll<MomentVM & { storyTag?: string }>('moments');
+  for (const m of moments) {
+    if (!isFromLaterBeat(m.storyTag, save.scriptId, restored.seq)) continue;
+    await idbDelete('moments', m.id);
+    momentsRemoved.push(m.id);
+  }
+
+  await putSave(restored);
+  return { save: restored, memoryRemoved, momentsRemoved };
+}
+
+/** Was this row written by a beat later than the one we are rolling back to? */
+export function isFromLaterBeat(
+  tag: string | undefined,
+  scriptId: string,
+  targetSeq: number,
+): boolean {
+  if (!tag) return false;
+  const at = tag.lastIndexOf('#');
+  if (at <= 0) return false;
+  if (tag.slice(0, at) !== scriptId) return false;
+  const seq = Number(tag.slice(at + 1));
+  return Number.isFinite(seq) && seq > targetSeq;
+}
+
+/** End a run. The save stays (it is a record), it simply stops being active. */
+export async function endRun(save: StorySaveRow, now: number): Promise<StorySaveRow> {
+  const ended = { ...save, isActive: false, updatedAt: now };
+  await putSave(ended);
+  return ended;
+}
