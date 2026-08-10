@@ -28,6 +28,7 @@ import { getExtractMarker, setExtractMarker } from '../ai/memory-service';
 import { tierFor, globalTier } from '../lib/nsfw-tier';
 import { logError } from '../lib/errlog';
 import { moodOf, moodParams } from '../lib/mood';
+import { affectFor } from '../lib/affect';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
@@ -112,9 +113,12 @@ export function useSchedulerRuntime(enabled: boolean): void {
         const now = Date.now();
         const state = await noteProactiveSent(persona.contactId, now);
         const edge = await getEdge('self', persona.contactId, now);
+        // Pacing now answers to how she FEELS, not only to the day's dice: the
+        // affect pulse rides the same proactMul the mood already used (M-E3).
+        const { params } = await affectFor(persona.contactId, now);
         await scheduleHeartbeat(persona, convId, now, lastMsgAt, {
           affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
-          proactMul: moodParams(moodOf(persona.contactId, now).key).proactMul,
+          proactMul: params.proactMul,
           notBefore: state.cooldownUntil || undefined,
         });
       },

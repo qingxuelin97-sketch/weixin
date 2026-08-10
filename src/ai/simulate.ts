@@ -17,6 +17,7 @@
  */
 import { seededRng } from '../lib/money';
 import { isActiveAt } from './heartbeat';
+import { agendaAt } from './lifeline';
 import type { PersonaVM } from '../data/types';
 
 const MINUTE = 60_000;
@@ -239,6 +240,11 @@ function pickTimes(
   for (let attempt = 0; attempt < 40 && out.length < count; attempt++) {
     const t = Math.round(lo + rng() * (hi - lo));
     if (!isActiveAt(persona, t)) continue;
+    // Awake is not the same as available (M-E3). `agendaAt` is a pure seeded
+    // function of (contactId, t) — safe here, where `simulate` must stay a pure
+    // function of its arguments (constitution rule #4). The affect pulse, which
+    // is stored state, is deliberately NOT consulted anywhere in this file.
+    if (agendaAt(persona, t).busy) continue;
     // Keep a human gap between two messages from the same person.
     if (out.some((x) => Math.abs(x - t) < 3 * MINUTE)) continue;
     out.push(t);

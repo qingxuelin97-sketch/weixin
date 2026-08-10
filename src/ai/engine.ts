@@ -26,6 +26,14 @@ import { logError } from '../lib/errlog';
 import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
+import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
+import { lifelineAt, lifelineDirective } from './lifeline';
+import {
+  detectThreads,
+  threadsFromFacts,
+  pickThread,
+  threadDirective,
+} from './threads';
 
 export interface EngineHooks {
   /** Persist + push a new message to the UI. Returns the saved message (with id). */
@@ -56,6 +64,32 @@ function releaseInFlight(convId: string, ctrl: AbortController): void {
 }
 
 const RECENT_WINDOW = 30; // messages of context sent to the model
+
+/**
+ * When this agent's life "started", for the lifeline walk. A contact added
+ * today must not begin mid-arc as if it had a past it never had — so the epoch
+ * is derived from the id, giving each agent a stable but distinct phase.
+ */
+function personaEpoch(persona: PersonaVM, peer: ContactVM): number {
+  const seeded = seededRng(`epoch:${persona.contactId}:${peer.id}`)();
+  // Anchored to a fixed date, offset by up to 60 days — deterministic forever,
+  // and never dependent on when the app happened to be installed.
+  return 1_735_689_600_000 + Math.floor(seeded * 60 * 86_400_000);
+}
+
+/** Threads already followed up on. One question per thread, ever. */
+async function usedThreadIds(contactId: string): Promise<Set<string>> {
+  const rows = (await repo.getSetting<string[]>(`threads:${contactId}`)) ?? [];
+  return new Set(Array.isArray(rows) ? rows : []);
+}
+
+async function markThreadUsed(contactId: string, threadId: string): Promise<void> {
+  const used = await usedThreadIds(contactId);
+  used.add(threadId);
+  // Bounded: only the newest 200 matter, and an unbounded settings row would
+  // grow forever in a store that is read on every proactive message.
+  await repo.putSetting(`threads:${contactId}`, [...used].slice(-200));
+}
 
 /** Persona row → the prompt layer's view. Shared with the Moments engine. */
 export function toPersonaView(p: PersonaVM, name: string): PersonaView {
@@ -128,6 +162,9 @@ export async function sendUserMessage(
   // bookkeeping must never delay the visible reply.
   void recordRelEvent('self', peer.id, 'user_reply', hooks.now(), persona.affinityInit).catch(() => {});
   void noteUserReplied(peer.id).catch(() => {});
+  // How she FEELS about it, not just how close you are. `user_reply` is the
+  // small baseline good thing; an apology or an insult is classified separately.
+  void recordAffect(peer.id, classifyUserMessage(text) ?? 'user_reply', hooks.now()).catch(() => {});
 
   // 2) Build context, 3) generate and play.
   await generateAndPlay(convId, peer, persona, globalTier, hooks, ctrl);
@@ -228,6 +265,10 @@ async function generateAndPlayInner(
   const relationsRec = relationsForPrompt(persona.relations, nameOf);
   relationsRec['你们现在的熟络程度'] = tierDirective(relationTier(aff));
   const mood = moodOf(peer.id, hooks.now());
+  // The day's mood, shifted by what has actually happened between you (M-E3).
+  // Falls back to the plain mood line when the pulse is small — a prompt that
+  // describes a feeling she does not have is worse than saying nothing.
+  const { affect } = await affectFor(peer.id, hooks.now());
   let system = assembleSystemPrompt({
     persona: toPersonaView(persona, peer.remark ?? peer.name),
     relations: relationsRec,
@@ -236,9 +277,14 @@ async function generateAndPlayInner(
     scene: {
       kind: 'single',
       now: new Date(hooks.now()),
-      moodLine: mood.line,
+      moodLine: affectLine(mood.line, affect),
     },
   });
+  // Appended AFTER scene — the six-layer order is fixed (constitution §2), and
+  // new content only ever goes on the end so the prompt prefix stays cacheable.
+  const arcs = lifelineAt(persona, hooks.now(), personaEpoch(persona, peer));
+  const arcLine = lifelineDirective(arcs);
+  if (arcLine) system += `\n\n${arcLine}`;
   if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
 
   const messages = [
@@ -415,7 +461,25 @@ export async function sendProactiveMessage(
           m.text &&
           (at ?? hooks.now()) - m.createdAt < 24 * 3_600_000,
       );
-      material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+      // Picking a loose thread back up outranks any generic opener: "上次你说
+      // 要去看牙，去了吗" is the single most human thing a friend does, and
+      // this app could not do it at all before M-E3.
+      const recent = await repo.getMessages(convId, { limit: 40 });
+      const used = await usedThreadIds(peer.id);
+      const thread = pickThread(
+        [...detectThreads(recent, convId), ...threadsFromFacts(facts, peer.id)],
+        recent,
+        at ?? hooks.now(),
+        { used, seed: `${convId}:${lastMsg?.id ?? 0}` },
+      );
+      if (thread) {
+        material = threadDirective(thread, at ?? hooks.now());
+        // Marked BEFORE the generation: a thread asked about once is closed
+        // forever, and a failed generation must not make her ask again.
+        await markThreadUsed(peer.id, thread.id);
+      } else {
+        material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+      }
     }
   } catch (e) {
     releaseInFlight(convId, ctrl);

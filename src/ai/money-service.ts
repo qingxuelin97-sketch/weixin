@@ -15,6 +15,7 @@ import { splitLuckyPacket } from '../lib/money';
 import { claimShare, isFullyClaimed, markBestLuck, appendTx, grabDelayMs } from '../lib/wallet';
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
+import { recordAffect } from '../lib/affect';
 import { recordRelEvent } from './relationship';
 
 export interface MoneyHooks {
@@ -123,6 +124,11 @@ export async function claimRedPacket(
   // of one's own packet — that's bookkeeping, not a gesture).
   if (claimerId !== rp.senderId) {
     void recordRelEvent(rp.senderId, claimerId, 'rp_received', now).catch(() => {});
+    // …and it lifts her mood, not just the relationship number (M-E3). An AI
+    // grabbing a packet YOU sent is the clearest positive event in the app.
+    if (rp.senderId === 'self' && claimerId !== 'self') {
+      void recordAffect(claimerId, 'gift_received', now).catch(() => {});
+    }
   }
 
   // Once the last share is gone, settle "best luck" and close the packet.
@@ -215,6 +221,9 @@ export async function acceptTransfer(transferId: string, hooks: MoneyHooks): Pro
   }
   // A completed transfer is a strong warm gesture between the two parties.
   void recordRelEvent(t.fromId, t.toId, 'transfer_received', now).catch(() => {});
+  if (t.fromId === 'self' && t.toId !== 'self') {
+    void recordAffect(t.toId, 'gift_received', now).catch(() => {});
+  }
 
   const msgs = await repo.getMessages(t.convId, { limit: 200 });
   const target = msgs.find((m) => m.type === 'transfer' && m.meta?.transferId === t.id);
