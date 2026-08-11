@@ -73,7 +73,18 @@ async function nativePlugin(): Promise<LocalNotificationsPlugin | null> {
   if (!Capacitor.isNativePlatform()) return null;
   try {
     const mod = await import('@capacitor/local-notifications');
-    return mod.LocalNotifications as unknown as LocalNotificationsPlugin;
+    // Same trap as http.ts's nativeHttp (see the long comment there): resolving
+    // a promise WITH the plugin proxy makes JS probe `.then`, which the proxy
+    // forwards as a native call — `"LocalNotifications.then()" is not
+    // implemented on android` — and the promise rejects. This is why device
+    // notifications have been silently dead. Only a plain wrapper leaves here.
+    const proxy = mod.LocalNotifications as unknown as LocalNotificationsPlugin;
+    return {
+      requestPermissions: () => proxy.requestPermissions(),
+      schedule: (opts) => proxy.schedule(opts),
+      cancel: (opts) => proxy.cancel(opts),
+      getPending: () => proxy.getPending(),
+    };
   } catch {
     return null;
   }

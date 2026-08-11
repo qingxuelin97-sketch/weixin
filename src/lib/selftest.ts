@@ -27,6 +27,7 @@
  */
 import { Capacitor } from '@capacitor/core';
 import { repo } from '../db/repo';
+import { httpJson } from '../llm/http';
 import { logError } from './errlog';
 
 /** The three preset origins. Kept literal — this file must not import presets
@@ -49,9 +50,15 @@ export interface SelftestReport {
   platform: string;
   origin: string;
   online: boolean;
-  /** endpoint id → channel → outcome */
-  results: Record<string, { webFetch: ProbeOutcome; bridge: ProbeOutcome }>;
-  /** The verdict CI asserts on: every endpoint reachable via ≥1 channel. */
+  /**
+   * endpoint id → channel → outcome. `webFetch`/`bridge` are the RAW channels;
+   * `app` goes through the app's own `httpJson` wrapper — the path chat
+   * actually uses. The distinction is not academic: the bug that killed every
+   * APK lived in the wrapper while both raw channels were fine, so a matrix
+   * without the app row was green over a dead app.
+   */
+  results: Record<string, { webFetch: ProbeOutcome; bridge: ProbeOutcome; app: ProbeOutcome }>;
+  /** The verdict CI asserts on: every endpoint reachable via the APP path. */
   allReachable: boolean;
 }
 
@@ -115,14 +122,34 @@ export function reachable(o: ProbeOutcome): boolean {
   return typeof o.status === 'number';
 }
 
+/** The APP channel: the exact wrapper (`httpJson`) every chat request uses. */
+async function probeApp(url: string): Promise<ProbeOutcome> {
+  const t0 = Date.now();
+  try {
+    const res = await httpJson({
+      url,
+      method: 'GET',
+      headers: { Authorization: 'Bearer selftest-invalid-key' },
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
+    return { status: res.status, ms: Date.now() - t0 };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e), ms: Date.now() - t0 };
+  }
+}
+
 /** Run the full matrix. Pure I/O, no app state touched beyond the report row. */
 export async function runSelftest(now: number): Promise<SelftestReport> {
   const results: SelftestReport['results'] = {};
   // Sequential per endpoint (channels in parallel): six concurrent sockets on
   // a cold WebView have produced flaky timeouts that read as failures.
   for (const t of TARGETS) {
-    const [webFetch, bridge] = await Promise.all([probeWebFetch(t.url), probeBridge(t.url)]);
-    results[t.id] = { webFetch, bridge };
+    const [webFetch, bridge, app] = await Promise.all([
+      probeWebFetch(t.url),
+      probeBridge(t.url),
+      probeApp(t.url),
+    ]);
+    results[t.id] = { webFetch, bridge, app };
   }
   const report: SelftestReport = {
     at: now,
@@ -130,10 +157,9 @@ export async function runSelftest(now: number): Promise<SelftestReport> {
     origin: typeof location !== 'undefined' ? location.origin : '',
     online: typeof navigator !== 'undefined' ? navigator.onLine : true,
     results,
-    allReachable: TARGETS.every((t) => {
-      const r = results[t.id];
-      return reachable(r.webFetch) || reachable(r.bridge);
-    }),
+    // The verdict follows the APP row: raw channels working while the app's own
+    // wrapper is broken is a FAILURE (it was, for three weeks).
+    allReachable: TARGETS.every((t) => reachable(results[t.id].app)),
   };
 
   // One line, one token, machine-readable — CI's grep and nothing else.

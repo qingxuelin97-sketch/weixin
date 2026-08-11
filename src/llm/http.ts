@@ -26,7 +26,25 @@ function abortError(): LlmError {
   return new LlmError('network', 'aborted');
 }
 
-/** Lazily resolve the native bridge; returns null in web/test contexts. */
+/**
+ * Lazily resolve the native bridge; returns null in web/test contexts.
+ *
+ * THE BUG THAT KILLED EVERY APK BUILD (found 2026-08-11 via the device's own
+ * error log): this used to `return mod.CapacitorHttp` — the plugin PROXY —
+ * from an async function. Capacitor plugin objects forward ANY property access
+ * as a native method call, and JS promise resolution probes `.then` on every
+ * returned value to decide if it is a thenable. So resolving with the proxy
+ * made the runtime call the native method literally named "then", Android
+ * answered `"CapacitorHttp.then()" is not implemented`, and the promise
+ * REJECTED — every `await nativeHttp()` on a real device threw before any
+ * request was even attempted, on every build since M2. Web never touched the
+ * proxy (isNativePlatform false → early null), which is exactly why the
+ * browser always worked while the APK was totally dead.
+ *
+ * RULE, now enforced by tests/unit/plugin-proxy.test.ts: a Capacitor plugin
+ * proxy must NEVER be the resolution value of a promise. Wrap it in a plain
+ * object whose methods close over the proxy.
+ */
 async function nativeHttp(): Promise<null | {
   request: (o: unknown) => Promise<{ status: number; data: unknown }>;
 }> {
@@ -34,9 +52,13 @@ async function nativeHttp(): Promise<null | {
     const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
     if (!cap?.isNativePlatform?.()) return null;
     const mod = await import('@capacitor/core');
-    // CapacitorHttp is part of @capacitor/core.
-    return (mod as unknown as { CapacitorHttp: { request: (o: unknown) => Promise<{ status: number; data: unknown }> } })
-      .CapacitorHttp;
+    const proxy = (
+      mod as unknown as {
+        CapacitorHttp: { request: (o: unknown) => Promise<{ status: number; data: unknown }> };
+      }
+    ).CapacitorHttp;
+    // A plain object has no `then`, so promise assimilation cannot detonate.
+    return { request: (o: unknown) => proxy.request(o) };
   } catch {
     return null;
   }

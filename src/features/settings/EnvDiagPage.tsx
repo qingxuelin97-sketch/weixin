@@ -90,6 +90,15 @@ export function EnvDiagPage() {
       '# 环境自检',
       ...(probes ?? []).map((p) => `${p.ok ? '✅' : '❌'} ${p.label}：${p.detail}`),
       '',
+      '# 传输自检（免密钥；任何 HTTP 状态码=通）',
+      ...(selftest
+        ? Object.entries(selftest.results).map(([id, r]) => {
+            const f = (o: { status?: number; error?: string }) =>
+              typeof o.status === 'number' ? `✓${o.status}` : `✗${o.error ?? '?'}`;
+            return `${id}: fetch=${f(r.webFetch)} 桥=${f(r.bridge)} App=${f(r.app)}`;
+          })
+        : ['（还没有自检记录）']),
+      '',
       '# 错误日志',
       ...(errors.length
         ? errors.map((e) => `[${new Date(e.at).toLocaleTimeString('zh-CN')}] ${e.scope}: ${e.message}`)
@@ -139,9 +148,11 @@ export function EnvDiagPage() {
                 <div className="settings__row settings__row--divided" key={id}>
                   <span className="settings__label">{id}</span>
                   <span className="settings__value">
-                    fetch {reachable(r.webFetch) ? `✓${r.webFetch.status}` : `✗${(r.webFetch.error ?? '').slice(0, 24)}`}
+                    fetch {reachable(r.webFetch) ? `✓${r.webFetch.status}` : `✗${(r.webFetch.error ?? '').slice(0, 20)}`}
                     {' · '}
-                    桥 {reachable(r.bridge) ? `✓${r.bridge.status}` : `✗${(r.bridge.error ?? '').slice(0, 24)}`}
+                    桥 {reachable(r.bridge) ? `✓${r.bridge.status}` : `✗${(r.bridge.error ?? '').slice(0, 20)}`}
+                    {' · '}
+                    App {reachable(r.app) ? `✓${r.app.status}` : `✗${(r.app.error ?? '').slice(0, 20)}`}
                   </span>
                 </div>
               ))}
