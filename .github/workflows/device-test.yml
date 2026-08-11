@@ -81,8 +81,13 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # NOTE: emulator-runner executes this with /usr/bin/sh (dash), not
+          # bash — `set -o pipefail` is an "Illegal option" there and killed
+          # run #1 before the install. POSIX flags only. The one pipeline below
+          # (grep|tail|tee) is allowed to "succeed" empty: the Verdict step
+          # checks the FILE, which is the honest signal anyway.
           script: |
-            set -euxo pipefail
+            set -eux
             adb install android/app/build/outputs/apk/debug/app-debug.apk
             adb logcat -c || true
             adb shell am start -n com.personal.weixinai/.MainActivity
