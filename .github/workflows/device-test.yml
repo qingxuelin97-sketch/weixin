@@ -1,0 +1,138 @@
+# The device loop (M-E). The real-device bug survived several rounds because
+# every symptom traveled through a human as a one-line report — debugging over a
+# telephone. This workflow removes the human from the loop: build the SAME APK a
+# phone gets, boot an Android emulator (GitHub's Linux runners expose KVM),
+# install it, let the app run its own transport self-test, and read the verdict
+# out of logcat. The agent triggers this and reads the logs itself.
+#
+# The self-test is keyless: probing each provider origin with a bogus bearer
+# token cannot succeed as an API call, but ANY HTTP status coming back (401,
+# 404…) proves DNS+TLS+HTTP(+CORS for the WebView channel) worked end to end.
+# Only "failed to fetch"/timeout means the transport is broken. So no secrets
+# are needed here, ever.
+name: Device test (emulator)
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: '备注（可选）'
+        required: false
+  push:
+    branches: ['claude/**']
+    # Only the workflow file itself: the first push (which adds it) starts run
+    # #1 automatically; later runs are dispatched on demand. Building 15 min of
+    # emulator on every src/ push would burn minutes for nothing.
+    paths: ['.github/workflows/device-test.yml']
+
+jobs:
+  emulator:
+    name: run APK on emulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # JDK 21, not 17 — capacitor-android 7.6.x needs it (see release.yml).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+      - name: Build web bundle
+        run: pnpm build
+
+      - name: Generate the native project
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Build debug APK
+        run: cd android && ./gradlew --no-daemon assembleDebug
+
+      # Without this, /dev/kvm is root-only and the emulator falls back to
+      # software emulation — which on x86_64 system images means it effectively
+      # never boots inside the job timeout.
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Boot emulator, install, run, read the device's own report
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          # API 33: modern-enough System WebView (the app's JS targets modern
+          # Chrome), still the battle-tested CI image generation.
+          api-level: 33
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            set -euxo pipefail
+            adb install android/app/build/outputs/apk/debug/app-debug.apk
+            adb logcat -c || true
+            adb shell am start -n com.personal.weixinai/.MainActivity
+            # Self-test arms ~2.5s after mount and probes 3 endpoints × 2
+            # channels with 10s deadlines; 75s covers the worst case plus boot.
+            sleep 75
+            adb exec-out screencap -p > screen.png || true
+            adb logcat -d > logcat.txt
+            # The one line the whole loop exists to obtain.
+            grep -a 'AIWX-SELFTEST' logcat.txt | tail -1 | tee selftest-line.txt
+            # Fatal WebView/native crashes would explain "nothing happens" —
+            # surface them in the job log either way.
+            grep -aE 'FATAL EXCEPTION|AndroidRuntime.*FATAL|E Capacitor' logcat.txt | head -20 || true
+
+      - name: Verdict
+        run: |
+          set -euo pipefail
+          if [ ! -s selftest-line.txt ]; then
+            echo "::error::设备没有产出自检行——应用可能白屏或崩溃，看 logcat 工件"
+            exit 1
+          fi
+          # Strip the logcat prefix down to the JSON payload after the tag.
+          # Console lines can be truncated or wrapped by logcat; jq failing to
+          # parse IS a finding (report it, don't mask it).
+          JSON=$(sed -n 's/.*AIWX-SELFTEST //p' selftest-line.txt)
+          echo "$JSON" | jq . || { echo "::error::自检行不是合法 JSON（可能被 logcat 截断）"; exit 1; }
+          {
+            echo '### 设备自检矩阵'
+            echo '```'
+            echo "$JSON" | jq -r '.results | to_entries[] |
+              "\(.key): fetch=\(.value.webFetch.status // .value.webFetch.error) bridge=\(.value.bridge.status // .value.bridge.error)"'
+            echo '```'
+            echo ''
+            echo "- platform: \`$(echo "$JSON" | jq -r .platform)\` · origin: \`$(echo "$JSON" | jq -r .origin)\` · online: \`$(echo "$JSON" | jq -r .online)\`"
+            echo "- 判定：任何 HTTP 状态码（含 401/404）= 传输通；只有 failed to fetch / timeout 才是断"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$JSON" | jq -r '.results | to_entries[] |
+            "\(.key): fetch=\(.value.webFetch.status // .value.webFetch.error) bridge=\(.value.bridge.status // .value.bridge.error)"'
+          # The assertion: every endpoint reachable via at least one channel.
+          echo "$JSON" | jq -e '.allReachable == true' > /dev/null \
+            || { echo "::error::有端点两条通道都不通——这就是真机症状的复现点"; exit 1; }
+
+      - name: Upload device evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-evidence-${{ github.run_number }}
+          path: |
+            logcat.txt
+            screen.png
+            selftest-line.txt
+          retention-days: 14
+          if-no-files-found: warn

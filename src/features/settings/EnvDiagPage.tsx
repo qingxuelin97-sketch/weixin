@@ -9,6 +9,8 @@ import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { SubNav } from '../../components/SubNav';
 import { getUsage, KIND_LABELS, type DayUsage, type UsageKind } from '../../lib/usage';
+import { getLastSelftest, runSelftest, reachable, type SelftestReport } from '../../lib/selftest';
+import { useGuard } from '../../app/useGuard';
 import { repo } from '../../db/repo';
 import { getErrors, clearErrors, type ErrEntry } from '../../lib/errlog';
 import { saveTextFile } from '../../lib/save-file';
@@ -70,7 +72,10 @@ async function runProbes(): Promise<Probe[]> {
 }
 
 export function EnvDiagPage() {
+  const guard = useGuard();
   const [usage, setUsage] = useState<{ today: DayUsage; history: DayUsage[] } | null>(null);
+  const [selftest, setSelftest] = useState<SelftestReport | undefined>(undefined);
+  const [probing, setProbing] = useState(false);
   const [probes, setProbes] = useState<Probe[] | null>(null);
   const [errors, setErrors] = useState<ErrEntry[]>([]);
 
@@ -93,7 +98,17 @@ export function EnvDiagPage() {
 
   useEffect(() => {
     void getUsage(Date.now()).then(setUsage).catch(() => {});
+    void getLastSelftest().then(setSelftest).catch(() => {});
   }, []);
+
+  const reprobe = async () => {
+    setProbing(true);
+    try {
+      setSelftest(await runSelftest(Date.now()));
+    } finally {
+      setProbing(false);
+    }
+  };
 
   return (
     <>
@@ -114,6 +129,33 @@ export function EnvDiagPage() {
               <span className="field__hint">检测中…</span>
             </div>
           )}
+        </div>
+
+        <div className="settings__group">
+          <div className="settings__group-title">传输自检（免密钥，任何 HTTP 状态码=通）</div>
+          {selftest ? (
+            <>
+              {Object.entries(selftest.results).map(([id, r]) => (
+                <div className="settings__row settings__row--divided" key={id}>
+                  <span className="settings__label">{id}</span>
+                  <span className="settings__value">
+                    fetch {reachable(r.webFetch) ? `✓${r.webFetch.status}` : `✗${(r.webFetch.error ?? '').slice(0, 24)}`}
+                    {' · '}
+                    桥 {reachable(r.bridge) ? `✓${r.bridge.status}` : `✗${(r.bridge.error ?? '').slice(0, 24)}`}
+                  </span>
+                </div>
+              ))}
+              <p className="settings__hint">
+                {new Date(selftest.at).toLocaleString('zh-CN')} · {selftest.platform} · {selftest.origin}
+                {selftest.allReachable ? ' · 每个端点至少一条通道可达' : ' · 有端点两条通道都不通'}
+              </p>
+            </>
+          ) : (
+            <p className="settings__hint">还没有自检记录。原生启动几秒后会自动跑一次。</p>
+          )}
+          <button className="btn-primary" disabled={probing} onClick={() => guard('selftest', reprobe)}>
+            {probing ? '探测中…' : '现在重测'}
+          </button>
         </div>
 
         <div className="settings__group">
