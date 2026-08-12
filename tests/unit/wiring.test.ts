@@ -106,6 +106,21 @@ describe('the gift planner is actually consulted', () => {
   });
 });
 
+describe('an incoming call can actually reach the screen', () => {
+  it('the overlay is mounted in the shell, not behind a route', () => {
+    // A call you have to navigate to is not a call. This is also why the
+    // `direction: "in"` branch in render-msg sat unreachable for two
+    // milestones: there was a describer, and no way to produce one.
+    expect(read('src/App.tsx').includes('<IncomingCall />')).toBe(true);
+  });
+
+  it('the planner and the handler are both wired', () => {
+    expect(read('src/ai/gift-service.ts').includes('planCall(')).toBe(true);
+    expect(runtime.includes('considerCall(')).toBe(true);
+    expect(runtime.includes("registerHandler('ai_call'")).toBe(true);
+  });
+});
+
 describe('the bubble types she never used are finally offered', () => {
   it('voice is proposed situationally, not just listed as legal', () => {
     // `voice` (M2) and `image` (M1) were both legal bubble types that nothing

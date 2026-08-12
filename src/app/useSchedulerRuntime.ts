@@ -18,7 +18,7 @@ import {
   actionExists,
 } from '../ai/scheduler';
 import { claimRedPacket, acceptTransfer } from '../ai/money-service';
-import { runGift, considerGift, considerGroupGift } from '../ai/gift-service';
+import { runGift, considerGift, considerCall, considerGroupGift } from '../ai/gift-service';
 import { sendProactiveMessage } from '../ai/engine';
 import { sendGroupProactiveMessage } from '../ai/group-engine';
 import { scheduleHeartbeat, shouldNudge } from '../ai/heartbeat';
@@ -51,6 +51,7 @@ import {
   handleAgentDm,
   handleMomentPost,
   handleAiMoney,
+  handleAiCall,
   chainHeartbeat as chainHeartbeatStep,
   chainAgentDm as chainAgentDmStep,
   chainMomentPost as chainMomentPostStep,
@@ -108,6 +109,17 @@ export function useSchedulerRuntime(enabled: boolean): void {
       runMomentPost: async (persona, peer, at) => {
         const s = useAppStore.getState();
         await runMomentPost(persona, peer, s.contacts, s.personaFor, momentsHooks, at);
+      },
+      // A call can only ring while the app is open — a WebView cannot wake the
+      // screen — so this is a plain store write, and returns whether it took.
+      ringUser: (convId, contactId, reason) => {
+        const st = useAppStore.getState();
+        // Never ring over a call already in progress, and never while the user
+        // is typing in that very conversation: a call is a synchronous demand
+        // for attention, and the worst possible moment for one is mid-sentence.
+        if (st.incomingCall || st.activeConvId === convId) return false;
+        st.setIncomingCall({ convId, contactId, reason, at: Date.now() });
+        return true;
       },
       runGift: (p) =>
         runGift(p, {
@@ -173,6 +185,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerHandler('moment_like', (p) => handleMomentLike(deps, p));
     registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
     registerHandler('ai_money', (p) => handleAiMoney(deps, p));
+    registerHandler('ai_call', (p) => handleAiCall(deps, p));
 
     // Story mode's beat (M-E5, chained in M-G0).
     //
@@ -463,12 +476,12 @@ async function runForegroundPass(): Promise<void> {
     // at. The planner says no on almost every call (see money-motive).
     try {
       const tail = s.messagesFor(conv.id);
-      await considerGift({
-        conv,
-        persona,
-        now,
-        recent: tail.length ? tail.slice(-30) : await repo.getMessages(conv.id, { limit: 30 }),
-      });
+      const recent = tail.length ? tail.slice(-30) : await repo.getMessages(conv.id, { limit: 30 });
+      await considerGift({ conv, persona, now, recent });
+      // …and, far more rarely, whether she would actually ring you. A call is
+      // the most intrusive thing this app can do — see call-motive for the
+      // stack of reasons not to.
+      await considerCall({ conv, persona, now, recent });
     } catch (e) {
       // Never let the money path block the rest of the foreground pass.
       logError('gift.plan', e);

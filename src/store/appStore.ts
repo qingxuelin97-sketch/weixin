@@ -61,6 +61,16 @@ interface AppState {
   toast: string | null;
   showToast: (msg: string) => void;
 
+  /**
+   * An agent is calling right now (M-H1). Null = nobody is.
+   *
+   * Kept in the store rather than routed to a page: the overlay has to be able
+   * to appear over WHATEVER the user is looking at — that is what makes it a
+   * call rather than a screen you navigated to.
+   */
+  incomingCall: { convId: string; contactId: string; reason: string; at: number } | null;
+  setIncomingCall: (call: AppState['incomingCall']) => void;
+
   /** Moments feed, newest first. Loaded lazily — the feed is not on the hot path. */
   moments: MomentVM[];
   momentsLoaded: boolean;
@@ -205,6 +215,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   typing: {},
   activeConvId: null,
   toast: null,
+  incomingCall: null,
   moments: [],
   momentsLoaded: false,
   momentLikes: {},
@@ -283,6 +294,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       hydrateInFlight = false;
     }
   },
+
+  setIncomingCall: (call) => set({ incomingCall: call }),
 
   showToast: (msg) => {
     set({ toast: msg });

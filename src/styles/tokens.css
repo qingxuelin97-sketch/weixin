@@ -114,6 +114,7 @@
   --color-viewer-bg: #000; /* full-screen image viewer backdrop */
   --color-call-bg: #2b3038; /* full-screen call backdrop */
   --color-call-hangup: var(--wx-red);
+  --color-call-accept: var(--wx-green); /* answer an incoming call */
   --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */
   --color-on-color-divider: rgba(255, 255, 255, 0.2); /* hairline on a colored surface */
   --color-on-color-fill: rgba(255, 255, 255, 0.25); /* translucent chip on a colored surface */

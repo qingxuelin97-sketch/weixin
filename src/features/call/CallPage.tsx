@@ -7,7 +7,7 @@
  * aborted dials), which is exactly the trace a real call leaves in WeChat.
  */
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import { startRingback } from '../../lib/sound';
@@ -18,15 +18,19 @@ type Phase = 'dialing' | 'active' | 'ended';
 
 export function CallPage() {
   const { convId = '' } = useParams();
+  const [params] = useSearchParams();
+  // `?in=1` — the user answered a call SHE placed (M-H1). There is nothing to
+  // dial and nobody to wait for, so the shell opens already connected.
+  const incoming = params.get('in') === '1';
   const navigate = useNavigate();
   const conv = useAppStore((s) => s.conversationById(convId));
   const contactById = useAppStore((s) => s.contactById);
   const appendMessage = useAppStore((s) => s.appendMessage);
   const peer = conv?.peerId ? contactById(conv.peerId) : undefined;
 
-  const [phase, setPhase] = useState<Phase>('dialing');
+  const [phase, setPhase] = useState<Phase>(incoming ? 'active' : 'dialing');
   const [seconds, setSeconds] = useState(0);
-  const connectedAt = useRef<number | null>(null);
+  const connectedAt = useRef<number | null>(incoming ? Date.now() : null);
   const finished = useRef(false);
 
   // The peer answers after 3–6s of ringing. UI-side timers, not world state —
@@ -59,10 +63,15 @@ export function CallPage() {
     try {
       await appendMessage({
         convId,
-        senderId: 'self',
+        senderId: incoming ? (conv?.peerId ?? 'self') : 'self',
         type: 'call',
         content: durationMs == null ? '已取消' : undefined,
-        meta: durationMs == null ? { direction: 'out' } : { direction: 'out', durationMs },
+        // Direction is whose call it was, not who hung up — an answered call
+        // from her stays an incoming call in the transcript.
+        meta: {
+          direction: incoming ? 'in' : 'out',
+          ...(durationMs == null ? {} : { durationMs }),
+        },
         status: 'sent',
         createdAt: Date.now(),
       });

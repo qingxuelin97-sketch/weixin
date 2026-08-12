@@ -14,7 +14,10 @@ import { repo } from '../db/repo';
 import { enqueue, actionExists } from './scheduler';
 import { getEdge, effectiveAffinity } from './relationship';
 import { occasionsFor, firstSpokeAt } from './occasions';
-import { planGift, planGroupGift, type GiftPlan } from './money-motive';
+import { planGift, planGroupGift, userNeedsCheeringUp, type GiftPlan } from './money-motive';
+import { planCall } from './call-motive';
+import { freshArc } from './rel-arcs';
+import { peersOf } from './engine';
 import { driftedPersona } from './drift';
 import { sendRedPacketFrom, sendTransferFrom, type MoneyHooks } from './money-service';
 
@@ -22,6 +25,17 @@ const DAY = 86_400_000;
 
 /** When she last gave money in this conversation. */
 const giftKey = (convId: string) => `giftAt:${convId}`;
+/** …and when she last rang it. Stamped at PLANNING time, not at ring time: a
+ *  call that was queued and then declined still used up this week's call. */
+const callKey = (convId: string) => `callAt:${convId}`;
+
+export async function lastCallAt(convId: string): Promise<number | undefined> {
+  try {
+    return (await repo.getSetting<number>(callKey(convId))) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function lastGiftAt(convId: string): Promise<number | undefined> {
   try {
@@ -97,6 +111,50 @@ export async function considerGift(args: {
     kind: 'ai_money',
     fireAt: plan.fireAt,
     payload: { ...payloadOf(plan, conv.id, contactId, 1) },
+    now,
+    id,
+  });
+  return true;
+}
+
+/**
+ * Consider ringing the user (M-H1).
+ *
+ * Lives beside the gift planner because it is the same shape of decision — a
+ * rare, motivated, seeded interruption — and shares the liveness read the
+ * caller has already done. The reasons come from the same signals: someone
+ * having a bad day, a date, or news about a mutual friend.
+ */
+export async function considerCall(args: {
+  conv: ConversationVM;
+  persona: PersonaVM;
+  now: number;
+  recent: MessageVM[];
+}): Promise<boolean> {
+  const { conv, persona, now, recent } = args;
+  const id = `call_${conv.id}_${Math.floor(now / DAY)}`;
+  if (await actionExists(id)) return false;
+
+  const edge = await getEdge('self', persona.contactId, now);
+  const facts = await repo.getMemory(persona.contactId).catch(() => []);
+  const occasions = occasionsFor({ now, facts, firstMsgAt: await firstSpokeAt(conv.id) });
+  const plan = planCall({
+    persona: await driftedPersona(persona, now),
+    now,
+    affinity: effectiveAffinity(edge, persona.affinityInit),
+    userInTrouble: userNeedsCheeringUp(recent, now, 2 * 3_600_000),
+    occasion: occasions.some((o) => o.inDays === 0),
+    hasFreshArc: Boolean(await freshArc(persona.contactId, await peersOf(persona), now)),
+    lastMsgAt: recent[recent.length - 1]?.createdAt,
+    lastCallAt: await lastCallAt(conv.id),
+  });
+  if (!plan) return false;
+
+  await repo.putSetting(callKey(conv.id), now);
+  await enqueue({
+    kind: 'ai_call',
+    fireAt: plan.fireAt,
+    payload: { convId: conv.id, contactId: persona.contactId, reason: plan.reason },
     now,
     id,
   });

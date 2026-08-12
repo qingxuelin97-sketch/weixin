@@ -356,6 +356,8 @@ export const SCHEDULED_ACTION_KINDS = [
   'story_tick',
   /** She sends YOU money — red packet or transfer, planned by money-motive. */
   'ai_money',
+  /** She calls YOU. The most intrusive thing this app can do; see call-motive. */
+  'ai_call',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

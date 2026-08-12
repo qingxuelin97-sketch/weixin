@@ -118,6 +118,10 @@ function harness(over: Partial<HandlerDeps> = {}): Harness {
     runMomentComment: async (m, c, _p, authorName) =>
       void calls.push(`comment:${m}:${c.id}:${authorName}`),
     runGift: async (p) => void calls.push(`gift:${p.kind}:${p.contactId}:${p.amountFen}`),
+    ringUser: (convId, contactId) => {
+      calls.push(`ring:${convId}:${contactId}`);
+      return true;
+    },
 
     chainHeartbeat: async (persona, convId) => void calls.push(`chainHb:${persona.contactId}:${convId}`),
     chainAgentDm: async () => void calls.push('chainDm'),

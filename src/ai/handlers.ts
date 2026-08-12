@@ -98,6 +98,8 @@ export interface HandlerDeps {
   ) => Promise<void>;
   /** Deliver a planned red packet / transfer from an agent (M-H1). */
   runGift: (p: GiftPayload) => Promise<void>;
+  /** Raise an incoming-call overlay. Returns false if it could not ring. */
+  ringUser: (convId: string, contactId: string, reason: string) => boolean;
 
   // --- chaining ---
   chainHeartbeat: (persona: PersonaVM, convId: string, lastMsgAt?: number) => Promise<void>;
@@ -382,6 +384,28 @@ export async function handleMomentComment(
   const author = d.contactById(moment.authorId);
   const authorName = moment.authorId === 'self' ? '你' : (author?.remark ?? author?.name ?? '朋友');
   await d.runMomentComment(momentId, commenter, persona, authorName, optNum(payload.at));
+}
+
+/* ------------------------------ calls ------------------------------ */
+
+/**
+ * She calls (M-H1).
+ *
+ * The row was queued minutes ago and a call is synchronous: if the user has
+ * meanwhile started typing in that very conversation, ringing them is the
+ * worst possible timing. Everything else is the same staleness re-check the
+ * money handler does — a call to a deleted contact must not reach the screen.
+ */
+export async function handleAiCall(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const contactId = str(payload.contactId);
+  if (!convId || !contactId) return;
+  if (!d.conversationExists(convId)) return;
+  if (!d.contactById(contactId) || !d.personaFor(contactId)) return;
+  d.ringUser(convId, contactId, str(payload.reason));
 }
 
 /* ------------------------------ money ------------------------------ */

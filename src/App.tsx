@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-d
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { TabScaffold } from './app/TabScaffold';
 import { Toast } from './components/Toast';
+import { IncomingCall } from './features/call/IncomingCall';
 import { ChatListPage } from './features/chat-list/ChatListPage';
 import { ContactsPage } from './features/contacts/ContactsPage';
 import { DiscoverPage } from './features/discover/DiscoverPage';
@@ -131,6 +132,9 @@ export function App() {
           )}
         </ErrorBoundary>
         <Toast />
+        {/* Over everything, on any route: a call you have to navigate to is not
+            a call. Renders nothing until an agent actually rings (M-H1). */}
+        <IncomingCall />
       </div>
     </HashRouter>
   );
