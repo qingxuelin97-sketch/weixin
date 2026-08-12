@@ -199,6 +199,12 @@ const DIRECTOR_SYSTEM = `你是群聊导演，只负责调度，不写台词。
 - 最多选 2-3 人；与话题最相关的人优先。
 - 允许没人说话（冷场也是真实的）——这时 silence 为 true。
 - 刚连续发过言的人降权。
+- 同一个话题聊久了就该有人自然转开或收尾（intent=newtopic / wrapup），
+  但别每轮都换；刚聊完的话题短时间内不要绕回去。
+- 关系好的人容易附和（intent=follow），有过节的人才拉踩（intent=disagree）——
+  没有过节就别硬造对立，一群人整天抬杠比一群人整天附和更假。
+- 群里很久没人说话时，让一个想说的人直接起新话头，而不是接最后一条。
+- topicState 写「现在聊的是什么」，一句话，不要复述整段对话。
 - hint 是给演员的方向提示（不超过 20 字），绝不能是台词原文。
 只输出 JSON：
 {"silence":false,"topicState":"当前话题一句话",
@@ -213,6 +219,15 @@ export interface DirectorContext {
   prevTopic?: string;
   /** One line of social intel, e.g. "小雨和阿哲走得近" (derived from edges). */
   cliqueLine?: string;
+  /**
+   * Pacing block from `group-topic`: how long this subject has run, what was
+   * just finished, how long the room has been quiet. Pre-rendered rather than
+   * passed as fields, so the director stays ignorant of how pacing is computed
+   * and the whole policy stays in one pure, testable module.
+   */
+  pacing?: string;
+  /** How the candidates are feeling today — casting reads differently when someone is down. */
+  moodLine?: string;
   /**
    * Effective tier of the transcript being sent. The director quotes the last
    * 20 group messages verbatim, so declaring 'off' for a full-tier group routed
@@ -246,8 +261,11 @@ export async function callDirector(
       ? renderTranscript(tail, { nameOf: ctx.nameOf, maxChars: 120 })
       : redactForTier(tail, ctx.nameOf);
   const extras = [
-    ctx.prevTopic ? `【上次话题】${ctx.prevTopic}` : '',
+    // `pacing` already carries the current topic with its age; the bare
+    // `prevTopic` line is the fallback for callers that don't compute pacing.
+    ctx.pacing ? ctx.pacing : ctx.prevTopic ? `【上次话题】${ctx.prevTopic}` : '',
     ctx.cliqueLine ? `【关系】${ctx.cliqueLine}` : '',
+    ctx.moodLine ? `【状态】${ctx.moodLine}` : '',
   ]
     .filter(Boolean)
     .join('\n');

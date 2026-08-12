@@ -20,7 +20,22 @@ import { selectFactsForInjection } from './memory';
 import { effectiveTier, voiceMeta, preferredRoute, type EngineHooks } from './engine';
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
-import { getAllEdges, pairKey, recordRelEvent, recordTease, describePeerEdges } from './relationship';
+import {
+  getAllEdges,
+  pairKey,
+  recordRelEvent,
+  recordTease,
+  describePeerEdges,
+  getStance,
+  stanceTier,
+} from './relationship';
+import {
+  readTopic,
+  advanceTopic,
+  pacingDirective,
+  socialDirective,
+  topicKey,
+} from './group-topic';
 import { maxTier } from '../lib/nsfw-tier';
 import { playMessageSound } from '../lib/sound';
 import { moodOf } from '../lib/mood';
@@ -108,16 +123,21 @@ export async function sendGroupMessage(
       const router = await getRouter();
       // Long-term group dynamics: last round's topic + who's grown close feed
       // the casting decision — the group "remembers" instead of resetting.
-      const prevTopic = await repo.getSetting<string>(`topic:${convId}`);
-      const cliqueLine = await cliqueLineFor(members, nameOf, now);
+      const topic = readTopic(await repo.getSetting(topicKey(convId)), now);
+      const cliqueLine = await cliqueLineFor(pre.candidates, nameOf, now);
       const decision = await callDirector(
         router,
         {
           candidates: pre.candidates,
           recent,
           nameOf,
-          prevTopic,
+          prevTopic: topic?.text,
+          // How long this subject has run, what was just finished, how long the
+          // room has been quiet. Without it the director had no way to know a
+          // topic was exhausted — so nothing ever moved on by itself.
+          pacing: pacingDirective(topic, now, recent[recent.length - 1]?.createdAt),
           cliqueLine,
+          moodLine: castMoodLine(pre.candidates, nameOf, now),
           // The transcript's real tier — never 'off' by assumption (rule #6).
           tier: maxTier(globalTier, members.map((m) => m.persona)),
         },
@@ -126,7 +146,7 @@ export async function sendGroupMessage(
       );
       if (ctrl.signal.aborted) return;
       if (decision.topicState) {
-        void repo.putSetting(`topic:${convId}`, decision.topicState.slice(0, 60));
+        void repo.putSetting(topicKey(convId), advanceTopic(topic, decision.topicState, now));
       }
       if (decision.silence || decision.speakers.length === 0) return;
       speakers = decision.speakers;
@@ -238,6 +258,14 @@ async function generateActorLines(
    * and N concurrent writers racing over one settings row (M-G0).
    */
   convStateLine = '',
+  /**
+   * Pacing note for the ambient path (see `sendGroupProactiveMessage`). The
+   * user-message path gets its pacing through the director instead, which is
+   * the right place for it — but backfilled chatter never asks a director, so
+   * without this a group left alone overnight rediscovers the same subject
+   * every fifteen minutes.
+   */
+  pacingLine = '',
 ): Promise<Bubble[]> {
   const persona = member.persona as PersonaVM;
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
@@ -311,6 +339,7 @@ async function generateActorLines(
   // six-layer order is fixed and the prefix has to stay cacheable.
   const stanceLine = await describePeerEdges(member.contactId, peers, now);
   if (stanceLine) system += `\n\n${stanceLine}`;
+  if (pacingLine) system += `\n\n${pacingLine}`;
   system += `\n\n# 本轮导演提示\n${direction}`;
 
   const size = promptStats(system);
@@ -364,7 +393,18 @@ function intentLabel(intent: SpeakerPlan['intent']): string {
   }
 }
 
-/** "X和Y走得近" — social intel for the director, derived from live edges. */
+/**
+ * "X和Y走得近；A对B有点意见" — social intel for the director.
+ *
+ * Both halves matter. Until M-H1 this only reported closeness, so the director
+ * could stage 附和 but every 拉踩 it cast was arbitrary — nothing told it who
+ * actually has friction with whom, and friction is where a group chat gets its
+ * texture. Friction comes from the DIRECTIONAL stance rows (M-E4), which are
+ * exactly what a tease writes to.
+ *
+ * Scoped to the candidates rather than the whole room: it is read once per
+ * director call, and a twenty-person group would otherwise be 190 pairs.
+ */
 async function cliqueLineFor(
   members: GroupMember[],
   nameOf: (id: string) => string,
@@ -372,19 +412,58 @@ async function cliqueLineFor(
 ): Promise<string | undefined> {
   try {
     const edges = await getAllEdges(now);
-    const ids = members.map((m) => m.contactId);
-    const pairs: string[] = [];
+    const ids = members.map((m) => m.contactId).slice(0, 6);
+    const warm: Array<[string, string]> = [];
+    const cold: Array<[string, string]> = [];
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
         const e = edges[pairKey(ids[i], ids[j])];
-        if (e && e.aff >= 65) pairs.push(`${nameOf(ids[i])}和${nameOf(ids[j])}走得近`);
+        if (e && e.aff >= 65) warm.push([nameOf(ids[i]), nameOf(ids[j])]);
       }
     }
-    return pairs.length ? pairs.slice(0, 2).join('；') : undefined;
+    for (const from of ids) {
+      for (const to of ids) {
+        if (from === to) continue;
+        if (stanceTier(await getStance(from, to, now)) === 'hostile') {
+          cold.push([nameOf(from), nameOf(to)]);
+        }
+      }
+    }
+    return socialDirective(warm, cold) || undefined;
   } catch {
     return undefined;
   }
 }
+
+/**
+ * Who is in what mood today, for the casting decision only.
+ *
+ * The actors already get their own mood in their own prompt; the director
+ * getting it is what lets it cast AROUND a mood — the one who is down today is
+ * not the one who should be opening a new topic.
+ */
+function castMoodLine(
+  members: GroupMember[],
+  nameOf: (id: string) => string,
+  now: number,
+): string | undefined {
+  const parts = members.slice(0, 6).flatMap((m) => {
+    const key = moodOf(m.contactId, now).key;
+    // 'calm' is most days for most people; saying so for six members is six
+    // lines of noise in a prompt where the tail is a budget.
+    const word = MOOD_WORD[key];
+    return word ? [`${nameOf(m.contactId)}${word}`] : [];
+  });
+  return parts.length ? parts.slice(0, 3).join('，') : undefined;
+}
+
+const MOOD_WORD: Record<string, string> = {
+  happy: '今天心情不错',
+  annoyed: '今天有点烦',
+  tired: '今天挺累',
+  excited: '今天有点兴奋',
+  down: '今天情绪有点低',
+};
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -449,6 +528,8 @@ export async function sendGroupProactiveMessage(
       stamp,
       ctrl.signal,
       members.map((m) => ({ contactId: m.contactId, name: m.name })),
+      '',
+      pacingDirective(readTopic(await repo.getSetting(topicKey(conv.id)), stamp), stamp, recent[recent.length - 1]?.createdAt),
     );
     if (ctrl.signal.aborted || bubbles.length === 0) return;
 

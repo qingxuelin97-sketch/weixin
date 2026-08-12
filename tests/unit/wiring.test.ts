@@ -106,6 +106,27 @@ describe('the gift planner is actually consulted', () => {
   });
 });
 
+describe('group pacing reaches the director', () => {
+  const ge = read('src/ai/group-engine.ts');
+
+  it('the director call carries the pacing block', () => {
+    // `pacingDirective` computing a perfect answer that nobody passes along is
+    // the same failure as the topic string it replaces: the room would still
+    // never get bored, and every one of its own tests would still pass.
+    expect(ge.includes('pacing: pacingDirective(')).toBe(true);
+  });
+
+  it('the topic row is folded, not overwritten', () => {
+    // Overwriting is what made the topic ageless — with no `since` and no
+    // `past` there is nothing to get bored of and nothing to avoid repeating.
+    expect(ge.includes('advanceTopic(')).toBe(true);
+    expect(
+      /putSetting\(topicKey\([^)]*\), decision\.topicState/.test(ge),
+      '话题不能再直接覆写字符串——那样它永远没有年龄，也就永远不会腻。',
+    ).toBe(false);
+  });
+});
+
 /**
  * Declared indexes must have a reader.
  *
