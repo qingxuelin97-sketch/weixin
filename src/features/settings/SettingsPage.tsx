@@ -9,6 +9,7 @@ import {
 } from '../../lib/sound';
 import { requestPermission } from '../../lib/notify';
 import { repo } from '../../db/repo';
+import { visionEnabled, VISION_SETTING } from '../../ai/vision-context';
 import type { NsfwTierVM } from '../../data/types';
 import './settings.css';
 
@@ -45,6 +46,16 @@ export function SettingsPage() {
     const next = !sound;
     setSound(next);
     setMessageSoundEnabled(next);
+  };
+
+  const [vision, setVision] = useState(true);
+  useEffect(() => {
+    void visionEnabled().then(setVision).catch(() => {});
+  }, []);
+  const toggleVision = async () => {
+    const next = !vision;
+    setVision(next);
+    await repo.putSetting(VISION_SETTING, next);
   };
 
   const toggleVibrate = () => {
@@ -89,6 +100,16 @@ export function SettingsPage() {
               <span className="switch__knob" />
             </span>
           </div>
+          <div className="settings__row settings__row--divided" onClick={() => void toggleVision()}>
+            <span className="settings__label">让 TA 看得见图片</span>
+            <span className={`switch${vision ? ' switch--on' : ''}`}>
+              <span className="switch__knob" />
+            </span>
+          </div>
+          <p className="settings__hint">
+            开启后你发的照片会随消息一起交给模型，TA 能真的看懂内容而不只是知道「你发了张图」。
+            需要所选模型支持看图；每张图的费用大约相当于一千字，所以只带最近几条里的图。
+          </p>
           <div
             className="settings__row settings__row--divided"
             onClick={() => void toggleNotify()}

@@ -26,6 +26,7 @@ import { logError } from '../lib/errlog';
 import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
+import { collectTurnImages } from './vision-context';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { refreshConvState, convStateDirective } from './conv-state';
@@ -386,10 +387,14 @@ async function generateAndPlayInner(
 
   try {
     const router = await getRouter();
+    // What she can actually SEE this turn. Rides the same message list, the
+    // same router and the same tier — a photo is conversation content, and
+    // constitution rule #6 covers it exactly as it covers text.
+    const images = await collectTurnImages(recent);
     const bubbles: Bubble[] = [];
     for await (const b of router.generate(
       { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
-      { messages, signal: ctrl.signal },
+      { messages, signal: ctrl.signal, ...(images.length ? { images } : {}) },
       ctx,
       convId,
     )) {

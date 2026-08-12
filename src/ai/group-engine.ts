@@ -14,6 +14,7 @@ import { assembleSystemPrompt, promptStats, relationsForPrompt } from './prompt'
 import { affectFor, affectLine } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { refreshConvState, convStateDirective } from './conv-state';
+import { collectTurnImages } from './vision-context';
 import { logError } from '../lib/errlog';
 import { selectFactsForInjection } from './memory';
 import { effectiveTier, voiceMeta, preferredRoute, type EngineHooks } from './engine';
@@ -247,6 +248,8 @@ async function generateActorLines(
   // Groups never carry graded facts, whatever the tier — the other members'
   // personas are not party to what was said in a private chat.
   const { affect } = await affectFor(member.contactId, now);
+  // Group actors see the room's photos too — same list, same route, same tier.
+  const images = await collectTurnImages(recent);
   const memory = selectFactsForInjection([...facts, ...groupFacts], now, {
     surface: 'group',
     tier,
@@ -332,7 +335,7 @@ async function generateActorLines(
     const out: Bubble[] = [];
     for await (const b of router.generate(
       { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
-      { messages, signal, temperature: persona.temperature },
+      { messages, signal, temperature: persona.temperature, ...(images.length ? { images } : {}) },
       {},
       `${conv.id}:${member.contactId}`,
     )) {

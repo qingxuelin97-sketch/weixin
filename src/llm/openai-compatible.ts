@@ -11,6 +11,7 @@ import {
   LlmError,
 } from './types';
 import { httpJson } from './http';
+import { attachImages, modelSupportsVision } from './vision';
 import { parseBubbles } from './bubbles';
 import { recordLlmExchange } from '../lib/llm-recorder';
 
@@ -87,9 +88,18 @@ export class OpenAiCompatibleProvider implements ChatProvider {
    * and sends a plain trailing assistant message, which every provider accepts.
    */
   protected buildBody(opts: GenerateOptions): Record<string, unknown> {
+    const plain = opts.messages.map((m) => ({ role: m.role, content: m.content }));
+    // Images ride the SAME message list under the SAME route (constitution
+    // rule #6 covers photographs too), and are dropped silently when the model
+    // cannot see — a text-only model handed image parts returns a hard 400 on
+    // every turn, which would read as "she stopped replying".
+    const withImages =
+      opts.images?.length && modelSupportsVision(opts.model)
+        ? attachImages(plain, opts.images)
+        : plain;
     const body: Record<string, unknown> = {
       model: opts.model,
-      messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: withImages,
       temperature: opts.temperature ?? 0.8,
     };
     if (opts.maxTokens) body.max_tokens = opts.maxTokens;

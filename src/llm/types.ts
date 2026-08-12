@@ -33,6 +33,15 @@ export interface ChatMessage {
 export interface GenerateOptions {
   model: string;
   messages: ChatMessage[];
+  /**
+   * Data-URL images to attach to the newest user message (M-H1).
+   *
+   * Carried as an option rather than baked into `ChatMessage.content` so the
+   * text-only request body stays byte-identical — an unchanged prefix is a
+   * cacheable prefix, and every provider that does prompt caching keys on it.
+   * The adapter drops these when the chosen model cannot see.
+   */
+  images?: string[];
   temperature?: number;
   maxTokens?: number;
   /** Force JSON object output where the endpoint supports response_format. */

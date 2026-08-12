@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import 'fake-indexeddb/auto';
 import { repo } from '../../src/db/repo';
 import { makePolicy, type ResolvedConfig } from '../../src/llm/service';
@@ -368,5 +370,81 @@ describe('memory injection whitelist (specs/nsfw.md, finally implemented)', () =
 
     const single = selectFactsForInjection(facts, now, { surface: 'single', tier: 'full' });
     expect(single.pinned).toContain('一件私密的事');
+  });
+});
+
+/* ==================== images are context too (M-H1) ==================== */
+
+/**
+ * Vision is the highest rule-#6 risk this round introduces.
+ *
+ * A photograph at the full tier is at least as sensitive as the text around
+ * it, and the failure mode is worse: text sent to the wrong endpoint is a
+ * string in someone's log, a photo is a photo. The defence is architectural —
+ * images ride the SAME `GenerateOptions` through the SAME router under the
+ * SAME tier, so there is no second channel that could forget to ask. These
+ * tests pin that there is no second channel.
+ */
+describe('a photo cannot take a different route than the words around it', () => {
+  it('image parts travel in GenerateOptions, not in a separate request', async () => {
+    const src = readFileSync(resolve(__dirname, '../../src/llm/vision.ts'), 'utf8');
+    // No transport of its own: `vision.ts` must not import http/fetch. If it
+    // ever posts by itself, it is by definition outside the router's tier
+    // decision, and rule #6 stops being enforceable by construction.
+    expect(src).not.toContain("from './http'");
+    expect(src).not.toMatch(/\bfetch\s*\(/);
+  });
+
+  it('the AI-side collector has no route of its own either', () => {
+    const src = readFileSync(resolve(__dirname, '../../src/ai/vision-context.ts'), 'utf8');
+    expect(src).not.toContain('getRouter');
+    expect(src).not.toContain("from '../llm/http'");
+  });
+
+  it('a text-only model never receives image parts', async () => {
+    const { attachImages, modelSupportsVision } = await import('../../src/llm/vision');
+    expect(modelSupportsVision('deepseek-chat')).toBe(false);
+    expect(modelSupportsVision('gpt-4o')).toBe(true);
+    // The adapter gates on this; handing image parts to a text model is a hard
+    // 400 on every turn, which reads to the user as "she stopped replying".
+    const msgs = [{ role: 'user', content: '这是什么' }];
+    expect(attachImages(msgs, [])).toBe(msgs);
+  });
+
+  it('attaches to the newest user message and keeps the text last', async () => {
+    const { attachImages } = await import('../../src/llm/vision');
+    const out = attachImages(
+      [
+        { role: 'system', content: 'S' },
+        { role: 'user', content: '旧的' },
+        { role: 'assistant', content: 'A' },
+        { role: 'user', content: '这是什么' },
+      ],
+      ['data:image/jpeg;base64,xxx'],
+    );
+    const last = out[3] as { content: Array<{ type: string }> };
+    expect(Array.isArray(last.content)).toBe(true);
+    expect(last.content[0].type).toBe('image_url');
+    expect(last.content[last.content.length - 1].type).toBe('text');
+    // The older user message stays a plain string — an unchanged prefix is a
+    // cacheable prefix.
+    expect(typeof (out[1] as { content: unknown }).content).toBe('string');
+  });
+
+  it('only the recent, non-recalled photos ride along', async () => {
+    const { imageRefsForTurn } = await import('../../src/ai/vision-context');
+    const img = (id: number, ref: string, over = {}) =>
+      ({ id, convId: 'c', senderId: 'self', type: 'image', content: ref, status: 'sent', createdAt: id, ...over }) as never;
+    const rows = [
+      img(1, 'idb:old'),
+      img(2, 'idb:a'), img(3, 'idb:b'), img(4, 'idb:c'), img(5, 'idb:d'),
+      img(6, 'idb:recalled', { isRecalled: true }),
+    ];
+    const refs = imageRefsForTurn(rows);
+    // Capped, newest-first-wins, and a photo the user took back is never sent:
+    // she must not react to something that is no longer there.
+    expect(refs).not.toContain('recalled');
+    expect(refs.length).toBeLessThanOrEqual(3);
+    expect(refs).toContain('d');
   });
 });
