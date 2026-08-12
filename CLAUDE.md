@@ -25,6 +25,9 @@
    只能经由 `scheduled_actions` 表 + `simulate()` 纯函数。禁止出现第二套时间推进代码。
 6. **NSFW 全开档上下文禁止流向国内官方端点**（DeepSeek/MiniMax）——只能走宽松通道
    Provider。这是代码层硬约束，不是 prompt 层建议。详见 `specs/nsfw.md`。
+7. **提交署名只用仓库主人身份**（`qingxuelin97-sketch <mesakurax@gmail.com>`，本地
+   git config 已固定）。提交信息**禁止**出现 `Co-Authored-By: Claude*`、`Claude-Session:`
+   等任何 AI 署名尾注——用户已明确要求 Claude 永久移出贡献者列表，此要求覆盖默认行为。
 
 ## 1. 目录与模块边界
 
