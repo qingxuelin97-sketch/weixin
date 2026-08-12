@@ -20,6 +20,9 @@ import type { PersonaVM, ProviderVM } from '../../data/types';
 import { makePersona, PERSONA_LIMITS } from '../../data/persona-defaults';
 import { useGuard } from '../../app/useGuard';
 import { getDrift, explainDrift, resetDrift, type DriftExplanation } from '../../ai/drift';
+import { importStCard, exportStCard } from '../../ai/sillytavern';
+import { saveTextFile } from '../../lib/save-file';
+import { logError } from '../../lib/errlog';
 import './settings.css';
 
 function emptyPersona(contactId: string): PersonaVM {
@@ -81,6 +84,49 @@ export function PersonaEditPage() {
       else delete relations[id];
       return { ...prev, relations };
     });
+
+  const [cardNotes, setCardNotes] = useState<string[]>([]);
+
+  /**
+   * Import a V2 card over this persona.
+   *
+   * Deliberately does NOT save: it fills the form, so the user reviews a
+   * stranger's card before it becomes one of their friends.
+   */
+  const importCard = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const card = importStCard(parsed, contactId);
+      if (!card) {
+        showToast('不是可识别的角色卡');
+        return;
+      }
+      setP(card.persona);
+      setCardNotes(card.notes);
+      showToast(`已载入「${card.name}」，确认后再保存`);
+    } catch (err) {
+      logError('persona.import', err);
+      showToast('读取失败');
+    }
+  };
+
+  const exportCard = async () => {
+    try {
+      const name = contact?.remark ?? contact?.name ?? '角色';
+      await saveTextFile(
+        `${name}.card.json`,
+        JSON.stringify(exportStCard(name, p), null, 2),
+        'application/json',
+        '导出角色卡',
+      );
+    } catch (err) {
+      logError('persona.export', err);
+      showToast('导出失败');
+    }
+  };
 
   const save = async () => {
     await putPersona(p);
@@ -453,6 +499,28 @@ export function PersonaEditPage() {
             <span className="settings__label">记忆管理</span>
             <span className="settings__chevron">›</span>
           </div>
+        </div>
+
+        {/* SillyTavern V2 (M-H2). The V2 card is the interchange format for
+            this whole category of app: without it every character the user
+            already owns is unreachable, and every character made here is
+            trapped inside this app. */}
+        <div className="settings__group">
+          <div className="settings__group-title">角色卡（SillyTavern V2）</div>
+          <label className="settings__row">
+            <span className="settings__label">导入角色卡</span>
+            <span className="settings__value">选择 .json</span>
+            <input type="file" accept=".json,application/json" hidden onChange={importCard} />
+          </label>
+          <div className="settings__row" role="button" onClick={() => void exportCard()}>
+            <span className="settings__label">导出角色卡</span>
+            <span className="settings__value">本 App 的字段会一并带走</span>
+          </div>
+          {cardNotes.map((n) => (
+            <div key={n} className="field__hint">
+              · {n}
+            </div>
+          ))}
         </div>
 
         <button className="btn-primary" onClick={() => guard('persona.save', save)} disabled={!p.core.trim()}>
