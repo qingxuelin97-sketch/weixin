@@ -11,9 +11,9 @@ import {
   gcActions,
   startScheduler,
   stopScheduler,
-  hasPendingFor,
   hasPendingOfKind,
-  duePending,
+  pendingActions,
+  isPendingForIn,
   enqueue,
   actionExists,
 } from '../ai/scheduler';
@@ -403,11 +403,23 @@ async function runForegroundPass(): Promise<void> {
 
   // 2) Seed each persona's first heartbeat and Moments post. Without this
   //    neither feature ever fires — nothing else enqueues the first one.
+  //
+  //    The pending set is read ONCE for the whole loop. It used to be two
+  //    indexed-less queries per conversation, so returning to the app scanned
+  //    the whole action store 2×N times and JSON.parsed every row on each pass.
+  //    Rows queued inside this loop are tracked locally so the checks below
+  //    still see them — the snapshot must not go stale mid-loop.
+  const pending = await pendingActions();
+  const queuedHere = new Set<string>();
+  const alreadyQueued = (kind: 'heartbeat' | 'moment_post', contactId: string) =>
+    queuedHere.has(`${kind}:${contactId}`) || isPendingForIn(pending, kind, contactId);
+
   for (const conv of s.conversations) {
     if (conv.type !== 'single' || !conv.peerId) continue;
     const persona = s.personaFor(conv.peerId);
     if (!persona) continue;
-    if (!(await hasPendingFor('heartbeat', persona.contactId))) {
+    if (!alreadyQueued('heartbeat', persona.contactId)) {
+      queuedHere.add(`heartbeat:${persona.contactId}`);
       const edge = await getEdge('self', persona.contactId, now);
       const state = await getAgentState(persona.contactId);
       await scheduleHeartbeat(persona, conv.id, now, conv.lastMsgAt, {
@@ -416,7 +428,8 @@ async function runForegroundPass(): Promise<void> {
         notBefore: state.cooldownUntil || undefined,
       });
     }
-    if (!(await hasPendingFor('moment_post', persona.contactId))) {
+    if (!alreadyQueued('moment_post', persona.contactId)) {
+      queuedHere.add(`moment_post:${persona.contactId}`);
       await scheduleNextMoment(persona, now);
     }
 
@@ -466,7 +479,12 @@ async function runForegroundPass(): Promise<void> {
 
   // 4) Rebuild the lock-screen notifications from the (now current) queue.
   try {
-    await syncNotifications(await duePending(Number.MAX_SAFE_INTEGER), s.contacts, now);
+    // Notifications are scheduled from every PENDING action, not the due ones
+    // — so this asks for the pending set directly. It used to call
+    // `duePending(MAX_SAFE_INTEGER)`, whose upper-bound key range then covered
+    // the entire index: v6 added `byFireAt` precisely to stop this read being
+    // a full scan, and that one argument handed the optimisation straight back.
+    await syncNotifications(await pendingActions(), s.contacts, now);
   } catch {
     /* notifications are a bonus; never let them break the foreground path */
   }

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SCHEDULED_ACTION_KINDS } from '../../src/db/schema';
+import { STORES } from '../../src/db/idb';
 
 /**
  * Wiring guards (M-G0).
@@ -84,4 +85,34 @@ describe('the story beat does not schedule itself from inside its own work', () 
         '排期归 chainNextBeat（先续链后干活）。',
     ).toBe(false);
   });
+});
+
+/**
+ * Declared indexes must have a reader.
+ *
+ * `bySubject`, `byStatus` and `byRp` all shipped with the schema and were
+ * never used — the queries they existed for did `getAll()` and filtered in JS
+ * instead. That is invisible in review (the code reads fine) and invisible in
+ * tests (the results are right); it surfaces months later as an app that got
+ * slow. An index nobody reads is either a missing optimisation or dead weight,
+ * and both are worth a red test.
+ */
+describe('every declared index has a reader', () => {
+  const src = [
+    read('src/db/repo.ts'),
+    read('src/db/idb.ts'),
+    read('src/ai/scheduler.ts'),
+  ].join('\n');
+
+  for (const store of STORES) {
+    for (const idx of store.indexes ?? []) {
+      it(`${store.name}.${idx.name} is queried somewhere`, () => {
+        expect(
+          src.includes(`'${idx.name}'`),
+          `索引 ${store.name}.${idx.name} 声明了但没有任何查询用它——` +
+            `要么接上（省一次全表扫），要么删掉（省一份写入开销）。`,
+        ).toBe(true);
+      });
+    }
+  }
 });

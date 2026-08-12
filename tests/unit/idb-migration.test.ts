@@ -40,6 +40,24 @@ const STORE_INTRODUCED_IN: Record<string, number> = {
   story_saves: 6,
 };
 
+/**
+ * Indexes and the version that introduced them, keyed `store.index`.
+ *
+ * Separate from the store ledger because indexes can arrive on a store that
+ * already shipped — which is exactly the case the version guard used to miss.
+ */
+const INDEX_INTRODUCED_IN: Record<string, number> = {
+  'messages.byConv': 1,
+  'memory_facts.bySubject': 1,
+  'scheduled_actions.byStatus': 1,
+  'scheduled_actions.byFireAt': 6,
+  'rp_claims.byRp': 2,
+  'moment_likes.byMoment': 4,
+  'moment_comments.byMoment': 4,
+  'story_saves.byScript': 6,
+  'moments.byCreatedAt': 7,
+};
+
 describe('DB migration guards', () => {
   it('every store in STORES is registered in the version ledger', () => {
     for (const s of STORES) {
@@ -57,11 +75,39 @@ describe('DB migration guards', () => {
     }
   });
 
-  it('DB_VERSION matches the newest store introduction (bump-forgotten guard)', () => {
-    const newest = Math.max(...Object.values(STORE_INTRODUCED_IN));
+  it('every index in STORES is registered in the index ledger', () => {
+    for (const s of STORES) {
+      for (const idx of s.indexes ?? []) {
+        expect(
+          INDEX_INTRODUCED_IN[`${s.name}.${idx.name}`],
+          `索引 "${s.name}.${idx.name}" 不在台账里——新加索引必须登记引入版本并把 DB_VERSION 提到该版本`,
+        ).toBeDefined();
+      }
+    }
+  });
+
+  it('the index ledger has no orphan entries', () => {
+    const live = new Set(
+      STORES.flatMap((s) => (s.indexes ?? []).map((i) => `${s.name}.${i.name}`)),
+    );
+    for (const name of Object.keys(INDEX_INTRODUCED_IN)) {
+      expect(live.has(name), `台账里的索引 "${name}" 已不存在`).toBe(true);
+    }
+  });
+
+  it('DB_VERSION matches the newest schema change (bump-forgotten guard)', () => {
+    // Stores AND indexes both count. An index-only migration is a real
+    // migration: `onupgradeneeded` is the only place `createIndex` can run, and
+    // it only runs when the version rises. Before M-G1 this guard looked at
+    // stores alone, so adding an index correctly — bump plus a new index — made
+    // the guard itself go red, which invites "fixing" it by not bumping.
+    const newest = Math.max(
+      ...Object.values(STORE_INTRODUCED_IN),
+      ...Object.values(INDEX_INTRODUCED_IN),
+    );
     expect(
       DB_VERSION,
-      `台账最高版本是 ${newest} 但 DB_VERSION=${DB_VERSION}——加 store 忘了 bump（或 bump 了没登记）`,
+      `台账最高版本是 ${newest} 但 DB_VERSION=${DB_VERSION}——加 store/索引忘了 bump（或 bump 了没登记）`,
     ).toBe(newest);
   });
 

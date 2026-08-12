@@ -23,6 +23,13 @@ vi.mock('../../src/db/idb', () => {
     // duePending queries the byFireAt index (v6) instead of scanning the store.
     idbRangeByIndex: async (_s: string, _i: string, b: { upTo?: number }) =>
       [...rows.values()].filter((r) => b.upTo == null || (r.fireAt as number) <= b.upTo),
+    // byStatus (M-G1). Modelled as a real equality lookup on the named index,
+    // NOT as "return everything" — a permissive fake here would let a
+    // regression back into a full scan without any test noticing.
+    idbGetAllByIndex: async (_s: string, index: string, value: IDBValidKey) => {
+      const field = index === 'byStatus' ? 'status' : index === 'byFireAt' ? 'fireAt' : 'id';
+      return [...rows.values()].filter((r) => r[field] === value);
+    },
     __rows: rows,
   };
 });

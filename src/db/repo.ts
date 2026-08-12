@@ -34,6 +34,8 @@ import {
   idbCount,
   idbQueryByIndex,
   idbGetAllByIndex,
+  idbDeleteByIndex,
+  idbPageDesc,
 } from './idb';
 
 export interface Repo {
@@ -101,6 +103,16 @@ export interface Repo {
 }
 
 /** IndexedDB-backed Repo (web / PWA driver). */
+/**
+ * Feed page size when a caller doesn't ask for one.
+ *
+ * `getMoments()` with no arguments used to mean "every post ever written".
+ * Making the default a page is what stops an old install from paying for its
+ * entire history every time the feed opens; the only reader that wants
+ * everything is the backup exporter, and it reads the store directly.
+ */
+const DEFAULT_MOMENTS_PAGE = 60;
+
 export class IdbRepo implements Repo {
   async getContacts() {
     return idbGetAll<ContactVM>('contacts');
@@ -137,8 +149,11 @@ export class IdbRepo implements Repo {
    * so search could surface deleted content too.
    */
   async deleteConversation(id: string) {
-    const msgs = await idbGetAllByIndex<MessageVM>('messages', 'byConv', id);
-    for (const m of msgs) await idbDelete('messages', m.id);
+    // One cursor, one transaction. This used to load every message and delete
+    // them one at a time, each in its own transaction — so a long thread took
+    // as many serial round-trips as it had messages, and a failure halfway
+    // through left the conversation partly deleted with no way to tell.
+    await idbDeleteByIndex('messages', 'byConv', id);
     await idbDelete('conv_summaries', id);
     await idbDelete('conversations', id);
   }
@@ -202,8 +217,10 @@ export class IdbRepo implements Repo {
     await idbPut('red_packets', rp);
   }
   async getClaims(rpId: string) {
-    const all = await idbGetAll<RpClaimVM>('rp_claims');
-    return all.filter((c) => c.rpId === rpId).sort((a, b) => a.claimedAt - b.claimedAt);
+    // `byRp` has existed since v2 and was never used: this read pulled every
+    // claim ever made, on every render of every red-packet detail page.
+    const rows = await idbGetAllByIndex<RpClaimVM>('rp_claims', 'byRp', rpId);
+    return rows.sort((a, b) => a.claimedAt - b.claimedAt);
   }
   async putClaim(c: RpClaimVM) {
     await idbPut('rp_claims', c);
@@ -223,11 +240,14 @@ export class IdbRepo implements Repo {
   }
 
   async getMoments(opts: { limit?: number; before?: number } = {}) {
-    const all = await idbGetAll<MomentVM>('moments');
-    const filtered =
-      opts.before == null ? all : all.filter((m) => m.createdAt < (opts.before as number));
-    filtered.sort((a, b) => b.createdAt - a.createdAt); // feed is newest-first
-    return opts.limit == null ? filtered : filtered.slice(0, opts.limit);
+    // Walks `byCreatedAt` backwards (v7) instead of reading and sorting the
+    // whole store. The old version applied `limit` only AFTER deserializing
+    // every post ever written, so opening Moments got slower forever while the
+    // screen it drew stayed the same size.
+    return idbPageDesc<MomentVM>('moments', 'byCreatedAt', {
+      limit: opts.limit ?? DEFAULT_MOMENTS_PAGE,
+      before: opts.before,
+    });
   }
   async getMoment(id: string) {
     return idbGet<MomentVM>('moments', id);
@@ -292,14 +312,25 @@ export class IdbRepo implements Repo {
   }
 }
 
-/** All memory rows for a subject. Memory ids are string UUIDs (not the numeric
- *  id the paginated cursor helper assumes), so filter in-memory here. */
+/**
+ * All memory rows for a subject.
+ *
+ * This used to `getAll()` the whole store and filter in JS, justified by a
+ * comment about memory ids being string UUIDs rather than the numeric keys
+ * `idbQueryByIndex` walks. True, and beside the point: `idbGetAllByIndex`
+ * exists for exactly this shape, and the `bySubject` index has been sitting in
+ * the schema since v1 without a single reader.
+ *
+ * The cost was not theoretical. One message in a five-person group runs this
+ * eleven times (each member's own memory plus the group's), so at 5,000
+ * remembered facts a single group message deserialized 55,000 rows on the main
+ * thread — for a query the database could answer directly.
+ */
 async function idbQueryBySubject<T extends { subjectId?: string }>(
   store: string,
   subjectId: string,
 ): Promise<T[]> {
-  const all = await idbGetAll<T>(store);
-  return all.filter((r) => r.subjectId === subjectId);
+  return idbGetAllByIndex<T>(store, 'bySubject', subjectId);
 }
 
 /** The app's single Repo instance (web driver). */

@@ -24,7 +24,7 @@ import {
   seedMomentComments,
 } from '../data/seed';
 import { repo, IdbRepo } from '../db/repo';
-import { registerMedia } from '../data/media-registry';
+import { registerMediaMeta, materializeMedia } from '../data/media-registry';
 import { makePersona } from '../data/persona-defaults';
 import { recordRelEvent } from '../ai/relationship';
 import { cancelActionsForConversation } from '../ai/scheduler';
@@ -92,7 +92,7 @@ interface AppState {
   addConversation: (c: ConversationVM) => Promise<void>;
   putPersona: (p: PersonaVM) => Promise<void>;
   putContact: (c: ContactVM) => Promise<void>;
-  loadMoments: () => Promise<void>;
+  loadMoments: (force?: boolean) => Promise<void>;
   addMoment: (m: MomentVM) => Promise<void>;
   /** Add or remove a like. Returns true if the moment is liked afterwards. */
   toggleLike: (momentId: string, contactId: string, now: number) => Promise<boolean>;
@@ -170,14 +170,20 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
         if (p) personas[cc.id] = makePersona(p);
       }),
   );
-  // Prime the media registry so `idb:` refs (avatars, photo pools) resolve
-  // synchronously everywhere. Object URLs live for the process lifetime.
+  // Prime the media registry.
+  //
+  // METADATA for everything (pool selection needs kind+tags and they cost
+  // nothing); object URLs only for AVATARS, which every conversation row draws.
+  // Photos are materialized on demand by `primeMedia`.
+  //
+  // This loop used to `createObjectURL` every item in the library, serially, on
+  // the critical path of the first paint — and an object URL pins its blob
+  // until revoked, which happened only on delete. A few hundred photos was
+  // therefore several hundred megabytes held for the life of the process,
+  // behind a white screen while it was built.
   for (const item of await repo.getMedia()) {
-    registerMedia(item.id, {
-      url: URL.createObjectURL(item.blob),
-      kind: item.kind,
-      tags: item.tags,
-    });
+    registerMediaMeta(item.id, { kind: item.kind, tags: item.tags });
+    if (item.kind === 'avatar') materializeMedia(item.id, item.blob);
   }
   conversations.sort(sortConversations);
   set({ hydrated: true, contacts, conversations, messages, personas });
@@ -342,9 +348,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
-  /** Pull the feed plus every post's likes/comments. Idempotent. */
-  loadMoments: async () => {
-    if (get().momentsLoaded) return;
+  /**
+   * Pull a page of the feed plus each post's likes and comments.
+   *
+   * `force` re-reads even when already loaded. Without it the feed was frozen
+   * for the life of the process: the guard below returned early forever, so
+   * anything an agent posted in the background only appeared if `addMoment`
+   * happened to run in this same session.
+   */
+  loadMoments: async (force = false) => {
+    if (get().momentsLoaded && !force) return;
     const moments = await repo.getMoments();
     const momentLikes: Record<string, MomentLikeVM[]> = {};
     const momentComments: Record<string, MomentCommentVM[]> = {};

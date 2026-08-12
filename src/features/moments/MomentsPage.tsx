@@ -6,8 +6,9 @@
  * things about this screen, so it is driven by real scroll position rather than
  * a fixed threshold guess.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useMedia } from '../../components/useMedia';
 import { useAppStore } from '../../store/appStore';
 import { Avatar } from '../../components/Avatar';
 import { IconBack } from '../../components/icons';
@@ -32,6 +33,11 @@ export function MomentsPage() {
   const likesFor = useAppStore((s) => s.likesFor);
   const commentsFor = useAppStore((s) => s.commentsFor);
   const toggleLike = useAppStore((s) => s.toggleLike);
+
+  // Photos are materialized on demand (M-G1): ask for the ones this feed
+  // draws, and re-render when they arrive. Priming the whole library here
+  // would put back the memory problem the lazy registry exists to remove.
+  useMedia(useMemo(() => moments.flatMap((m) => m.imageRefs ?? []), [moments]));
   const addComment = useAppStore((s) => s.addComment);
 
   const now = useNow();

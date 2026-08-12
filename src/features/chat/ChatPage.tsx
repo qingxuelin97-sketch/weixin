@@ -12,6 +12,7 @@ import { Avatar } from '../../components/Avatar';
 import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
 import { registerMedia } from '../../data/media-registry';
+import { useMedia } from '../../components/useMedia';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
 import { storyRunning } from '../../ai/story-service';
@@ -162,6 +163,15 @@ export function ChatPage() {
 
   // Interleave time bars (WeChat shows a centered time when the gap > 5 min).
   const rows = useMemo(() => withTimeBars(messages), [messages]);
+
+  // Photo messages resolve through the lazy media registry (M-G1): ask for the
+  // blobs this transcript actually shows, and re-render when they land.
+  useMedia(
+    useMemo(
+      () => messages.filter((m) => m.type === 'image').map((m) => m.content),
+      [messages],
+    ),
+  );
 
   // Keep the view pinned to the newest message as bubbles arrive.
   useEffect(() => {

@@ -7,9 +7,11 @@
 import { useRef, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
 import { repo } from '../../db/repo';
+import { useMedia } from '../../components/useMedia';
 import {
   listRegisteredMedia,
   registerMedia,
+  registerMediaMeta,
   unregisterMedia,
 } from '../../data/media-registry';
 import { useAppStore } from '../../store/appStore';
@@ -26,6 +28,10 @@ export function MediaLibraryPage() {
   const showToast = useAppStore((s) => s.showToast);
 
   const items = listRegisteredMedia(kind);
+  // The grid is the one screen that deliberately shows the WHOLE library, so
+  // it is also the one that must prime what it draws — the registry keeps only
+  // a bounded number of object URLs live.
+  useMedia(items.map((m) => `idb:${m.id}`));
   const parseTags = (s: string) =>
     s
       .split(/[,，]/)
@@ -68,7 +74,9 @@ export function MediaLibraryPage() {
     if (!item) return;
     const tags = parseTags(next);
     await repo.putMedia({ ...item, tags });
-    registerMedia(id, { url: listRegisteredMedia().find((m) => m.id === id)!.url, kind, tags });
+    // Metadata-only update (retagging): must not touch the URL, which may not
+    // be materialized right now — passing '' would blank a live image.
+    registerMediaMeta(id, { kind, tags });
     bump((n) => n + 1);
   };
 
