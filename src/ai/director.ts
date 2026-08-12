@@ -170,7 +170,15 @@ const SpeakerSchema = z.object({
     .enum(['reply', 'follow', 'disagree', 'newtopic', 'wrapup', 'sticker_only'])
     .optional(),
   target: z.string().optional(),
-  hint: z.string().optional(),
+  // The director's own prompt asks for "不超过 20 字"; the schema never
+  // enforced it, so a chatty model could hand an actor a paragraph that then
+  // rode into that actor's prompt on top of everything else. `.catch` trims
+  // rather than rejects — an over-long hint is still a usable hint, and
+  // failing the whole decision over it would silence the group.
+  hint: z
+    .string()
+    .transform((s) => (s.length > 24 ? s.slice(0, 24) : s))
+    .optional(),
 });
 
 const DecisionSchema = z.object({

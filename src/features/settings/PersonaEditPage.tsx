@@ -17,7 +17,7 @@ import { useAppStore } from '../../store/appStore';
 import { VOICE_OPTIONS, DEFAULT_VOICE } from '../../llm/tts';
 import { repo } from '../../db/repo';
 import type { PersonaVM, ProviderVM } from '../../data/types';
-import { makePersona } from '../../data/persona-defaults';
+import { makePersona, PERSONA_LIMITS } from '../../data/persona-defaults';
 import { useGuard } from '../../app/useGuard';
 import './settings.css';
 
@@ -120,6 +120,7 @@ export function PersonaEditPage() {
             <textarea
               className="field__textarea"
               value={p.core}
+              maxLength={PERSONA_LIMITS.core}
               onChange={(e) => set('core', e.target.value)}
               placeholder="例：25 岁插画师，温柔但有点毒舌，爱猫爱咖啡"
             />
@@ -129,6 +130,7 @@ export function PersonaEditPage() {
             <input
               className="field__input"
               value={p.speechStyle ?? ''}
+              maxLength={PERSONA_LIMITS.speechStyle}
               onChange={(e) => set('speechStyle', e.target.value)}
               placeholder="例：短句、口语、爱用语气词"
             />

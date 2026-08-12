@@ -12,7 +12,7 @@ import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
 import { getEdge, effectiveAffinity, relationTier, tierDirective, recordRelEvent } from './relationship';
 import { noteUserReplied } from './agent-state';
-import { assembleSystemPrompt, relationsForPrompt, type PersonaView } from './prompt';
+import { assembleSystemPrompt, promptStats, relationsForPrompt, type PersonaView } from './prompt';
 import { selectFactsForInjection, touchFacts } from './memory';
 import { getRouter } from '../llm/service';
 import type { GenerateContext, NsfwTier } from '../llm/router';
@@ -27,7 +27,7 @@ import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
-import { lifelineAt, lifelineDirective } from './lifeline';
+import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { refreshConvState, convStateDirective } from './conv-state';
 import {
   detectThreads,
@@ -65,18 +65,6 @@ function releaseInFlight(convId: string, ctrl: AbortController): void {
 }
 
 const RECENT_WINDOW = 30; // messages of context sent to the model
-
-/**
- * When this agent's life "started", for the lifeline walk. A contact added
- * today must not begin mid-arc as if it had a past it never had — so the epoch
- * is derived from the id, giving each agent a stable but distinct phase.
- */
-function personaEpoch(persona: PersonaVM, peer: ContactVM): number {
-  const seeded = seededRng(`epoch:${persona.contactId}:${peer.id}`)();
-  // Anchored to a fixed date, offset by up to 60 days — deterministic forever,
-  // and never dependent on when the app happened to be installed.
-  return 1_735_689_600_000 + Math.floor(seeded * 60 * 86_400_000);
-}
 
 /** Threads already followed up on. One question per thread, ever. */
 async function usedThreadIds(contactId: string): Promise<Set<string>> {
@@ -283,7 +271,7 @@ async function generateAndPlayInner(
   });
   // Appended AFTER scene — the six-layer order is fixed (constitution §2), and
   // new content only ever goes on the end so the prompt prefix stays cacheable.
-  const arcs = lifelineAt(persona, hooks.now(), personaEpoch(persona, peer));
+  const arcs = lifelineAt(persona, hooks.now(), personaEpoch(persona.contactId));
   const arcLine = lifelineDirective(arcs);
   if (arcLine) system += `\n\n${arcLine}`;
   // What this conversation is still in the middle of (M-E6). Channel 1: this
@@ -293,6 +281,11 @@ async function generateAndPlayInner(
   const stateLine = convStateDirective(convState, hooks.now());
   if (stateLine) system += `\n\n${stateLine}`;
   if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
+
+  // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:
+  // it has no symptom except a bigger bill and a persona diluted by context.
+  const size = promptStats(system);
+  if (size.overBudget) logError('prompt.oversize', new Error(`单聊系统 prompt ${size.chars} 字`));
 
   const messages = [
     { role: 'system' as const, content: system },

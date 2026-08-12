@@ -10,7 +10,11 @@
 import type { MessageVM, PersonaVM, ContactVM, NsfwTierVM, ConversationVM } from '../data/types';
 import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
-import { assembleSystemPrompt, relationsForPrompt } from './prompt';
+import { assembleSystemPrompt, promptStats, relationsForPrompt } from './prompt';
+import { affectFor, affectLine } from '../lib/affect';
+import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
+import { refreshConvState, convStateDirective } from './conv-state';
+import { logError } from '../lib/errlog';
 import { selectFactsForInjection } from './memory';
 import { effectiveTier, voiceMeta, preferredRoute, type EngineHooks } from './engine';
 import { getRouter } from '../llm/service';
@@ -112,6 +116,13 @@ export async function sendGroupMessage(
 
     // 2) All actors write at the same time.
     const roster = members.map((m) => m.name);
+    // Folded ONCE for the round, then handed to every actor: N actors folding
+    // the same window would be N redundant passes and N concurrent writers
+    // racing over a single settings row.
+    const convStateLine = convStateDirective(
+      await refreshConvState(convId, recent, now),
+      now,
+    );
     const outputs = await Promise.all(
       cast.map(async ({ plan, member }): Promise<ActorOutput> => {
         const bubbles = await generateActorLines(
@@ -125,6 +136,7 @@ export async function sendGroupMessage(
           now,
           ctrl.signal,
           members.map((m) => ({ contactId: m.contactId, name: m.name })),
+          convStateLine,
         );
         return { plan, member, bubbles };
       }),
@@ -193,6 +205,12 @@ async function generateActorLines(
   signal: AbortSignal,
   /** The other members, for the stance line (M-E4). */
   peers: Array<{ contactId: string; name: string }> = [],
+  /**
+   * What this conversation is still in the middle of, computed ONCE per round
+   * by the caller. Per-actor would mean N redundant folds of the same window —
+   * and N concurrent writers racing over one settings row (M-G0).
+   */
+  convStateLine = '',
 ): Promise<Bubble[]> {
   const persona = member.persona as PersonaVM;
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
@@ -202,6 +220,7 @@ async function generateActorLines(
   const groupFacts = await repo.getMemory(conv.id);
   // Groups never carry graded facts, whatever the tier — the other members'
   // personas are not party to what was said in a private chat.
+  const { affect } = await affectFor(member.contactId, now);
   const memory = selectFactsForInjection([...facts, ...groupFacts], now, {
     surface: 'group',
     tier,
@@ -234,9 +253,20 @@ async function generateActorLines(
       kind: 'group',
       now: new Date(now),
       groupRoster: roster,
-      moodLine: moodOf(member.contactId, now).line,
+      // The affect pulse rides the group's mood line too (M-G0). It used to be
+      // the bare daily mood here while the single chat had the pulse since
+      // M-E3 — so the same character could be visibly hurt in your DM and
+      // completely unaffected in the group ten seconds later.
+      moodLine: affectLine(moodOf(member.contactId, now).line, affect),
     },
   });
+
+  // Her own life, and what the room is still in the middle of. Both appended
+  // after the scene layer, never inserted into it: the six-layer order is
+  // fixed (constitution §2) and the prefix has to stay cacheable.
+  const arcLine = lifelineDirective(lifelineAt(persona, now, personaEpoch(member.contactId)));
+  if (arcLine) system += `\n\n${arcLine}`;
+  if (convStateLine) system += `\n\n${convStateLine}`;
 
   // The director's staging note rides at the end, where recency weighs most.
   const direction = [
@@ -253,6 +283,9 @@ async function generateActorLines(
   const stanceLine = await describePeerEdges(member.contactId, peers, now);
   if (stanceLine) system += `\n\n${stanceLine}`;
   system += `\n\n# 本轮导演提示\n${direction}`;
+
+  const size = promptStats(system);
+  if (size.overBudget) logError('prompt.oversize', new Error(`群聊系统 prompt ${size.chars} 字`));
 
   const messages = [
     { role: 'system' as const, content: system },

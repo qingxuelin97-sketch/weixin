@@ -126,6 +126,25 @@ export const CONCURRENT_ARCS = 2;
  * `epoch` anchors the walk. It is the persona's own start, not the app's, so a
  * contact added today does not begin mid-arc as if it had a past it never had.
  */
+/**
+ * When this agent's life "started", for the lifeline walk.
+ *
+ * An agent added today must not begin mid-arc as if it had a past it never
+ * had, so the epoch is derived from the id: stable forever, distinct per
+ * agent, and never dependent on when the app happened to be installed.
+ *
+ * Lives here rather than in `engine.ts` because BOTH engines need it — the
+ * single chat has had a lifeline since M-E3 while group actors did not, which
+ * meant the same character had a life in your DM and no life whatsoever in the
+ * group ten seconds later.
+ */
+export function personaEpoch(contactId: string): number {
+  // Seed string preserved verbatim from engine.ts: changing it would re-roll
+  // every existing agent's life story on upgrade.
+  const seeded = seededRng(`epoch:${contactId}:${contactId}`)();
+  return 1_735_689_600_000 + Math.floor(seeded * 60 * 86_400_000);
+}
+
 export function lifelineAt(
   persona: Pick<PersonaVM, 'contactId'>,
   t: number,
