@@ -11,7 +11,7 @@
  *   - the build reports which member it is on and can be stopped, and what it
  *     already made is kept (`buildGroup` resumes from the same state).
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
@@ -20,7 +20,14 @@ import { globalTier } from '../../lib/nsfw-tier';
 import { logError } from '../../lib/errlog';
 import { extractJson } from '../../ai/generate-chain';
 import { generateBlueprint, MIN_MEMBERS, MAX_MEMBERS, type GroupBlueprint } from '../../ai/group-generate';
-import { buildGroup, newBuildState, type BuildState } from '../../ai/group-build';
+import {
+  buildGroup,
+  newBuildState,
+  isBuildComplete,
+  BUILD_STATE_KEY,
+  type BuildState,
+} from '../../ai/group-build';
+import { repo } from '../../db/repo';
 import { generatePersona } from '../../ai/persona-generate';
 import { listRegisteredMedia } from '../../data/media-registry';
 import '../settings/settings.css';
@@ -46,6 +53,21 @@ export function GroupGeneratePage() {
   const [bp, setBp] = useState<GroupBlueprint | null>(null);
   const stateRef = useRef<BuildState | null>(null);
   const cancelRef = useRef(false);
+
+  // An unfinished build from a previous visit. The contacts it already made
+  // are in the database; without this the user would generate — and pay for —
+  // a second copy of every one of them.
+  useEffect(() => {
+    void repo
+      .getSetting<BuildState>(BUILD_STATE_KEY)
+      .then((saved) => {
+        if (!saved?.blueprint?.members?.length || isBuildComplete(saved)) return;
+        stateRef.current = saved;
+        setBp(saved.blueprint);
+        setSize(saved.blueprint.members.length);
+      })
+      .catch(() => {});
+  }, []);
 
   const complete = async (
     key: string,
@@ -145,10 +167,11 @@ export function GroupGeneratePage() {
         getPersona: personaFor,
         addConversation,
         appendMessage,
-        // The resume ledger lives in memory for this session: a rebuild after a
-        // crash is a fresh blueprint anyway, and persisting half a group under
-        // a settings key nobody cleans up is worse than paying for it again.
-        saveState: async () => {},
+        // Checkpoint after every member, so a reload does not turn 7 paid-for
+        // cards into 7 duplicate contacts on the next attempt.
+        saveState: async (s) => {
+          await repo.putSetting(BUILD_STATE_KEY, s).catch(() => {});
+        },
         now: () => Date.now(),
         onProgress: (note, done, total) => setProgress(`${note}（${done}/${total}）`),
         cancelled: () => cancelRef.current,
@@ -160,7 +183,10 @@ export function GroupGeneratePage() {
       showToast(
         out.skipped.length ? `建好了，${out.skipped.length} 人没写成，可再点一次续写` : '群建好了',
       );
-      if (!cancelRef.current) navigate(`/chat/${out.convId}`, { replace: true });
+      if (!cancelRef.current) {
+        await repo.putSetting(BUILD_STATE_KEY, { ...state, historyDone: true }).catch(() => {});
+        navigate(`/chat/${out.convId}`, { replace: true });
+      }
     } catch (e) {
       logError('group.build', e);
       setError(e instanceof Error ? e.message : '生成失败');
@@ -238,7 +264,11 @@ export function GroupGeneratePage() {
 
             <div className="settings__group">
               <button className="btn-primary" disabled={busy} onClick={() => void build()}>
-                {busy ? progress || '正在建群…' : `建群（约 ${bp.members.length + 1} 次调用）`}
+                {busy
+              ? progress || '正在建群…'
+              : Object.keys(stateRef.current?.made ?? {}).length > 0
+                ? `继续建群（还差 ${bp.members.length - Object.keys(stateRef.current!.made).length} 人）`
+                : `建群（约 ${bp.members.length + 1} 次调用）`}
               </button>
               {busy && (
                 <button

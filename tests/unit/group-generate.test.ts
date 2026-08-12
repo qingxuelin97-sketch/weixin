@@ -5,7 +5,13 @@ import {
   stampHistory,
   type GroupBlueprint,
 } from '../../src/ai/group-generate';
-import { buildGroup, newBuildState, avatarColor, type BuildDeps } from '../../src/ai/group-build';
+import {
+  buildGroup,
+  newBuildState,
+  isBuildComplete,
+  avatarColor,
+  type BuildDeps,
+} from '../../src/ai/group-build';
 import { narrowCandidates, prefilter, MAX_DIRECTOR_CANDIDATES } from '../../src/ai/director';
 import { groupMessageBudget } from '../../src/ai/simulate';
 import { makePersona } from '../../src/data/persona-defaults';
@@ -255,6 +261,16 @@ describe('building the group', () => {
       }),
     );
     expect(sent).toEqual(['来了来了']);
+  });
+
+  it('knows when a build is finished, so a reload does not re-offer it', async () => {
+    personas.clear();
+    const state = newBuildState(bp, T0);
+    expect(isBuildComplete(state)).toBe(false);
+    await buildGroup(state, deps());
+    // Without this the page would re-offer a finished build, and "继续" would
+    // create a second copy of everyone already paid for.
+    expect(isBuildComplete(state)).toBe(true);
   });
 
   it('gives members different avatar colours', () => {

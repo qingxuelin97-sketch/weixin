@@ -58,6 +58,17 @@ export interface BuildState {
   historyDone: boolean;
 }
 
+/**
+ * Where an unfinished build is parked.
+ *
+ * One row, because there is only ever one build in flight — and because a
+ * half-built group is not something to accumulate. It matters that this
+ * survives a reload: the CONTACTS are already in the database by then, so a
+ * user who reloads mid-build and starts over gets a second copy of everyone
+ * they already paid for.
+ */
+export const BUILD_STATE_KEY = 'groupBuild';
+
 export function newBuildState(blueprint: GroupBlueprint, now: number): BuildState {
   const id = `g${now.toString(36)}`;
   return {
@@ -207,4 +218,12 @@ export async function buildGroup(state: BuildState, deps: BuildDeps): Promise<Bu
   }
 
   return { convId: state.convId, created, skipped };
+}
+
+/** Is this build finished? Used to decide whether to offer "继续建群". */
+export function isBuildComplete(state: BuildState): boolean {
+  return (
+    state.historyDone &&
+    state.blueprint.members.every((m) => Boolean(state.made[m.key]) || state.failed.includes(m.key))
+  );
 }
