@@ -15,7 +15,7 @@ import type { PersonaVM, ContactVM, MomentVM } from '../data/types';
 import { seededRng } from '../lib/money';
 import { assembleSystemPrompt } from './prompt';
 import { toPersonaView, peersOf } from './engine';
-import { freshArc, arcMomentDirective } from './rel-arcs';
+import { freshArc, arcMomentDirective, aboutYouDirective } from './rel-arcs';
 import { driftedPersona } from './drift';
 import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
@@ -202,7 +202,20 @@ export async function generateMomentPost(
   // there WAS one. Seeded and minority-weighted — a feed of subtweets is a
   // different and much worse character than one that occasionally has a bad day.
   const arc = rng() < 0.4 ? await freshArc(peer.id, await peersOf(persona), now) : null;
-  const material = arc ? arcMomentDirective(arc.marker.kind) : '';
+  // …or something that happened with the USER today (M-H1). Until now the feed
+  // was her life with the user entirely absent from it, which is a strange
+  // sort of friendship: you talk every day and never appear in anything she
+  // posts. A same-day memory is exactly the material a person would use.
+  const shared = arc
+    ? null
+    : rng() < 0.35
+      ? facts.find((f) => f.status === 'confirmed' && now - f.createdAt < 24 * 3_600_000)
+      : null;
+  const material = arc
+    ? arcMomentDirective(arc.marker.kind)
+    : shared
+      ? aboutYouDirective(shared.fact)
+      : '';
 
   try {
     const router = await getRouter();

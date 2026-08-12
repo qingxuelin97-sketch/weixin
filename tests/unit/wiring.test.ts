@@ -106,6 +106,20 @@ describe('the gift planner is actually consulted', () => {
   });
 });
 
+describe('the bubble types she never used are finally offered', () => {
+  it('voice is proposed situationally, not just listed as legal', () => {
+    // `voice` (M2) and `image` (M1) were both legal bubble types that nothing
+    // ever produced, for the same reason: the base rules say the type exists,
+    // and cannot say when a person would use one.
+    expect(read('src/ai/engine.ts').includes('voiceDirective(')).toBe(true);
+    expect(read('src/ai/engine.ts').includes('photoDirective(')).toBe(true);
+  });
+
+  it('she can post about the two of you', () => {
+    expect(read('src/ai/moments-engine.ts').includes('aboutYouDirective(')).toBe(true);
+  });
+});
+
 describe('drift is recorded, applied, and undoable', () => {
   it('something writes it', () => {
     expect(read('src/ai/engine.ts').includes('noteDrift(')).toBe(true);

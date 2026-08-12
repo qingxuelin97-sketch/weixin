@@ -18,7 +18,7 @@ import { getRouter } from '../llm/service';
 import type { GenerateContext, NsfwTier } from '../llm/router';
 import { playMessageSound } from '../lib/sound';
 import { ensureVoiceAudio } from '../lib/voice';
-import { DEFAULT_VOICE } from '../llm/tts';
+import { DEFAULT_VOICE, isTtsAvailable } from '../llm/tts';
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
 import { moodOf, moodParams } from '../lib/mood';
@@ -34,6 +34,7 @@ import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { arcAwareness, freshArc, arcOpener, type PeerRef } from './rel-arcs';
 import { ownLines, styleNote, scrubBubbles } from './anti-ai';
 import { noteDrift } from './drift';
+import { voiceDirective } from './voice-send';
 import { refreshConvState, convStateDirective } from './conv-state';
 import {
   detectThreads,
@@ -416,6 +417,22 @@ async function generateAndPlayInner(
   const ownRecent = ownLines(recent, peer.id);
   const habit = styleNote(ownRecent, persona.catchphrases);
   if (habit) system += `\n\n${habit}`;
+  // Reaching for the mic instead of the keyboard (M-H1). `voice` has been a
+  // legal bubble since M2 and essentially never happened: the base rules list
+  // it as available but cannot say WHEN a person would use one, because that
+  // depends on the hour, her mood and what was just said.
+  const voiceLine = voiceDirective(
+    persona,
+    {
+      now: hooks.now(),
+      mood: mood.key,
+      lastUserText: [...recent].reverse().find((m) => m.senderId === 'self' && m.type === 'text')
+        ?.content,
+      seed: `${convId}:${recent.at(-1)?.id ?? 0}`,
+    },
+    await isTtsAvailable().catch(() => false),
+  );
+  if (voiceLine) system += `\n\n${voiceLine}`;
 
   // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:
   // it has no symptom except a bigger bill and a persona diluted by context.

@@ -243,6 +243,23 @@ export function arcMomentDirective(kind: ArcKind): string {
 }
 
 /**
+ * A post about something that happened WITH YOU, today.
+ *
+ * The feed has always been about her life with the user absent from it, which
+ * is a strange kind of friendship: you talk every day and never once appear in
+ * anything she posts. Names are still off-limits (WeChat posts do not @
+ * anyone, and a post that names you reads like a public announcement) — the
+ * point is only that you recognise the thing being described.
+ */
+export function aboutYouDirective(fact: string): string {
+  return (
+    `今天你和对方聊到过这件事：「${fact.slice(0, 40)}」。` +
+    '你可以就这件事发一条——不点名、不说是谁，写得像自己随手记一笔。' +
+    '对方看到会知道说的是你们俩。'
+  );
+}
+
+/**
  * The version she would actually SAY to you, as an opener.
  *
  * Separate from `arcLine` on purpose: the prompt line describes an internal
