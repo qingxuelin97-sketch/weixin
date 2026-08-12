@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import {
   updateConvState,
+  refineConvState,
+  aboutTheSameThing,
   convStateDirective,
   answersQuestion,
   refreshConvState,
@@ -229,5 +231,78 @@ describe('usage counting', () => {
     await repo.putSetting('usage:daily', 'not an array');
     await expect(recordUsage('chat', T0)).resolves.toBeUndefined();
     await expect(getUsage(T0)).resolves.toBeTruthy();
+  });
+});
+
+/* ==================== channel 2 (M-G0) ==================== */
+
+/**
+ * `specs/agents.md` specified a dual channel; only channel 1 was ever built.
+ * Channel 1 is a regex fold that runs every turn — instant, free, and
+ * necessarily over-eager. It cannot tell that a question was answered forty
+ * messages later, so its rows go stale and she keeps chasing things you
+ * already settled. This is the correcting pass, riding `mem_extract` so it
+ * costs no extra tokens.
+ */
+describe('channel 2: the memory pass corrects the regex pass', () => {
+  const T = 1_755_400_000_000;
+  const fact = (f: string, at: number) => ({ fact: f, createdAt: at });
+
+  it('closes an open question once a fact says it was answered', () => {
+    const prev = {
+      topics: [],
+      open: [{ text: '你周末去看牙了吗', askerId: 'self', askedAt: T, msgId: 1 }],
+      promises: [],
+      updatedAt: T,
+    };
+    const after = refineConvState(prev, [fact('他周末去看了牙医，补了一颗', T + 1000)], T + 2000);
+    expect(after.open).toHaveLength(0);
+  });
+
+  it('retires a promise the facts show was kept', () => {
+    const prev = { topics: [], open: [], promises: ['我明天给你带咖啡'], updatedAt: T };
+    const after = refineConvState(prev, [fact('她带了咖啡过来', T + 1000)], T + 2000);
+    expect(after.promises).toHaveLength(0);
+  });
+
+  it('leaves unrelated questions and promises alone', () => {
+    const prev = {
+      topics: [],
+      open: [{ text: '你妹妹考得怎么样', askerId: 'self', askedAt: T, msgId: 1 }],
+      promises: ['我回头把那本书寄给你'],
+      updatedAt: T,
+    };
+    const after = refineConvState(prev, [fact('他换了新工作', T + 1000)], T + 2000);
+    expect(after.open).toHaveLength(1);
+    expect(after.promises).toHaveLength(1);
+  });
+
+  it('ignores facts older than the last refinement', () => {
+    // Otherwise every run would re-close things using the same old facts, and
+    // a question you just asked about a long-known topic would vanish at once.
+    const prev = {
+      topics: [],
+      open: [{ text: '你周末去看牙了吗', askerId: 'self', askedAt: T + 5000, msgId: 1 }],
+      promises: [],
+      updatedAt: T + 4000,
+    };
+    const after = refineConvState(prev, [fact('他周末去看了牙医', T)], T + 6000);
+    expect(after.open).toHaveLength(1);
+  });
+
+  it('still expires stale questions when there are no new facts', () => {
+    const prev = {
+      topics: [],
+      open: [{ text: '在吗', askerId: 'self', askedAt: T, msgId: 1 }],
+      promises: [],
+      updatedAt: T,
+    };
+    const after = refineConvState(prev, [], T + 48 * 3_600_000);
+    expect(after.open).toHaveLength(0);
+  });
+
+  it('matches on shared substance, not on one incidental character', () => {
+    expect(aboutTheSameThing('你周末去看牙了吗', '他周末去看了牙医')).toBe(true);
+    expect(aboutTheSameThing('你妹妹考得怎么样', '他换了新工作')).toBe(false);
   });
 });

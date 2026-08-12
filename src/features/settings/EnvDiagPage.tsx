@@ -8,8 +8,9 @@
 import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { SubNav } from '../../components/SubNav';
-import { getUsage, KIND_LABELS, type DayUsage, type UsageKind } from '../../lib/usage';
+import { getUsage, clearUsage, KIND_LABELS, type DayUsage, type UsageKind } from '../../lib/usage';
 import { getLastSelftest, runSelftest, reachable, type SelftestReport } from '../../lib/selftest';
+import { useAppStore } from '../../store/appStore';
 import { useGuard } from '../../app/useGuard';
 import { repo } from '../../db/repo';
 import { getErrors, clearErrors, type ErrEntry } from '../../lib/errlog';
@@ -73,6 +74,7 @@ async function runProbes(): Promise<Probe[]> {
 
 export function EnvDiagPage() {
   const guard = useGuard();
+  const showToast = useAppStore((s) => s.showToast);
   const [usage, setUsage] = useState<{ today: DayUsage; history: DayUsage[] } | null>(null);
   const [selftest, setSelftest] = useState<SelftestReport | undefined>(undefined);
   const [probing, setProbing] = useState(false);
@@ -186,6 +188,20 @@ export function EnvDiagPage() {
               心跳、记忆整理、群聊调度这些是没人按按钮也会发生的——用的是你自己的 key，
               所以这里能看见。
             </p>
+          )}
+          {(usage?.history.length ?? 0) > 0 && (
+            <button
+              className="btn-ghost"
+              onClick={() => {
+                void (async () => {
+                  await clearUsage();
+                  setUsage(await getUsage(Date.now()));
+                  showToast('用量已清空');
+                })();
+              }}
+            >
+              清空用量记录
+            </button>
           )}
         </div>
 

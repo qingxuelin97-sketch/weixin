@@ -58,6 +58,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The banner's trailing affordance (story mode). Link-blue and quiet: the
+   banner is a status line, not a call to action — except when a run stalled,
+   where this is the only way back to it. */
+.group-announce__action {
+  flex: none;
+  padding: 2px 4px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-link);
+  background: none;
+  border: none;
+}
+.group-announce__action:active {
+  opacity: 0.55;
+}
+
 .chat-page__missing {
   margin: auto;
   color: var(--color-text-secondary);

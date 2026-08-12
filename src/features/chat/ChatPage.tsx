@@ -14,6 +14,8 @@ import { ImageViewer } from '../../components/ImageViewer';
 import { registerMedia } from '../../data/media-registry';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
+import { storyRunning } from '../../ai/story-service';
+import type { StorySaveRow } from '../../ai/story-gm';
 import { useAppStore } from '../../store/appStore';
 import { regenerateLastTurn } from '../../ai/engine';
 import { useGuard } from '../../app/useGuard';
@@ -166,6 +168,22 @@ export function ChatPage() {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [rows.length, isTyping, composer.bottomInset]);
+
+  // Is a story playing here? Re-checked as the transcript grows, which is also
+  // when a run ends or pauses. Never throws into the page: an unreadable save
+  // row means "no banner", not a blank chat.
+  const [story, setStory] = useState<StorySaveRow | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    void storyRunning(convId)
+      .then((s) => {
+        if (alive) setStory(s);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [convId, rows.length]);
 
   const send = async () => {
     const text = draft.trim();
@@ -330,6 +348,28 @@ export function ChatPage() {
             💬
           </span>
           <span className="group-announce__text">{conv.announcement}</span>
+        </div>
+      )}
+
+      {/* A story playing in this conversation (M-G0). `storyRunning` shipped in
+          M-E5 describing itself as "used to gate the UI" and had zero callers,
+          so the only sign a story was running was grey narration in the
+          transcript — and a story that STOPPED looked exactly like one that had
+          simply gone quiet. */}
+      {story && (
+        <div className="group-announce hairline-bottom" onClick={(e) => e.stopPropagation()}>
+          <span className="group-announce__icon" aria-hidden>
+            {story.stalledAt ? '⏸' : '🎬'}
+          </span>
+          <span className="group-announce__text">
+            {story.stalledAt ? '剧情已暂停——多次生成失败，去剧情页可以继续' : '剧情进行中'}
+          </span>
+          <button
+            className="group-announce__action"
+            onClick={() => navigate('/story')}
+          >
+            {story.stalledAt ? '去处理' : '查看'}
+          </button>
         </div>
       )}
 

@@ -34,6 +34,8 @@ import {
   threadsFromFacts,
   pickThread,
   threadDirective,
+  shouldSurfaceThread,
+  threadAwareness,
 } from './threads';
 
 export interface EngineHooks {
@@ -280,6 +282,24 @@ async function generateAndPlayInner(
   const convState = await refreshConvState(convId, recent, hooks.now());
   const stateLine = convStateDirective(convState, hooks.now());
   if (stateLine) system += `\n\n${stateLine}`;
+  // A loose thread she still remembers (M-G0). Threads shipped in M-E3 wired
+  // to `sendProactiveMessage` and nowhere else, so "上次你说要去看牙" could only
+  // arrive hours later as an unprompted message — while you were actually
+  // talking to her the whole system was off. Gated by `shouldSurfaceThread` so
+  // it opens at the moments a person reaches for a topic, not every turn, and
+  // phrased as background rather than an instruction to interrogate.
+  if (shouldSurfaceThread(recent, hooks.now())) {
+    const openThread = pickThread(
+      [...detectThreads(recent, convId), ...threadsFromFacts(facts, peer.id)],
+      recent,
+      hooks.now(),
+      { used: await usedThreadIds(peer.id), seed: `reply:${convId}:${recent.at(-1)?.id ?? 0}` },
+    );
+    // Deliberately NOT marked used: she may or may not take the opening, and
+    // burning the once-ever quota on a thread she never actually mentioned is
+    // how a thread disappears without ever being asked about.
+    if (openThread) system += `\n\n${threadAwareness(openThread, hooks.now())}`;
+  }
   if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
 
   // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:

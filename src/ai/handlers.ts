@@ -31,6 +31,8 @@ import type { ScheduledAction } from './scheduler';
 import type { DmPlan } from './agent-dm';
 import type { EngineHooks } from './engine';
 import type { GroupMember } from './director';
+import { getConvState, putConvState, refineConvState } from './conv-state';
+import { logError } from '../lib/errlog';
 
 /**
  * Everything the handlers are allowed to touch. Narrow on purpose: adding a
@@ -276,6 +278,22 @@ export async function handleMemExtract(
   // half-deleted one would write facts citing messages that no longer exist.
   if (!d.conversationExists(convId)) return;
   await d.runMemExtract({ convId, contactId, uptoMsgId });
+
+  // Channel 2 of the conversation state (M-G0). `specs/agents.md` specified a
+  // dual channel — the per-turn regex fold plus a memory pass that corrects
+  // it — and only channel 1 was ever built. The regex pass cannot tell that a
+  // question was answered forty messages later, so its rows go stale and she
+  // keeps chasing things you already settled.
+  //
+  // Riding this job means it costs no extra tokens: the facts were distilled
+  // by the extraction that just ran. Never allowed to fail the handler —
+  // conversational state is a nicety, memory is the point.
+  try {
+    const [state, facts] = await Promise.all([getConvState(convId), d.getMemory(contactId)]);
+    await putConvState(convId, refineConvState(state, facts, d.now()));
+  } catch (e) {
+    logError('convState.refine', e);
+  }
 }
 
 /* ------------------------------ agent DM ------------------------------ */
