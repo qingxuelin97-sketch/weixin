@@ -16,6 +16,7 @@ import { claimShare, isFullyClaimed, markBestLuck, appendTx, grabDelayMs } from 
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
 import { recordAffect } from '../lib/affect';
+import { noteDrift } from './drift';
 import { recordRelEvent } from './relationship';
 
 export interface MoneyHooks {
@@ -176,6 +177,10 @@ export async function claimRedPacket(
     // grabbing a packet YOU sent is the clearest positive event in the app.
     if (rp.senderId === 'self' && claimerId !== 'self') {
       void recordAffect(claimerId, 'gift_received', now).catch(() => {});
+      // …and the slow version of the same thing (M-H1): reciprocity is the
+      // most human money instinct there is, so someone you keep giving to
+      // becomes measurably more open-handed themselves.
+      void noteDrift(claimerId, 'gift_received', now);
     }
   }
 
@@ -329,6 +334,7 @@ export async function acceptTransfer(transferId: string, hooks: MoneyHooks): Pro
   void recordRelEvent(t.fromId, t.toId, 'transfer_received', now).catch(() => {});
   if (t.fromId === 'self' && t.toId !== 'self') {
     void recordAffect(t.toId, 'gift_received', now).catch(() => {});
+    void noteDrift(t.toId, 'gift_received', now);
   }
 
   const msgs = await repo.getMessages(t.convId, { limit: 200 });

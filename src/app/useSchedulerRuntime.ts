@@ -30,7 +30,8 @@ import { tierFor, maxTier, globalTier, tierOfConversation, redactForTier } from 
 import { renderTranscript } from '../ai/render-msg';
 import { logError } from '../lib/errlog';
 import { moodOf, moodParams } from '../lib/mood';
-import { affectFor } from '../lib/affect';
+import { affectFor, recordAffect } from '../lib/affect';
+import { noteDrift, driftedPersona } from '../ai/drift';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
@@ -137,7 +138,9 @@ export function useSchedulerRuntime(enabled: boolean): void {
         // Pacing now answers to how she FEELS, not only to the day's dice: the
         // affect pulse rides the same proactMul the mood already used (M-E3).
         const { params } = await affectFor(persona.contactId, now);
-        await scheduleHeartbeat(persona, convId, now, lastMsgAt, {
+        // Proactivity drifts (M-H1): being answered teaches her that reaching
+        // out works, and being ignored teaches her the opposite.
+        await scheduleHeartbeat(await driftedPersona(persona, now), convId, now, lastMsgAt, {
           affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
           proactMul: params.proactMul,
           notBefore: state.cooldownUntil || undefined,
@@ -443,7 +446,7 @@ async function runForegroundPass(): Promise<void> {
       queuedHere.add(`heartbeat:${persona.contactId}`);
       const edge = await getEdge('self', persona.contactId, now);
       const state = await getAgentState(persona.contactId);
-      await scheduleHeartbeat(persona, conv.id, now, conv.lastMsgAt, {
+      await scheduleHeartbeat(await driftedPersona(persona, now), conv.id, now, conv.lastMsgAt, {
         affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
         proactMul: moodParams(moodOf(persona.contactId, now).key).proactMul,
         notBefore: state.cooldownUntil || undefined,
@@ -482,6 +485,14 @@ async function runForegroundPass(): Promise<void> {
     if (last && shouldNudge(last, persona, now)) {
       const nudgeId = `nudge_${conv.id}_${last.id}`;
       if (!(await actionExists(nudgeId))) {
+        // Being ignored is supposed to hurt: `user_ignored` has been defined
+        // and weighted in affect.ts since M-E3 with NO producer anywhere, so
+        // the one negative signal the user generates by doing nothing has
+        // never once fired. This is the moment it means something — her
+        // message has sat unanswered for 6–48h — and the `actionExists` guard
+        // above makes it exactly once per ignored message.
+        void recordAffect(persona.contactId, 'user_ignored', now).catch(() => {});
+        void noteDrift(persona.contactId, 'user_ignored', now);
         const delay = (5 + seededRng(nudgeId)() * 25) * 60_000;
         await enqueue({
           kind: 'heartbeat',

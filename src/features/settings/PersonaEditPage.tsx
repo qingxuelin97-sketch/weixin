@@ -19,6 +19,7 @@ import { repo } from '../../db/repo';
 import type { PersonaVM, ProviderVM } from '../../data/types';
 import { makePersona, PERSONA_LIMITS } from '../../data/persona-defaults';
 import { useGuard } from '../../app/useGuard';
+import { getDrift, explainDrift, resetDrift, type DriftExplanation } from '../../ai/drift';
 import './settings.css';
 
 function emptyPersona(contactId: string): PersonaVM {
@@ -56,9 +57,20 @@ export function PersonaEditPage() {
   const [providers, setProviders] = useState<ProviderVM[]>([]);
   const [pickingAvatar, setPickingAvatar] = useState(false);
 
+  const [drifted, setDrifted] = useState<DriftExplanation[]>([]);
+
   useEffect(() => {
     void repo.getProviders().then((all) => setProviders(all.filter((x) => x.enabled)));
   }, []);
+
+  // How she has actually changed since the card was written (M-H1). Shown here
+  // rather than only in the state page because this is where the user comes to
+  // ask "why is she like this" — and because a drift you cannot see or undo is
+  // indistinguishable from the app quietly rewriting your character.
+  useEffect(() => {
+    if (!contactId) return;
+    void getDrift(contactId, Date.now()).then((d) => setDrifted(explainDrift(d)));
+  }, [contactId]);
 
   const set = <K extends keyof PersonaVM>(k: K, v: PersonaVM[K]) => setP((prev) => ({ ...prev, [k]: v }));
 
@@ -317,6 +329,28 @@ export function PersonaEditPage() {
               onChange={(e) => set('generosity', Number(e.target.value))}
             />
           </div>
+          {drifted.length > 0 && (
+            <div className="field">
+              <span className="field__label">相处出来的变化（不改卡片，只是叠在上面）</span>
+              {drifted.map((d) => (
+                <div key={d.dim} className="field__hint">
+                  · 她{d.label}（{d.delta > 0 ? '+' : ''}
+                  {d.delta.toFixed(2)}）
+                </div>
+              ))}
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  void resetDrift(contactId).then(() => {
+                    setDrifted([]);
+                    showToast('已恢复到卡片');
+                  });
+                }}
+              >
+                恢复到卡片
+              </button>
+            </div>
+          )}
           <div className="field">
             <span className="field__label">初始亲密度：{p.affinityInit}（影响赞评与嘘寒问暖）</span>
             <input

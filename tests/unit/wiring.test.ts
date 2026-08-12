@@ -106,6 +106,36 @@ describe('the gift planner is actually consulted', () => {
   });
 });
 
+describe('drift is recorded, applied, and undoable', () => {
+  it('something writes it', () => {
+    expect(read('src/ai/engine.ts').includes('noteDrift(')).toBe(true);
+    expect(runtime.includes('noteDrift(')).toBe(true);
+  });
+
+  it('something READS it — otherwise she drifts without behaving differently', () => {
+    // The failure mode this guards is subtle: the delta accumulates, the state
+    // page shows "她比刚认识时更主动了", and nothing about her actual pacing
+    // changes. A visible number with no behaviour behind it is worse than no
+    // feature, because it is a claim the app cannot back up.
+    expect(runtime.includes('driftedPersona(')).toBe(true);
+    expect(read('src/ai/gift-service.ts').includes('driftedPersona(')).toBe(true);
+    expect(read('src/ai/moments-engine.ts').includes('driftedPersona(')).toBe(true);
+  });
+
+  it('the user can see it and undo it', () => {
+    const page = read('src/features/settings/PersonaEditPage.tsx');
+    expect(page.includes('explainDrift(')).toBe(true);
+    expect(page.includes('resetDrift(')).toBe(true);
+  });
+
+  it('being ignored finally produces its affect event', () => {
+    // `user_ignored` was defined and weighted in affect.ts since M-E3 with no
+    // producer anywhere: the one negative signal the user generates by doing
+    // NOTHING had never once fired.
+    expect(runtime.includes("'user_ignored'")).toBe(true);
+  });
+});
+
 describe('anti-AI-tone v2 runs on the output, not just in the prompt', () => {
   for (const file of ['src/ai/engine.ts', 'src/ai/group-engine.ts']) {
     it(`${file} scrubs and feeds back`, () => {

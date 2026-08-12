@@ -33,6 +33,7 @@ import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { arcAwareness, freshArc, arcOpener, type PeerRef } from './rel-arcs';
 import { ownLines, styleNote, scrubBubbles } from './anti-ai';
+import { noteDrift } from './drift';
 import { refreshConvState, convStateDirective } from './conv-state';
 import {
   detectThreads,
@@ -233,7 +234,13 @@ export async function sendUserMessage(
   void noteUserReplied(peer.id).catch(() => {});
   // How she FEELS about it, not just how close you are. `user_reply` is the
   // small baseline good thing; an apology or an insult is classified separately.
-  void recordAffect(peer.id, classifyUserMessage(text) ?? 'user_reply', hooks.now()).catch(() => {});
+  const affectEvent = classifyUserMessage(text) ?? 'user_reply';
+  void recordAffect(peer.id, affectEvent, hooks.now()).catch(() => {});
+  // …and what it does to WHO SHE IS over months (M-H1). Affect is a pulse that
+  // decays in hours; drift is the slow, capped residue of the same events —
+  // the difference between a bad evening and someone who has learned that
+  // reaching out to you works.
+  void noteDrift(peer.id, affectEvent, hooks.now());
 
   // 2) Build context, 3) generate and play.
   await generateAndPlay(convId, peer, persona, globalTier, hooks, ctrl);

@@ -16,6 +16,7 @@ import { seededRng } from '../lib/money';
 import { assembleSystemPrompt } from './prompt';
 import { toPersonaView, peersOf } from './engine';
 import { freshArc, arcMomentDirective } from './rel-arcs';
+import { driftedPersona } from './drift';
 import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
 import { pickImages } from '../data/moments-images';
@@ -145,8 +146,11 @@ export async function collectReactors(
   const out: ReactorInfo[] = [];
   for (const c of contacts) {
     if (c.type !== 'ai') continue;
-    const p = personaFor(c.id);
-    if (!p) continue;
+    const base = personaFor(c.id);
+    if (!base) continue;
+    // As she is NOW, not as the card was written (M-H1): months of being
+    // ignored make someone engage less, and the rates are where that shows.
+    const p = now != null ? await driftedPersona(base, now) : base;
     out.push({
       contactId: c.id,
       likeRate: p.likeRate,

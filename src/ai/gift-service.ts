@@ -15,6 +15,7 @@ import { enqueue, actionExists } from './scheduler';
 import { getEdge, effectiveAffinity } from './relationship';
 import { occasionsFor, firstSpokeAt } from './occasions';
 import { planGift, planGroupGift, type GiftPlan } from './money-motive';
+import { driftedPersona } from './drift';
 import { sendRedPacketFrom, sendTransferFrom, type MoneyHooks } from './money-service';
 
 const DAY = 86_400_000;
@@ -81,7 +82,9 @@ export async function considerGift(args: {
   const edge = await getEdge('self', contactId, now);
   const facts = await repo.getMemory(contactId).catch(() => []);
   const plan = planGift({
-    persona,
+    // Generosity drifts (M-H1): someone you have been warm to for months is
+    // more open-handed than the card says, and someone you fought with is less.
+    persona: await driftedPersona(persona, now),
     now,
     affinity: effectiveAffinity(edge, persona.affinityInit),
     occasions: occasionsFor({ now, facts, firstMsgAt: await firstSpokeAt(conv.id) }),
