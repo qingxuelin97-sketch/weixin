@@ -109,6 +109,7 @@
   --color-rp-open-bg: var(--wx-rp-red-deep);
   --color-quote-block: var(--wx-quote-gray);
   --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-black-scrim: rgba(0, 0, 0, 0.18); /* dim behind an edge-swipe drag */
   --color-menu-bg: #4c4c4c; /* long-press dark menu */
   --color-toast-bg: rgba(0, 0, 0, 0.75); /* centered transient toast */
   --color-viewer-bg: #000; /* full-screen image viewer backdrop */

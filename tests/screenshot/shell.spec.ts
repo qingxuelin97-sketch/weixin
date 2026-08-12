@@ -7,6 +7,16 @@ import { test, expect } from '@playwright/test';
  */
 
 async function settle(page: import('@playwright/test').Page) {
+  // Wait for the route transition to finish first (M-H3).
+  //
+  // Two route trees are on screen while a page slides in, which is the whole
+  // point of the transition — and it means the outgoing page's controls are
+  // still queryable. Without this a `getByLabel('搜索')` matched the button on
+  // the page being LEFT as well as the input on the page being entered.
+  await page
+    .waitForFunction(() => !document.querySelector('.page-stack--busy'), null, { timeout: 3000 })
+    .catch(() => {});
+
   // Wait for fonts + layout to settle so pixels are stable.
   await page.evaluate(() => document.fonts.ready);
 

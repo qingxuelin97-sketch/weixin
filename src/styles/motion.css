@@ -7,7 +7,16 @@
  * can destabilize screenshots.
  */
 
-/* ---- Route push: full-screen pages slide in from the right (WeChat push). */
+/* ---- Route transitions, BOTH directions (M-H3).
+
+   Before this the departing page unmounted on the same frame the arriving one
+   mounted, so going back was an instant cut. `PageStack` keeps the outgoing
+   tree mounted for the duration; these four keyframe sets are the two halves
+   of a push and the two halves of a pop.
+
+   The page underneath moves 30% and dims, which is the iOS parallax: the
+   layers travel at different speeds, so the stack reads as depth rather than
+   as two slides. */
 .page-push {
   flex: 1 1 auto;
   min-height: 0;
@@ -16,15 +25,97 @@
   /* Absolutely-positioned pages (.chat-page) anchor here in BOTH animation
      states — a transform would otherwise flip their containing block mid-flight. */
   position: relative;
-  animation: page-slide-in var(--dur-page) var(--ease-standard);
 }
-@keyframes page-slide-in {
+
+.page-stack {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.page-stack__page {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+/* Only while two trees are on screen: stacking them costs a containing block,
+   and paying it on every static frame would change how every absolutely
+   positioned page inside lays out. */
+.page-stack--busy .page-stack__page {
+  position: absolute;
+  inset: 0;
+  background: var(--color-page-bg);
+}
+.page-stack--busy .page-stack__page--push-in,
+.page-stack--busy .page-stack__page--pop-in {
+  z-index: 2;
+}
+
+.page-stack__page--push-in {
+  animation: page-in-right var(--dur-page) var(--ease-standard) both;
+}
+.page-stack__page--push-out {
+  animation: page-out-left var(--dur-page) var(--ease-standard) both;
+}
+.page-stack__page--pop-in {
+  animation: page-in-left var(--dur-page) var(--ease-standard) both;
+}
+.page-stack__page--pop-out {
+  animation: page-out-right var(--dur-page) var(--ease-standard) both;
+}
+
+@keyframes page-in-right {
   from {
     transform: translateX(100%);
   }
   to {
     transform: translateX(0);
   }
+}
+@keyframes page-out-left {
+  from {
+    transform: translateX(0);
+    filter: brightness(1);
+  }
+  to {
+    transform: translateX(-30%);
+    filter: brightness(0.86);
+  }
+}
+@keyframes page-in-left {
+  from {
+    transform: translateX(-30%);
+    filter: brightness(0.86);
+  }
+  to {
+    transform: translateX(0);
+    filter: brightness(1);
+  }
+}
+@keyframes page-out-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* ---- Edge-swipe back (M-H3): while the finger is down the page follows it
+   exactly, with no transition, or the drag would lag behind the thumb. */
+.page-stack--dragging .page-stack__page {
+  animation: none !important;
+  transition: none !important;
+}
+.page-stack__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--color-black-scrim);
+  pointer-events: none;
 }
 
 /* ---- Composer panel rises like the keyboard it replaces. */

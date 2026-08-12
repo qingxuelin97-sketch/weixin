@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { TabScaffold } from './app/TabScaffold';
+import { PageStack } from './app/PageStack';
 import { Toast } from './components/Toast';
 import { IncomingCall } from './features/call/IncomingCall';
 import { ChatListPage } from './features/chat-list/ChatListPage';
@@ -39,17 +40,15 @@ import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
 
 /**
- * Full-screen pushed pages slide in from the right (finally consuming the
- * `--dur-page` token defined in M1). Keyed by location so every navigation —
- * including chat→chat — replays the entrance. Tabs switch instantly, like WeChat.
+ * A pushed full-screen page.
+ *
+ * The transition itself moved to `PageStack` in M-H3: this wrapper used to
+ * re-key on `location.key` to replay an ENTRANCE, which is exactly why there
+ * was never an exit — the departing page unmounted on the same frame. It is
+ * now just the layout box; `PageStack` animates both sides.
  */
 function Push({ children }: { children: ReactNode }) {
-  const location = useLocation();
-  return (
-    <div className="page-push" key={location.key}>
-      {children}
-    </div>
-  );
+  return <div className="page-push">{children}</div>;
 }
 
 /**
@@ -93,7 +92,9 @@ export function App() {
           {!hydrated ? (
             <div className="app-loading" />
           ) : (
-            <Routes>
+            <PageStack>
+              {(loc) => (
+            <Routes location={loc}>
               <Route element={<TabScaffold />}>
                 <Route path="/" element={<Navigate to="/chats" replace />} />
                 <Route path="/chats" element={<ChatListPage />} />
@@ -133,6 +134,8 @@ export function App() {
               <Route path="/wallet" element={<Push><WalletPage /></Push>} />
               <Route path="*" element={<Navigate to="/chats" replace />} />
             </Routes>
+              )}
+            </PageStack>
           )}
         </ErrorBoundary>
         <Toast />
