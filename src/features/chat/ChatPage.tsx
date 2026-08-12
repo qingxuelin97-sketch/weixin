@@ -365,6 +365,11 @@ export function ChatPage() {
         senderId: 'self',
         type: 'image',
         content: `idb:${item.id}`,
+        // The library tags travel with the message so the projection layer has
+        // SOMETHING to say about the photo even when vision is off or the
+        // model cannot see. `meta.tags` had a rendering branch since M-E1 and
+        // no writer at all, which is why every picture read as "[发了一张图片]".
+        meta: { tags: item.tags },
         status: 'sent',
         createdAt: Date.now(),
       });

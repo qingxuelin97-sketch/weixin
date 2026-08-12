@@ -27,6 +27,7 @@ import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
 import { collectTurnImages } from './vision-context';
+import { resolvePhotoBubble, photoDirective } from './photo-send';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { refreshConvState, convStateDirective } from './conv-state';
@@ -353,6 +354,10 @@ async function generateAndPlayInner(
     if (openThread) system += `\n\n${threadAwareness(openThread, hooks.now())}`;
   }
   if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
+  // Only advertised when a pool actually exists — offering a capability she
+  // cannot exercise just produces image bubbles that all degrade to text.
+  const photoLine = photoDirective(persona);
+  if (photoLine) system += `\n\n${photoLine}`;
 
   // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:
   // it has no symptom except a bigger bill and a persona diluted by context.
@@ -450,11 +455,35 @@ async function generateAndPlayInner(
       // Hide typing just before the last bubble lands.
       if (i === bubbles.length - 1) hooks.setTyping(convId, false);
 
+      // A photo bubble names what she wants to show, not a file — resolve it
+      // against the user's own pool. With no pool it becomes text: a broken
+      // image reads as a bug, while saying it in words reads as her not having
+      // a picture to hand.
+      const photo =
+        b.type === 'image'
+          ? resolvePhotoBubble(b, persona, convId, `${convId}:${hooks.now()}:${i}`)
+          : null;
+      if (b.type === 'image' && !photo) {
+        await hooks.appendMessage({
+          convId,
+          senderId: peer.id,
+          type: 'text',
+          content: b.content,
+          status: 'sent',
+          createdAt: hooks.now(),
+        });
+        playMessageSound(hooks.now());
+        continue;
+      }
+
       await hooks.appendMessage({
         convId,
         senderId: peer.id,
         type: bubbleToMsgType(b),
-        content: b.content,
+        content: photo ? photo.ref : b.content,
+        // The description rides along as the caption so a later turn can refer
+        // back to "那张饼干的照片" rather than to an opaque handle.
+        ...(photo ? { meta: { caption: photo.caption } } : {}),
         ...(b.type === 'voice' ? { meta: await voiceMeta(b.content, persona, b.emotion, tier) } : {}),
         status: 'sent',
         createdAt: hooks.now(),

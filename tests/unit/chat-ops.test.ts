@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { renderMessageBody } from '../../src/ai/render-msg';
 import { stickerGlyph, STICKER_VOCAB, STICKER_LABELS } from '../../src/data/stickers';
+import { resolvePhotoBubble, photoDirective, resetPhotoMemory } from '../../src/ai/photo-send';
 import type { MessageVM } from '../../src/data/types';
 
 /**
@@ -139,5 +140,61 @@ describe('W4 · stickers render as stickers', () => {
     for (const label of Object.keys(STICKER_VOCAB)) {
       expect(STICKER_LABELS).toContain(label);
     }
+  });
+});
+
+/* ==================== she can send a photo too (M-H1) ==================== */
+
+/**
+ * `image` has been a valid bubble type since M1 and playback always handled
+ * it — but nothing produced one, because a model cannot name a file. It can
+ * only describe what it wants to show, so something has to resolve that
+ * against the user's own pool.
+ */
+describe('an image bubble becomes a real photo, or gracefully becomes words', () => {
+  beforeEach(() => resetPhotoMemory());
+
+  const persona = { contactId: 'ai_lin', imageTags: [] as string[] };
+  const bubble = (content: string) => ({ type: 'image' as const, content });
+
+  it('resolves to a pool ref and keeps the description as the caption', () => {
+    const out = resolvePhotoBubble(bubble('刚烤的饼干'), persona, 'c1', 's1');
+    expect(out).not.toBeNull();
+    expect(out!.ref).toMatch(/^(idb:|img:|ph:)/);
+    expect(out!.caption).toBe('刚烤的饼干');
+  });
+
+  it('avoids repeating the photo it just sent', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 4; i++) {
+      const out = resolvePhotoBubble(bubble(`第${i}张`), persona, 'c1', `s${i}`);
+      if (out) seen.add(out.ref);
+    }
+    // Sending the identical picture twice in a row is the tell that there is a
+    // pool behind her rather than a life.
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('only advertises the capability when a pool exists', () => {
+    // Offering an ability she cannot exercise just produces image bubbles that
+    // all degrade back to text.
+    const line = photoDirective(persona);
+    expect(typeof line).toBe('string');
+    if (line) expect(line).toContain('image');
+  });
+
+  it('her caption is what the model sees later, not the media handle', () => {
+    const body = renderMessageBody(
+      msg({ senderId: 'ai_lin', type: 'image', content: 'idb:abc', meta: { caption: '刚烤的饼干' } }),
+    );
+    expect(body).toContain('刚烤的饼干');
+    // The internal id must never reach the model — it would echo it back.
+    expect(body).not.toContain('idb:');
+    expect(body).not.toContain('abc');
+  });
+
+  it('a user photo still says something via its library tags', () => {
+    const body = renderMessageBody(msg({ type: 'image', content: 'idb:x', meta: { tags: ['聊天'] } }));
+    expect(body).toContain('聊天');
   });
 });

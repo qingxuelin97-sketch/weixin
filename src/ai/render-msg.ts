@@ -90,6 +90,17 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
     case 'image': {
       // `content` is an `idb:` media handle — an internal id the model must
       // never see (it would echo it back into dialogue).
+      //
+      // `meta.caption` is what SHE said the photo was when she sent it, so a
+      // later turn can refer back to "那张饼干的照片". The old `meta.tags`
+      // branch here was dead code: nothing ever wrote tags, so every picture
+      // in every transcript read as a bare "[发了一张图片]".
+      // `meta.caption` is what SHE said the photo was when she sent it.
+      // `meta.tags` are the library tags of a photo the USER sent. Either way
+      // the model gets something better than "a picture exists" — which is all
+      // it used to get, since nothing wrote tags and captions did not exist.
+      const caption = str(meta.caption);
+      if (caption) return `[发了一张图片：${caption}]`;
       const tags = Array.isArray(meta.tags) ? meta.tags.filter((t) => typeof t === 'string') : [];
       return tags.length ? `[发了一张图片：${tags.join('、')}]` : '[发了一张图片]';
     }
