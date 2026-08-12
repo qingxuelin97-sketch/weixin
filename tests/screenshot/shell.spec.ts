@@ -47,6 +47,28 @@ async function settle(page: import('@playwright/test').Page) {
         setTimeout(tick, 50);
       }),
   );
+
+  // Quiescence says "nothing is changing"; it does not say "the chat is
+  // anchored". A thread that settled one frame short of the bottom is stable
+  // AND wrong, so assert the invariant the shot depends on. Safe to combine
+  // now that `data-thread-ready` is derived from the store — an empty
+  // container can no longer satisfy "at bottom" before the messages exist.
+  const ready = page.locator('[data-thread-ready="1"]');
+  if (await ready.count()) {
+    await ready.evaluate(
+      (el) =>
+        new Promise<void>((resolve) => {
+          const deadline = performance.now() + 3000;
+          const tick = () => {
+            const off = el.scrollHeight - el.scrollTop - el.clientHeight;
+            if (off <= 2 || performance.now() > deadline) return resolve();
+            el.scrollTop = el.scrollHeight;
+            requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        }),
+    );
+  }
   await page.waitForTimeout(100);
 }
 

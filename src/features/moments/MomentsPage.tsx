@@ -19,6 +19,8 @@ import './moments.css';
 
 /** Cover height in px; the nav is fully opaque once this much has scrolled by. */
 const COVER_H = 260;
+/** Cards mounted up front, and the step added on each scroll toward the end. */
+const INITIAL_CARDS = 12;
 
 export function MomentsPage() {
   const navigate = useNavigate();
@@ -37,7 +39,6 @@ export function MomentsPage() {
   // Photos are materialized on demand (M-G1): ask for the ones this feed
   // draws, and re-render when they arrive. Priming the whole library here
   // would put back the memory problem the lazy registry exists to remove.
-  useMedia(useMemo(() => moments.flatMap((m) => m.imageRefs ?? []), [moments]));
   const addComment = useAppStore((s) => s.addComment);
 
   const now = useNow();
@@ -47,15 +48,39 @@ export function MomentsPage() {
   }, [loadMoments]);
 
   const self = contacts.find((c) => c.type === 'self');
+  // One index, not a linear scan per call. `nameOf` is invoked for every like
+  // and every comment on every card, so `contacts.find` made drawing the feed
+  // O(posts × interactions × contacts).
+  const byId = useMemo(() => new Map(contacts.map((c) => [c.id, c])), [contacts]);
   const nameOf = (id: string) => {
     if (id === 'self') return self ? (self.remark ?? self.name) : '我';
-    const c = contacts.find((x) => x.id === id);
+    const c = byId.get(id);
     return c ? (c.remark ?? c.name) : id;
   };
 
+  /**
+   * Cards actually mounted, grown as the user scrolls.
+   *
+   * Not virtualization: `getMoments` already caps a page at 60 (M-G1), so the
+   * list is bounded — what is not bounded is the MEDIA. Priming every image on
+   * the page at once (9 per post × 60 posts) blows straight past the object-URL
+   * cap and makes the registry evict what it just materialized. Revealing
+   * progressively keeps the working set inside the cap.
+   */
+  const [shown, setShown] = useState(INITIAL_CARDS);
+  const visible = useMemo(() => moments.slice(0, shown), [moments, shown]);
+
+  // Only what is mounted: priming the whole page's images would exceed the
+  // object-URL cap and make the registry evict what it just materialized.
+  useMedia(useMemo(() => visible.flatMap((m) => m.imageRefs ?? []), [visible]));
+
   const onScroll = () => {
-    const y = scrollRef.current?.scrollTop ?? 0;
+    const el = scrollRef.current;
+    const y = el?.scrollTop ?? 0;
     setNavAlpha(Math.min(1, Math.max(0, y / COVER_H)));
+    if (el && el.scrollHeight - y - el.clientHeight < 600) {
+      setShown((n) => (n >= moments.length ? n : n + INITIAL_CARDS));
+    }
   };
 
   const submitComment = async (momentId: string) => {
@@ -107,13 +132,13 @@ export function MomentsPage() {
           <p className="moments__empty">还没有动态。点右上角相机发一条吧。</p>
         ) : (
           <div className="moments__list">
-            {moments.map((m) => {
+            {visible.map((m) => {
               const likes = likesFor(m.id);
               return (
                 <div key={m.id}>
                   <MomentCard
                     moment={m}
-                    author={m.authorId === 'self' ? self : contacts.find((c) => c.id === m.authorId)}
+                    author={m.authorId === 'self' ? self : byId.get(m.authorId)}
                     likes={likes}
                     comments={commentsFor(m.id)}
                     nameOf={nameOf}

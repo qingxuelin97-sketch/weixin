@@ -227,6 +227,27 @@ export async function idbPageDesc<T>(
   });
 }
 
+/**
+ * Append many autoincrement rows in ONE transaction.
+ *
+ * Distinct from `idbBulkPut`: these rows have no key yet (messages are keyed by
+ * the autoincrement id that IS their chronological order), so they must be
+ * `add`ed rather than `put`. Sequential within the transaction, which is what
+ * keeps "rowid order == time order" true for seeded data.
+ */
+export async function idbBulkAdd<T>(store: string, values: T[]): Promise<void> {
+  if (values.length === 0) return;
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(store, 'readwrite');
+    const os = t.objectStore(store);
+    for (const v of values) os.add(v as unknown as Record<string, unknown>);
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  });
+}
+
 export async function idbBulkPut<T>(store: string, values: T[]): Promise<void> {
   const db = await openDB();
   const t = db.transaction(store, 'readwrite');

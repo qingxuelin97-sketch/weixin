@@ -658,3 +658,23 @@
   font-size: var(--fs-small-gray);
   color: var(--color-text-secondary);
 }
+
+/* Undelivered mark on your own message — and the retry control (M-H0).
+   Sits outside the bubble on the leading side, WeChat-style. */
+.msg-failed {
+  align-self: center;
+  flex: none;
+  margin-top: 6px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-badge);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-badge);
+  line-height: 1;
+  font-weight: var(--fw-medium);
+}
+.msg-failed:active {
+  filter: brightness(0.92);
+}

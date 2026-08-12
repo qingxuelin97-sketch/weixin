@@ -115,6 +115,53 @@ function personaRefusalBubbles(persona: PersonaVM): Bubble[] {
  * @param globalTier global NSFW tier setting
  * @param hooks persistence/UI callbacks
  */
+/**
+ * Flag the newest outgoing message as undelivered.
+ *
+ * Reads the row back from storage rather than trusting a captured object: the
+ * append happened earlier in this turn and the id is assigned by the store.
+ */
+async function markLastUserMessageFailed(convId: string, hooks: EngineHooks): Promise<void> {
+  const recent = await repo.getMessages(convId, { limit: 5 });
+  const mine = [...recent].reverse().find((m) => m.senderId === 'self');
+  if (!mine || mine.status === 'failed') return;
+  await hooks.updateMessage({ ...mine, status: 'failed' });
+}
+
+export interface SendOptions {
+  /**
+   * The caller has already written the user's row(s).
+   *
+   * Photos are the reason this exists: `sendImages` persists one message per
+   * file through the media library, then needs ONE reply to the batch. Without
+   * it the only way to get a reply was to append a second, fake text message.
+   */
+  alreadyPersisted?: boolean;
+}
+
+/**
+ * Ask for a reply to the conversation as it now stands, appending nothing.
+ *
+ * The gap this closes: sending a photo used to call `appendMessage` and stop
+ * there — no code path anywhere started a generation, so **she never answered
+ * a picture**. Every richer plan for images (captions, real vision) was
+ * downstream of a reply that was never requested.
+ *
+ * The transcript already carries the photo through the projection layer, so
+ * the model sees it in context; nothing extra is invented on the user's behalf.
+ */
+export async function replyToLatest(
+  convId: string,
+  peer: ContactVM,
+  persona: PersonaVM,
+  globalTier: NsfwTierVM,
+  hooks: EngineHooks,
+): Promise<void> {
+  await sendUserMessage(convId, '', peer, persona, globalTier, hooks, undefined, {
+    alreadyPersisted: true,
+  });
+}
+
 export async function sendUserMessage(
   convId: string,
   text: string,
@@ -123,6 +170,7 @@ export async function sendUserMessage(
   globalTier: NsfwTierVM,
   hooks: EngineHooks,
   meta?: Record<string, unknown>,
+  opts: SendOptions = {},
 ): Promise<void> {
   // Hard-interrupt any in-flight reply for this conversation.
   inFlight.get(convId)?.abort();
@@ -130,16 +178,20 @@ export async function sendUserMessage(
   inFlight.set(convId, ctrl);
 
   // 1) Persist the user's message immediately (meta carries e.g. a quote).
+  //    Skipped when the caller already wrote the row — sending photos persists
+  //    one message per file and then asks for a single reply to all of them.
   try {
-    await hooks.appendMessage({
-      convId,
-      senderId: 'self',
-      type: 'text',
-      content: text,
-      ...(meta ? { meta } : {}),
-      status: 'sent',
-      createdAt: hooks.now(),
-    });
+    if (!opts.alreadyPersisted) {
+      await hooks.appendMessage({
+        convId,
+        senderId: 'self',
+        type: 'text',
+        content: text,
+        ...(meta ? { meta } : {}),
+        status: 'sent',
+        createdAt: hooks.now(),
+      });
+    }
   } catch (e) {
     // A failed write must not keep the slot: the user would see their message
     // vanish AND the AI would go quiet forever.
@@ -190,16 +242,15 @@ async function generateAndPlay(
     logError('chat.generate', e);
     if (ctrl.signal.aborted) return;
     hooks.setTyping(convId, false);
-    await hooks
-      .appendMessage({
-        convId,
-        senderId: peer.id,
-        type: 'system',
-        content: `消息没能送达：${e instanceof Error ? e.message : String(e)}`,
-        status: 'sent',
-        createdAt: hooks.now(),
-      })
-      .catch(() => {});
+    // Mark the USER's message failed rather than appending a system bubble.
+    //
+    // A system line stated the problem but could not act on it: there was no
+    // retry, and it sat in the transcript permanently (and in the model's
+    // context) narrating a network error. WeChat's answer — and now ours — is
+    // the red mark on the message you sent, which is also the retry button.
+    // `status: 'failed'` has been in the schema since M1 with zero producers;
+    // this is the producer.
+    await markLastUserMessageFailed(convId, hooks).catch(() => {});
   } finally {
     // Belt and braces: the inner generator releases the slot on its own paths,
     // but only this finally covers a throw from the context-loading awaits that

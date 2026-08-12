@@ -416,13 +416,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadMoments: async (force = false) => {
     if (get().momentsLoaded && !force) return;
     const moments = await repo.getMoments();
-    const momentLikes: Record<string, MomentLikeVM[]> = {};
-    const momentComments: Record<string, MomentCommentVM[]> = {};
-    await Promise.all(
-      moments.map(async (m) => {
-        momentLikes[m.id] = await repo.getLikes(m.id);
-        momentComments[m.id] = await repo.getComments(m.id);
-      }),
+    // Two queries for the page, not two per post: the old fan-out was 2N+1
+    // round trips, so the feed got slower the more you had posted.
+    const { likes: momentLikes, comments: momentComments } = await repo.getMomentSocial(
+      moments.map((m) => m.id),
     );
     set({ moments, momentLikes, momentComments, momentsLoaded: true });
   },

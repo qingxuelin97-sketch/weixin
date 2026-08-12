@@ -42,6 +42,26 @@ interface ActorOutput {
  * Handle a user message sent into a group: persist it, decide the cast, generate
  * concurrently, then play the lines in order.
  */
+/**
+ * Ask the room to react to what is already there, appending nothing.
+ *
+ * Group counterpart of `engine.replyToLatest`. Photos are the caller: sending
+ * pictures persists one message per file and then wants ONE round of reactions
+ * to the batch — before M-H0 it wanted nothing, because sending a photo never
+ * started a generation at all.
+ */
+export async function replyToLatestInGroup(
+  conv: ConversationVM,
+  members: GroupMember[],
+  globalTier: NsfwTierVM,
+  hooks: EngineHooks,
+  contactById: (id: string) => ContactVM | undefined,
+): Promise<void> {
+  await sendGroupMessage(conv, '', members, globalTier, hooks, contactById, undefined, {
+    alreadyPersisted: true,
+  });
+}
+
 export async function sendGroupMessage(
   conv: ConversationVM,
   text: string,
@@ -49,20 +69,26 @@ export async function sendGroupMessage(
   globalTier: NsfwTierVM,
   hooks: EngineHooks,
   contactById: (id: string) => ContactVM | undefined,
+  /** Quoted-reply payload, same shape the single chat uses. */
+  meta?: Record<string, unknown>,
+  opts: { alreadyPersisted?: boolean } = {},
 ): Promise<void> {
   const convId = conv.id;
   inFlight.get(convId)?.abort();
   const ctrl = new AbortController();
   inFlight.set(convId, ctrl);
 
-  await hooks.appendMessage({
-    convId,
-    senderId: 'self',
-    type: 'text',
-    content: text,
-    status: 'sent',
-    createdAt: hooks.now(),
-  });
+  if (!opts.alreadyPersisted) {
+    await hooks.appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'text',
+      content: text,
+      status: 'sent',
+      createdAt: hooks.now(),
+      ...(meta ? { meta } : {}),
+    });
+  }
 
   try {
     const recent = await repo.getMessages(convId, { limit: RECENT_WINDOW });

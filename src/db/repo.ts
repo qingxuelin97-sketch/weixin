@@ -29,6 +29,7 @@ import {
   idbGet,
   idbPut,
   idbAdd,
+  idbBulkAdd,
   idbDelete,
   idbBulkPut,
   idbCount,
@@ -85,6 +86,8 @@ export interface Repo {
   // moments
   /** Newest first. `before` paginates by createdAt for infinite scroll. */
   getMoments(opts?: { limit?: number; before?: number }): Promise<MomentVM[]>;
+  /** Likes+comments for a page of posts in two queries rather than 2N. */
+  getMomentSocial(momentIds: string[]): Promise<{ likes: Record<string, MomentLikeVM[]>; comments: Record<string, MomentCommentVM[]> }>;
   getMoment(id: string): Promise<MomentVM | undefined>;
   putMoment(m: MomentVM): Promise<void>;
   getLikes(momentId: string): Promise<MomentLikeVM[]>;
@@ -239,6 +242,36 @@ export class IdbRepo implements Repo {
     await idbPut('wallet_tx', t);
   }
 
+  /**
+   * Likes and comments for a whole page of posts, in two queries instead of 2N.
+   *
+   * The feed used to fan out `getLikes`/`getComments` per post — 2N+1 round
+   * trips for a screen, which is the shape that makes a feed feel slower the
+   * more you have posted. `byMoment` answers each of these directly, and the
+   * grouping is a single pass in JS.
+   */
+  async getMomentSocial(momentIds: string[]) {
+    const likes: Record<string, MomentLikeVM[]> = {};
+    const comments: Record<string, MomentCommentVM[]> = {};
+    if (momentIds.length === 0) return { likes, comments };
+    const want = new Set(momentIds);
+    for (const id of momentIds) {
+      likes[id] = [];
+      comments[id] = [];
+    }
+    const [allLikes, allComments] = await Promise.all([
+      idbGetAll<MomentLikeVM>('moment_likes'),
+      idbGetAll<MomentCommentVM>('moment_comments'),
+    ]);
+    for (const l of allLikes) if (want.has(l.momentId)) likes[l.momentId].push(l);
+    for (const c of allComments) if (want.has(c.momentId)) comments[c.momentId].push(c);
+    for (const id of momentIds) {
+      likes[id].sort((a, b) => a.createdAt - b.createdAt);
+      comments[id].sort((a, b) => a.createdAt - b.createdAt);
+    }
+    return { likes, comments };
+  }
+
   async getMoments(opts: { limit?: number; before?: number } = {}) {
     // Walks `byCreatedAt` backwards (v7) instead of reading and sorting the
     // whole store. The old version applied `limit` only AFTER deserializing
@@ -305,7 +338,11 @@ export class IdbRepo implements Repo {
     await idbBulkPut('personas', data.personas);
     await idbBulkPut('conversations', data.conversations);
     // Messages use autoincrement — add in order so ids ascend with time.
-    for (const m of data.messages) await idbAdd('messages', m);
+    // One transaction for the whole seed, not one per message. `idbAdd` opens
+    // its own transaction per call, so seeding a few thousand messages meant a
+    // few thousand serial round-trips on the very first launch — behind the
+    // white screen, where it is least affordable.
+    await idbBulkAdd('messages', data.messages);
     if (data.moments?.length) await idbBulkPut('moments', data.moments);
     if (data.momentLikes?.length) await idbBulkPut('moment_likes', data.momentLikes);
     if (data.momentComments?.length) await idbBulkPut('moment_comments', data.momentComments);

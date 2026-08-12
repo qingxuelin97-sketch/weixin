@@ -23,9 +23,9 @@ import { regenerateLastTurn } from '../../ai/engine';
 import { useGuard } from '../../app/useGuard';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
 import { hasUsableProvider } from '../../llm/service';
-import { sendUserMessage } from '../../ai/engine';
+import { sendUserMessage, replyToLatest } from '../../ai/engine';
 import { maybeScheduleMemExtract } from '../../ai/memory-service';
-import { sendGroupMessage } from '../../ai/group-engine';
+import { sendGroupMessage, replyToLatestInGroup } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
 import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
@@ -121,6 +121,38 @@ export function ChatPage() {
     return () => document.removeEventListener('pointerdown', close, { capture: true });
   }, [menu]);
 
+  /**
+   * Re-send a message whose delivery failed.
+   *
+   * Reuses the existing row (`updateMessage`) instead of appending a new one:
+   * a fresh append would take a new autoincrement id and land the retry AFTER
+   * everything that arrived meanwhile, breaking "rowid order == time order"
+   * for the reader. The generation path is the normal one, so its in-flight
+   * table still guards against two replies racing if you tap twice.
+   */
+  const retrySend = async (msg: MessageVM) => {
+    const c = useAppStore.getState().conversationById(convId);
+    if (!c || msg.status !== 'failed') return;
+    await updateMessage({ ...msg, status: 'sent' });
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+    try {
+      if (c.type === 'group') {
+        const members: GroupMember[] = (c.memberIds ?? []).map((id) => {
+          const ct = contactById(id);
+          return { contactId: id, name: ct?.remark ?? ct?.name ?? id, persona: personaFor(id) };
+        });
+        await replyToLatestInGroup(c, members, globalTier, hooks, contactById);
+        return;
+      }
+      const peer = c.peerId ? contactById(c.peerId) : undefined;
+      const persona = c.peerId ? personaFor(c.peerId) : undefined;
+      if (peer && persona) await replyToLatest(convId, peer, persona, globalTier, hooks);
+    } catch (e) {
+      logError('chat.retry', e);
+    }
+  };
+
   const recallOwn = async (msg: MessageVM) => {
     setMenu(null);
     if (!canRecall(msg, Date.now())) return;
@@ -177,6 +209,7 @@ export function ChatPage() {
   // Keep the view pinned to the newest message as bubbles arrive — but not
   // when the growth came from loading OLDER messages, which prepends.
   const pinToBottom = useRef(true);
+  const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!pinToBottom.current) {
       pinToBottom.current = true;
@@ -185,6 +218,29 @@ export function ChatPage() {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [rows.length, isTyping, composer.bottomInset]);
+
+  /**
+   * Re-anchor when the CONTENT grows without the message count changing.
+   *
+   * The effect above fires on `rows.length`, which misses everything that
+   * changes height after the fact: a photo finishing its lazy load, an emoji
+   * falling back to a font that arrives late, a bubble rewrapping. Each of
+   * those pushes the newest message below the fold and leaves it there — the
+   * view was anchored to a height that no longer exists.
+   *
+   * Only re-anchors when the reader is already ~at the bottom, so it can never
+   * yank someone who has scrolled up to read history.
+   */
+  useEffect(() => {
+    const el = scrollRef.current;
+    const inner = listRef.current;
+    if (!el || !inner || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [convId]);
 
   // Older history, on demand (M-G2). Hydration holds a flat 200 per
   // conversation and everything before that was unreachable — in the database,
@@ -246,13 +302,21 @@ export function ChatPage() {
     const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
     const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
 
+    // Built BEFORE the group branch. It used to live after it, so replying with
+    // a quote in a group silently dropped the quote AND never ran
+    // `setQuote(null)` — the quote chip then stayed wedged in the composer for
+    // the rest of the session. The quote menu item has no `isGroup` guard, so
+    // this was a fully reachable path, just a broken one.
+    const quoteMeta = quote ? { quote: quote.text } : undefined;
+    setQuote(null);
+
     // Group: the director stages a cast; single: one persona replies.
     if (conv.type === 'group') {
       const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
         const c = contactById(id);
         return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
       });
-      await sendGroupMessage(conv, text, members, globalTier, hooks, contactById);
+      await sendGroupMessage(conv, text, members, globalTier, hooks, contactById, quoteMeta);
       return;
     }
 
@@ -273,8 +337,6 @@ export function ChatPage() {
       return;
     }
 
-    const quoteMeta = quote ? { quote: quote.text } : undefined;
-    setQuote(null);
     await sendUserMessage(convId, text, peer, persona, globalTier, hooks, quoteMeta);
   };
 
@@ -306,6 +368,26 @@ export function ChatPage() {
         status: 'sent',
         createdAt: Date.now(),
       });
+    }
+
+    // …and then actually ask for a reply. Until M-H0 this function stopped at
+    // the line above, so **sending a photo never started a generation** — she
+    // simply never answered a picture. One reply for the whole batch, after
+    // every file is persisted, so sending three photos is one turn not three.
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+    if (conv.type === 'group') {
+      const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
+        const c = contactById(id);
+        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
+      });
+      await replyToLatestInGroup(conv, members, globalTier, hooks, contactById);
+      return;
+    }
+    const peer = conv.peerId ? contactById(conv.peerId) : undefined;
+    const persona = conv.peerId ? personaFor(conv.peerId) : undefined;
+    if (peer && persona) {
+      await replyToLatest(convId, peer, persona, globalTier, hooks);
     }
   };
 
@@ -437,7 +519,7 @@ export function ChatPage() {
         style={{ paddingBottom: composer.bottomInset }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="chat-page__messages">
+        <div className="chat-page__messages" ref={listRef}>
           {/* Top-of-history affordance. Silent when there is nothing more:
               WeChat shows no marker at the start of a thread either. */}
           {loadingOlder && <div className="chat-page__older">正在加载更早的消息…</div>}
@@ -464,6 +546,7 @@ export function ChatPage() {
                   if (hasCopy || canRecall(m, Date.now()) || canRegen) setMenu({ msg: m, x, y });
                 }}
                 onReEdit={(m) => setDraft(m.content ?? '')}
+                onRetry={(m) => guard('chat.retry', () => retrySend(m))}
               />
             ),
           )}

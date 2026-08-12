@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Avatar } from '../../components/Avatar';
+import { stickerGlyph } from '../../data/stickers';
 import { fenToYuan } from '../../lib/money';
 import { playVoice } from '../../lib/voice';
 import { canReEdit } from '../../lib/recall';
@@ -20,12 +21,14 @@ interface Props {
   onLongPress?: (msg: MessageVM, x: number, y: number) => void;
   /** 重新编辑 on a recalled text message: refill the composer with the original. */
   onReEdit?: (msg: MessageVM) => void;
+  /** Re-send a message whose delivery failed. */
+  onRetry?: (msg: MessageVM) => void;
 }
 
 const LONG_PRESS_MS = 500;
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onLongPress, onReEdit }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onLongPress, onReEdit, onRetry }: Props) {
   // Long-press: pointer down starts a timer; any movement or release cancels it.
   // touch-action stays default so scrolling still cancels naturally via pointerleave.
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -84,6 +87,23 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
         <div className="msg-row__avatar">
           <Avatar color={sender?.avatarColor ?? 'var(--color-brand)'} text={sender?.avatarText ?? '?'} imageRef={sender?.avatarRef} size={40} />
         </div>
+      )}
+      {/* Undelivered, and the retry control in one. `status: 'failed'` has been
+          in the schema since M1 with no producer, so a send that failed looked
+          exactly like one that worked. Row-level and BEFORE the column so it
+          sits to the left of your own bubble, where WeChat puts it. */}
+      {isSelf && msg.status === 'failed' && (
+        <button
+          className="msg-failed"
+          aria-label="重发"
+          title="重发"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRetry?.(msg);
+          }}
+        >
+          !
+        </button>
       )}
       <div className="msg-row__col">
         {showNickname && !isSelf && (
@@ -163,7 +183,9 @@ function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
 
     case 'sticker':
       // Stickers render bare (no bubble background), like real WeChat.
-      return <div className="msg-sticker">{msg.content || '🙂'}</div>;
+      // Through the vocabulary: `content` is a semantic label, and printing it
+      // raw rendered words like 「开心」 at 64px where a sticker should be.
+      return <div className="msg-sticker">{stickerGlyph(msg.content)}</div>;
 
     case 'image': {
       // content is an image ref (idb:/img:/ph:) — schema had the type since M1,

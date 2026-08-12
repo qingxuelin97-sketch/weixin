@@ -8,6 +8,7 @@
  */
 import type { NsfwTier } from '../llm/router';
 import { PERSONA_LIMITS } from '../data/persona-defaults';
+import { STICKER_LABELS } from '../data/stickers';
 
 export interface PersonaView {
   name: string;
@@ -113,7 +114,8 @@ const BASE_REALISM = `你在一个微信聊天里，扮演一个真实的人。�
 - 需要发多条消息时，输出 NDJSON，每行一个气泡对象，如：
 {"type":"text","content":"在吗"}
 {"type":"text","content":"刚看到你朋友圈那张图"}
-可用 type：text｜voice（语音，可带 emotion）｜sticker（表情，content 为语义标签）。`;
+可用 type：text｜voice（语音，可带 emotion）｜sticker（表情）。
+sticker 的 content 只能从这些标签里选，别的写了显示不出来：${STICKER_LABELS}`;
 
 /**
  * Translate a persona's relations map (keyed by contactId) into the display-name

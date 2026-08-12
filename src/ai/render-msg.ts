@@ -34,6 +34,12 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
+/** Quoted text is context, not content: enough to identify the line, no more. */
+function clipQuote(q: string): string {
+  const t = q.trim();
+  return t.length > 24 ? `${t.slice(0, 24)}…` : t;
+}
+
 /** "3分12秒" / "45秒" — how a person would say a duration out loud. */
 export function humanDuration(ms: number): string {
   const total = Math.max(1, Math.round(ms / 1000));
@@ -69,8 +75,17 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
 
   const meta = m.meta ?? {};
   switch (m.type) {
-    case 'text':
-      return m.content ?? '';
+    case 'text': {
+      const body = m.content ?? '';
+      // A quoted reply only means something if the model can see WHAT was
+      // quoted. The quote has been stored in `meta.quote` since M-D, and this
+      // projection never read it — so "回复上面那条" arrived as a bare sentence
+      // and she answered the wrong thing. The chat UI showed the quote block
+      // the whole time, which is why it read as a model failure rather than a
+      // missing field.
+      const quoted = str(meta.quote);
+      return quoted ? `[回复「${clipQuote(quoted)}」] ${body}` : body;
+    }
 
     case 'image': {
       // `content` is an `idb:` media handle — an internal id the model must
