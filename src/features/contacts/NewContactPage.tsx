@@ -95,6 +95,21 @@ export function NewContactPage() {
           <Avatar color={color} text={name.trim().slice(0, 1) || '新'} size={64} />
         </div>
 
+        {/* The hand-written flow sets two fields and leaves twenty at their
+            defaults, which is why every hand-made agent behaves the same.
+            One sentence fills all of them (M-H2). */}
+        <div className="settings__group">
+          <div
+            className="settings__row"
+            role="button"
+            onClick={() => navigate('/contact-new/ai', { replace: true })}
+          >
+            <span className="settings__label">让 AI 帮我写一个</span>
+            <span className="settings__value">一句话生成完整人设</span>
+            <span className="settings__chevron">›</span>
+          </div>
+        </div>
+
         <div className="settings__group">
           <div className="field field--divided">
             <span className="field__label">名字</span>

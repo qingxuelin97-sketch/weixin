@@ -116,3 +116,24 @@
   background: var(--color-brand);
   border-color: var(--color-brand);
 }
+
+/* AI-written persona card preview (M-H2). */
+.persona-gen__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.persona-gen__colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.persona-gen__color {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--avatar-radius);
+}
+.persona-gen__color--on {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}

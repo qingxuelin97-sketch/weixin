@@ -28,6 +28,7 @@ import { MemoryPage } from './features/settings/MemoryPage';
 import { StoryPage } from './features/settings/StoryPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
 import { NewContactPage } from './features/contacts/NewContactPage';
+import { PersonaGeneratePage } from './features/contacts/PersonaGeneratePage';
 import { GroupCreatePage } from './features/contacts/GroupCreatePage';
 import { ChatInfoPage } from './features/chat/ChatInfoPage';
 import { GroupListPage, NewFriendsPage, SimpleListPage } from './features/contacts/ContactListPages';
@@ -115,6 +116,7 @@ export function App() {
               <Route path="/story" element={<Push><StoryPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
               <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />
+              <Route path="/contact-new/ai" element={<Push><PersonaGeneratePage /></Push>} />
               <Route path="/group-new" element={<Push><GroupCreatePage /></Push>} />
               <Route path="/chat/:convId/info" element={<Push><ChatInfoPage /></Push>} />
               <Route path="/groups" element={<Push><GroupListPage /></Push>} />
