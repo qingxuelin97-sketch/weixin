@@ -53,7 +53,9 @@ export const STICKER_LABELS = Object.keys(STICKER_VOCAB).join('、');
 function isGlyph(s: string): boolean {
   // Extended_Pictographic covers emoji across planes; a label like "开心" does
   // not match, which is exactly the distinction we need.
-  return /^[\p{Extended_Pictographic}‍️\s]+$/u.test(s);
+  // ZWJ and VS16 are listed as alternatives rather than class members: inside a
+  // class they read as one combined character and eslint rejects them.
+  return /^(?:[\p{Extended_Pictographic}\s]|‍|️)+$/u.test(s);
 }
 
 /**

@@ -248,6 +248,21 @@ export async function idbBulkAdd<T>(store: string, values: T[]): Promise<void> {
   });
 }
 
+/** The FIRST row an index points at, in ascending key order. One cursor step. */
+export async function idbFirstByIndex<T>(
+  store: string,
+  indexName: string,
+  value: IDBValidKey,
+): Promise<T | undefined> {
+  const db = await openDB();
+  const os = tx(db, store, 'readonly');
+  return new Promise((resolve, reject) => {
+    const req = os.index(indexName).openCursor(IDBKeyRange.only(value), 'next');
+    req.onsuccess = () => resolve(req.result?.value as T | undefined);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 export async function idbBulkPut<T>(store: string, values: T[]): Promise<void> {
   const db = await openDB();
   const t = db.transaction(store, 'readwrite');

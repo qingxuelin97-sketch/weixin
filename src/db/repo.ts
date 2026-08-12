@@ -37,6 +37,7 @@ import {
   idbGetAllByIndex,
   idbDeleteByIndex,
   idbPageDesc,
+  idbFirstByIndex,
 } from './idb';
 
 export interface Repo {
@@ -55,6 +56,8 @@ export interface Repo {
 
   // messages (autoincrement id; per-conversation cursor pagination)
   getMessages(convId: string, opts?: { limit?: number; beforeId?: number }): Promise<MessageVM[]>;
+  /** Timestamp of the conversation's oldest message, or undefined when empty. */
+  firstMessageAt(convId: string): Promise<number | undefined>;
   addMessage(msg: Omit<MessageVM, 'id'>): Promise<MessageVM>;
   updateMessage(msg: MessageVM): Promise<void>;
   deleteMessage(id: number): Promise<void>;
@@ -159,6 +162,18 @@ export class IdbRepo implements Repo {
     await idbDeleteByIndex('messages', 'byConv', id);
     await idbDelete('conv_summaries', id);
     await idbDelete('conversations', id);
+  }
+
+  /**
+   * When this conversation started — the oldest message's timestamp.
+   *
+   * One forward cursor step, not a scan. Needed because nothing else records
+   * it: contacts carry no creation date, and the loaded window is only the
+   * newest page, so "认识多久了" cannot be derived from what is in memory.
+   */
+  async firstMessageAt(convId: string) {
+    const row = await idbFirstByIndex<MessageVM>('messages', 'byConv', convId);
+    return row?.createdAt;
   }
 
   async getMessages(convId: string, opts: { limit?: number; beforeId?: number } = {}) {

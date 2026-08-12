@@ -28,6 +28,7 @@ import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
 import { collectTurnImages } from './vision-context';
 import { resolvePhotoBubble, photoDirective } from './photo-send';
+import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { refreshConvState, convStateDirective } from './conv-state';
@@ -358,6 +359,18 @@ async function generateAndPlayInner(
   // cannot exercise just produces image bubbles that all degrade to text.
   const photoLine = photoDirective(persona);
   if (photoLine) system += `\n\n${photoLine}`;
+  // What day it is (M-H1). Pure, and free: no call, no timer, no new kind —
+  // it rides whatever turn is already happening. She has had a mood and a life
+  // since M-E but no sense of the DATE, and knowing it is the single cheapest
+  // "this is a person" signal there is.
+  const occasionLine = occasionDirective(
+    occasionsFor({
+      now: hooks.now(),
+      facts,
+      firstMsgAt: await firstSpokeAt(convId),
+    }),
+  );
+  if (occasionLine) system += `\n\n${occasionLine}`;
 
   // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:
   // it has no symptom except a bigger bill and a persona diluted by context.
