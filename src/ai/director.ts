@@ -124,23 +124,67 @@ export function prefilter(
     return { mode: 'silence', candidates, speakers: [], reason: 'no-eligible-members' };
   }
 
+  // Scale gate (M-H2): the director quotes one roster line per candidate, on
+  // EVERY group message. A twenty-person group would put twenty lines in front
+  // of every casting decision, on top of the group roster the actor prompt
+  // already carries. Six is enough for a real choice and bounded regardless of
+  // how big the room gets.
+  const shortlist = narrowCandidates(candidates, tail, seed);
+
   // 3) Exactly one plausible speaker → roll their proactivity; no director needed.
-  if (candidates.length === 1) {
-    const only = candidates[0];
+  if (shortlist.length === 1) {
+    const only = shortlist[0];
     const rng = seededRng(`${seed}:${only.contactId}`);
     const speaks = rng() < (only.persona?.proactivity ?? 0.5) + 0.35; // biased toward replying
     return speaks
       ? {
           mode: 'direct',
-          candidates,
+          candidates: shortlist,
           speakers: [{ agentId: only.contactId, priority: 1, intent: 'reply', target: 'user' }],
           reason: 'single-candidate',
         }
-      : { mode: 'silence', candidates, speakers: [], reason: 'single-candidate-declined' };
+      : { mode: 'silence', candidates: shortlist, speakers: [], reason: 'single-candidate-declined' };
   }
 
   // 4) Genuinely ambiguous → let the director stage it.
-  return { mode: 'director', candidates, speakers: [], reason: 'ambiguous' };
+  return { mode: 'director', candidates: shortlist, speakers: [], reason: 'ambiguous' };
+}
+
+/** Hard ceiling on roster lines handed to the director, whatever the group size. */
+export const MAX_DIRECTOR_CANDIDATES = 6;
+
+/**
+ * Narrow a large room to the people plausibly about to speak.
+ *
+ * Order matters and is deliberate:
+ *   1. whoever has spoken recently — a conversation in progress has
+ *      participants, and dropping them mid-exchange is the one thing that
+ *      would read as broken;
+ *   2. then the most proactive of the rest, so quiet members are the ones cut;
+ *   3. seeded shuffle inside that tail, so the same three extroverts do not
+ *      own every turn in a twenty-person group.
+ */
+export function narrowCandidates(
+  candidates: GroupMember[],
+  tail: MessageVM[],
+  seed: string,
+  max = MAX_DIRECTOR_CANDIDATES,
+): GroupMember[] {
+  if (candidates.length <= max) return candidates;
+  const spokeAt = new Map<string, number>();
+  tail.forEach((m, i) => spokeAt.set(m.senderId, i));
+  const rng = seededRng(`narrow:${seed}`);
+  const scored = candidates.map((m) => ({
+    m,
+    // Recency dominates; proactivity breaks ties; the jitter keeps the tail
+    // from being a fixed pecking order.
+    score:
+      (spokeAt.has(m.contactId) ? 100 + (spokeAt.get(m.contactId) ?? 0) : 0) +
+      (m.persona?.proactivity ?? 0) * 10 +
+      rng() * 5,
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, max).map((x) => x.m);
 }
 
 /**

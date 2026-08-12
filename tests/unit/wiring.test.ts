@@ -106,6 +106,29 @@ describe('the gift planner is actually consulted', () => {
   });
 });
 
+describe('the AI authoring flows have an entry point', () => {
+  it('a generated persona card is reachable from 新建好友', () => {
+    // A generator with no way in is a module with tests and no users — the
+    // exact shape of failure this whole file exists to catch.
+    expect(read('src/features/contacts/NewContactPage.tsx').includes('/contact-new/ai')).toBe(true);
+    expect(read('src/App.tsx').includes('/contact-new/ai')).toBe(true);
+  });
+
+  it('a generated group is reachable from 发起群聊', () => {
+    expect(read('src/features/contacts/GroupCreatePage.tsx').includes('/group-new/ai')).toBe(true);
+    expect(read('src/App.tsx').includes('/group-new/ai')).toBe(true);
+  });
+
+  it('one self-repair loop, not three', () => {
+    // story-generate, persona-generate and group-generate all run the same
+    // chain; three copies would be three places for the repair budget, the
+    // JSON extraction and the failure reporting to drift apart.
+    for (const f of ['story-generate', 'persona-generate', 'group-generate']) {
+      expect(read(`src/ai/${f}.ts`).includes("from './generate-chain'")).toBe(true);
+    }
+  });
+});
+
 describe('an incoming call can actually reach the screen', () => {
   it('the overlay is mounted in the shell, not behind a route', () => {
     // A call you have to navigate to is not a call. This is also why the

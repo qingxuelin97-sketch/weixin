@@ -201,7 +201,12 @@ function planGroupChatter(
   if (lo >= to) return [];
 
   const rng = seededRng(`grp:${seed}:${g.convId}:${from}`);
-  const budget = Math.min(groupMessageBudget(lo, to), Math.max(1, Math.round(hours)));
+  const budget = Math.min(
+    groupMessageBudget(lo, to, g.memberIds.length),
+    // …and still at most one per hour of absence: a big room is more talkative
+    // per hour, not a wall of text the moment you open the app.
+    Math.max(1, Math.round(hours * Math.min(2, Math.sqrt(g.memberIds.length / 4)))),
+  );
   const maxBySpacing = Math.floor((to - lo) / MIN_GROUP_GAP_MS) + 1;
   const count = Math.min(budget, maxBySpacing);
   if (count <= 0) return [];
@@ -256,7 +261,15 @@ function pickTimes(
  * Group chatter budget for a window. Exposed separately because group backfill
  * is driven by the director rather than per-person heartbeats.
  */
-export function groupMessageBudget(from: number, to: number): number {
+export function groupMessageBudget(from: number, to: number, memberCount = 4): number {
   const hours = Math.max(0, (to - from) / HOUR);
-  return Math.min(LIMITS.groupMessagesPerHour * Math.ceil(hours), LIMITS.groupMessagesPerHour * 4);
+  // Scale gate (M-H2). The per-hour budget was calibrated when a group meant
+  // "≤4 AI members": come back after eight hours to a twenty-person group and
+  // finding two messages reads as a dead room, not as a quiet night. Scaling
+  // is deliberately sub-linear and hard-capped — the completion bar
+  // ("≤2 events per 15 minutes", enforced by spacing) still holds, because
+  // this only raises the ceiling, never the spacing.
+  const scale = Math.min(3, Math.max(1, Math.sqrt(Math.max(1, memberCount) / 4)));
+  const perHour = Math.round(LIMITS.groupMessagesPerHour * scale);
+  return Math.min(perHour * Math.ceil(hours), perHour * 4);
 }

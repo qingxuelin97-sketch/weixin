@@ -46,6 +46,19 @@ import { renderMessageBody } from './render-msg';
 const RECENT_WINDOW = 30;
 const MAX_BUBBLES_PER_ACTOR = 3;
 
+/**
+ * Scale gate (M-H2): how many actors may generate at once.
+ *
+ * All chosen actors write CONCURRENTLY, which is the trick that keeps a group
+ * reply under a few seconds. It is also unbounded by construction: the cap
+ * exists today only because the director's schema happens to stop at three.
+ * A twenty-person group is exactly the situation where some future change
+ * ("let the whole room react") turns one turn into fifteen parallel LLM calls
+ * and a guaranteed timeout. This is the ceiling that does not depend on
+ * another module's schema.
+ */
+const MAX_CONCURRENT_ACTORS = 3;
+
 /** Per-conversation in-flight controller: a new user message cancels the round. */
 const inFlight = new Map<string, AbortController>();
 
@@ -172,7 +185,7 @@ export async function sendGroupMessage(
       now,
     );
     const outputs = await Promise.all(
-      cast.map(async ({ plan, member }): Promise<ActorOutput> => {
+      cast.slice(0, MAX_CONCURRENT_ACTORS).map(async ({ plan, member }): Promise<ActorOutput> => {
         const bubbles = await generateActorLines(
           conv,
           member,

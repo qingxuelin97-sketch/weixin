@@ -67,6 +67,20 @@ export function GroupCreatePage() {
     <>
       <SubNav title="发起群聊" />
       <div className="page-body settings">
+        {/* Building a group by hand means already owning the people in it
+            (M-H2). One sentence writes the whole room instead. */}
+        <div className="settings__group">
+          <div
+            className="settings__row"
+            role="button"
+            onClick={() => navigate('/group-new/ai', { replace: true })}
+          >
+            <span className="settings__label">让 AI 帮我建一个群</span>
+            <span className="settings__value">连人带关系一起生成</span>
+            <span className="settings__chevron">›</span>
+          </div>
+        </div>
+
         <div className="settings__group">
           {ais.map((c) => (
             <div
