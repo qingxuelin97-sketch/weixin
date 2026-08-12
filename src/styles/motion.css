@@ -244,14 +244,140 @@
   filter: brightness(0.92);
 }
 
-/* ---- Accessibility: one switch turns the whole system off. */
+
+
+/* ==================== Micro-interactions (M-H3) ====================
+   Small, cheap, and everywhere. Each one answers the same question — "did
+   that do anything?" — which the app currently answers with a state change
+   and no motion, so every tap feels like a page reload.
+
+   All CSS, all transform/opacity, all collapsed by prefers-reduced-motion at
+   the bottom of this file. Nothing here can destabilise a golden: Playwright
+   lands CSS animations on their end state. */
+
+/* A like that lands. The heart scales past its size and settles — the
+   overshoot IS the feedback; a linear fade reads as a checkbox. */
+.like-burst {
+  animation: like-burst 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes like-burst {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.35);
+  }
+  60% {
+    transform: scale(0.94);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* An unread count that changed rolls to its new value instead of swapping.
+   Applied by key change, so it replays per number. */
+.badge-roll {
+  animation: badge-roll 260ms var(--ease-standard);
+}
+@keyframes badge-roll {
+  from {
+    transform: translateY(-60%) scale(0.7);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* The send button appearing as the first character is typed. */
+.btn-morph-in {
+  animation: btn-morph-in 180ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes btn-morph-in {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Tab switch: the selected icon gives a small nod. */
+.tab-bounce {
+  animation: tab-bounce 320ms cubic-bezier(0.34, 1.5, 0.64, 1);
+}
+@keyframes tab-bounce {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* A list that arrives instead of appearing. The delay is set inline per row
+   and capped by the caller — staggering 200 rows would take four seconds. */
+.stagger-in {
+  animation: stagger-in 260ms var(--ease-standard) both;
+  animation-delay: var(--stagger-delay, 0ms);
+}
+@keyframes stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Skeleton shimmer for content that is still loading. Deliberately slow:
+   a fast shimmer reads as an error state. */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-skeleton-a) 25%,
+    var(--color-skeleton-b) 37%,
+    var(--color-skeleton-a) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1400ms ease infinite;
+}
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}
+
+/* ---- Accessibility: one switch turns the whole system off.
+   Kept LAST in the file so it wins over everything above it without needing
+   to know what was added — the M-H3 additions above are exactly the kind of
+   thing that gets appended and then forgotten here. */
 @media (prefers-reduced-motion: reduce) {
   .page-push,
   .composer-panel,
   .msg--enter,
   .typing-bubble__dot,
   .msg-menu,
-  .toast {
+  .toast,
+  .page-stack__page,
+  .like-burst,
+  .badge-roll,
+  .btn-morph-in,
+  .tab-bounce,
+  .stagger-in,
+  .skeleton {
     animation: none !important;
   }
   .tabbar__item svg {

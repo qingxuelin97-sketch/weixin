@@ -32,9 +32,19 @@ export function TabScaffold() {
               aria-selected={active}
               onClick={() => navigate(path)}
             >
-              <Icon active={active} />
+              {/* Keyed on `active` so the nod REPLAYS on each switch: a class
+                  that is merely present animates once, on mount, and then
+                  never again (M-H3). */}
+              <span
+                key={active ? 'on' : 'off'}
+                className={`tabbar__icon${active ? ' tab-bounce' : ''}`}
+              >
+                <Icon active={active} />
+              </span>
               {showBadge && (
-                <span className="tabbar__badge">{totalUnread > 99 ? '99+' : totalUnread}</span>
+                <span className="tabbar__badge badge-roll" key={`b${totalUnread}`}>
+                  {totalUnread > 99 ? '99+' : totalUnread}
+                </span>
               )}
               <span className="tabbar__label">{label}</span>
             </button>

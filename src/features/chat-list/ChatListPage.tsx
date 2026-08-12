@@ -9,6 +9,7 @@ import { listTimestamp } from '../../lib/time';
 import type { ConversationVM } from '../../data/types';
 import './chat-list.css';
 import { useNow } from '../../lib/useNow';
+import { useSwipeRow } from '../../components/useSwipeRow';
 
 const LONG_PRESS_MS = 500;
 
@@ -71,6 +72,15 @@ export function ChatListPage() {
               conv={conv}
               onOpen={() => navigate(`/chat/${conv.id}`)}
               onLongPress={(y) => setMenu({ conv, y })}
+              onRead={() =>
+                act(() =>
+                  patchConversation(
+                    conv.id,
+                    conv.unreadCount > 0 ? { unreadCount: 0, mentionMe: false } : { unreadCount: 1 },
+                  ),
+                )
+              }
+              onDelete={() => act(() => deleteConversation(conv.id))}
             />
           )}
         />
@@ -124,14 +134,21 @@ export function ChatListPage() {
   );
 }
 
+/** Width of the revealed action tray. Two buttons, WeChat's proportions. */
+const TRAY_WIDTH = 150;
+
 function ConversationRow({
   conv,
   onOpen,
   onLongPress,
+  onRead,
+  onDelete,
 }: {
   conv: ConversationVM;
   onOpen: () => void;
   onLongPress: (y: number) => void;
+  onRead: () => void;
+  onDelete: () => void;
 }) {
   const NOW = useNow();
   const contactById = useAppStore((s) => s.contactById);
@@ -153,25 +170,73 @@ function ConversationRow({
     if (pressTimer.current) clearTimeout(pressTimer.current);
     pressTimer.current = null;
   };
+  // The gesture WeChat actually uses for these two actions (M-H3). The long
+  // press stays: it carries 置顶 / 免打扰 too, and muscle memory is cheap to
+  // honour.
+  const swipe = useSwipeRow(TRAY_WIDTH);
 
   return (
+    <div className="conv-swipe">
+      {/* The tray sits UNDER the row and is revealed by sliding it; rendering
+          it above and animating width would reflow the row's text on every
+          frame of the drag. */}
+      <div className="conv-swipe__tray" aria-hidden={!swipe.open || undefined}>
+        <button
+          className="conv-swipe__action conv-swipe__action--read"
+          onClick={() => {
+            swipe.close();
+            onRead();
+          }}
+        >
+          {conv.unreadCount > 0 ? '标为已读' : '标为未读'}
+        </button>
+        <button
+          className="conv-swipe__action conv-swipe__action--delete"
+          onClick={() => {
+            swipe.close();
+            onDelete();
+          }}
+        >
+          删除
+        </button>
+      </div>
     <div
+      ref={swipe.ref}
       className={`conv-row hairline-bottom${conv.isPinned ? ' conv-row--pinned' : ''}`}
       onClick={() => {
-        if (!fired.current) onOpen();
+        // A swipe that ends on the row must not also open the chat, and a tap
+        // on an open row closes the tray instead of navigating — both are what
+        // every native list does, and both are invisible until they are wrong.
+        if (swipe.open) {
+          swipe.close();
+        } else if (!fired.current) {
+          onOpen();
+        }
         fired.current = false;
       }}
       onPointerDown={(e) => {
         fired.current = false;
+        swipe.handlers.onPointerDown(e);
         const y = e.clientY;
         pressTimer.current = setTimeout(() => {
           fired.current = true;
           onLongPress(y);
         }, LONG_PRESS_MS);
       }}
-      onPointerUp={cancelPress}
-      onPointerMove={cancelPress}
+      onPointerUp={() => {
+        cancelPress();
+        swipe.handlers.onPointerUp();
+      }}
+      onPointerMove={(e) => {
+        cancelPress();
+        swipe.handlers.onPointerMove(e);
+        if (swipe.dragging()) fired.current = true;
+      }}
       onPointerLeave={cancelPress}
+      onPointerCancel={(e) => {
+        cancelPress();
+        swipe.handlers.onPointerCancel(e);
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         fired.current = true;
@@ -182,7 +247,12 @@ function ConversationRow({
       <div className="conv-row__avatar">
         <Avatar color={conv.avatarColor} text={conv.avatarText} size={48} imageRef={peerRef} members={memberAvatars} />
         {badge && (
-          <span className={`conv-row__badge${dotOnly ? ' conv-row__badge--dot' : ''}`}>
+          // Keyed on the count so a changed number rolls in rather than
+          // swapping in place (M-H3).
+          <span
+            key={`n${conv.unreadCount}`}
+            className={`conv-row__badge badge-roll${dotOnly ? ' conv-row__badge--dot' : ''}`}
+          >
             {dotOnly ? '' : conv.unreadCount > 99 ? '99+' : conv.unreadCount}
           </span>
         )}
@@ -201,6 +271,7 @@ function ConversationRow({
           {conv.isMuted && <MuteIcon />}
         </div>
       </div>
+    </div>
     </div>
   );
 }

@@ -729,7 +729,7 @@ export function ChatPage() {
             <IconEmoji />
           </button>
           {draft.trim() ? (
-            <button className="composer__send" onClick={() => void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`))}>
+            <button className="composer__send btn-morph-in" onClick={() => void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`))}>
               发送
             </button>
           ) : (

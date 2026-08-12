@@ -1,3 +1,32 @@
+/* Swipe-to-reveal row (M-H3). The tray is UNDER the row: revealing it by
+   sliding the row keeps the row's text from reflowing on every drag frame. */
+.conv-swipe {
+  position: relative;
+  overflow: hidden;
+}
+.conv-swipe__tray {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+}
+.conv-swipe__action {
+  width: 75px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-on-brand);
+}
+.conv-swipe__action--read {
+  background: var(--color-swipe-neutral);
+}
+.conv-swipe__action--delete {
+  background: var(--color-swipe-danger);
+}
+.conv-swipe__action:active {
+  filter: brightness(0.9);
+}
+
 .chat-list {
   background: var(--color-cell-bg);
 }

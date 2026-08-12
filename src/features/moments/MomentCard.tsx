@@ -49,6 +49,10 @@ export function MomentCard({
 }: Props) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  // Bumped on every like so the burst REPLAYS; a class that is merely present
+  // animates once and then never again, which is the commonest way a
+  // micro-interaction ships broken (M-H3).
+  const [likeBeat, setLikeBeat] = useState(0);
   const imgs = moment.imageRefs.slice(0, 9);
   const hasReactions = likes.length > 0 || comments.length > 0;
 
@@ -96,6 +100,7 @@ export function MomentCard({
                   onClick={() => {
                     onToggleLike();
                     setActionsOpen(false);
+                    setLikeBeat((n) => n + 1);
                   }}
                 >
                   {selfLiked ? '取消' : '赞'}
@@ -126,7 +131,10 @@ export function MomentCard({
         {hasReactions && (
           <div className="moment__reactions">
             {likes.length > 0 && (
-              <div className="moment__likes">
+              <div
+                className={`moment__likes${likeBeat > 0 ? ' like-burst' : ''}`}
+                key={`likes-${likeBeat}`}
+              >
                 <span className="moment__heart" aria-hidden="true">
                   ♥
                 </span>

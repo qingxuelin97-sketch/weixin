@@ -130,6 +130,13 @@
   position: relative;
   color: var(--color-tabbar-icon);
 }
+.tabbar__icon {
+  /* A box of its own, so the icon can be scaled without the inline layout
+     shifting the label by a baseline (M-H3). */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .tabbar__item--active {
   color: var(--color-tabbar-icon-active);
 }
