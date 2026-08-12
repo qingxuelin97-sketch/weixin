@@ -162,7 +162,11 @@ export async function chainHeartbeat(
 ): Promise<void> {
   const target = heartbeatTarget(d, payload);
   if (!target) return; // deleted conversation → chain ends here, deliberately
-  const lastMsgAt = d.messagesFor(target.convId).at(-1)?.createdAt;
+  // From the conversation ROW, not the message slice: threads are loaded on
+  // open now (M-G2), so a conversation the user has not visited this session
+  // holds no messages in the store — and reading `undefined` here would make
+  // every such agent behave as if you had never spoken.
+  const lastMsgAt = d.conversationById(target.convId)?.lastMsgAt;
   await d.chainHeartbeat(target.persona, target.convId, lastMsgAt);
 }
 
@@ -212,7 +216,11 @@ export async function handleRecall(d: HandlerDeps, payload: Record<string, unkno
   const msgId = Number(payload.msgId);
   const convId = str(payload.convId);
   if (!msgId || !convId) return;
-  const msg = d.messagesFor(convId).find((m) => m.id === msgId);
+  // Straight from storage for the same reason: the recall fires minutes after
+  // the message, by which time the user may never have opened that thread.
+  const msg =
+    d.messagesFor(convId).find((m) => m.id === msgId) ??
+    (await d.getMessages(convId, { limit: 50 })).find((m) => m.id === msgId);
   if (!msg || msg.isRecalled) return;
   await d.updateMessage({ ...msg, isRecalled: true });
 

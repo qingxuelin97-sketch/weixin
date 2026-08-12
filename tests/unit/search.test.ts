@@ -5,6 +5,8 @@ import {
   highlightParts,
   excerpt,
   groupByKind,
+  searchAll,
+  DEEP_SCAN_LIMIT,
   type SearchInput,
 } from '../../src/lib/search';
 import type { ContactVM, ConversationVM, MessageVM, MomentVM } from '../../src/data/types';
@@ -230,5 +232,95 @@ describe('groupByKind', () => {
   it('omits empty groups', () => {
     const g = groupByKind(search(base, '收工'));
     expect(g.every((x) => x.hits.length > 0)).toBe(true);
+  });
+});
+
+/* ==================== whole-database search (M-G2) ==================== */
+
+/**
+ * `search()` matches only what hydration put in memory — a flat 200 per
+ * conversation — so the app could not find a message it had stored perfectly
+ * well. `searchAll` reads through the database instead.
+ *
+ * The load-bearing test here is the LAST one. Hidden conversations are AI↔AI
+ * private exchanges; surfacing one is an irreversible tell, and the whole
+ * reason the filter lives inside this module rather than in the UI is that a
+ * caller who forgets must still be unable to leak one.
+ */
+describe('searchAll reaches history the store never loaded', () => {
+  const T = 1_700_000_000_000;
+  const conv = (id: string, over: Partial<ConversationVM> = {}): ConversationVM =>
+    ({
+      id,
+      type: 'single',
+      title: id,
+      peerId: `ai_${id}`,
+      unreadCount: 0,
+      lastMsgAt: T,
+      ...over,
+    }) as ConversationVM;
+
+  const msg = (id: number, convId: string, content: string): MessageVM =>
+    ({ id, convId, senderId: 'ai_x', type: 'text', content, status: 'sent', createdAt: T + id }) as MessageVM;
+
+  /** A fake database: pages newest-first, strictly older than `beforeId`. */
+  const pagerOver = (rows: Record<string, MessageVM[]>) =>
+    async (convId: string, beforeId: number | undefined, limit: number) => {
+      const all = [...(rows[convId] ?? [])].sort((a, b) => b.id - a.id);
+      return all.filter((m) => beforeId == null || m.id < beforeId).slice(0, limit);
+    };
+
+  it('finds a message that was never hydrated into the store', async () => {
+    const input = {
+      contacts: [],
+      conversations: [conv('c1')],
+      messages: {}, // the store holds nothing at all
+      moments: [],
+    };
+    const db = { c1: [msg(1, 'c1', '去年在青海湖拍的照片')] };
+    const { hits } = await searchAll(input, '青海湖', { page: pagerOver(db) });
+    expect(hits.filter((h) => h.kind === 'message')).toHaveLength(1);
+    // …and the shallow pass, given the same empty store, finds nothing.
+    expect(search(input, '青海湖')).toHaveLength(0);
+  });
+
+  it('reports truncation rather than scanning forever', async () => {
+    const many = Array.from({ length: DEEP_SCAN_LIMIT + 500 }, (_, i) =>
+      msg(i + 1, 'c1', `第 ${i} 条 关键词`),
+    );
+    const { hits, truncated } = await searchAll(
+      { contacts: [], conversations: [conv('c1')], messages: {}, moments: [] },
+      '关键词',
+      { page: pagerOver({ c1: many }) },
+    );
+    expect(truncated).toBe(true);
+    expect(hits.length).toBeGreaterThan(0);
+  });
+
+  it('NEVER scans or returns a hidden conversation', async () => {
+    const asked: string[] = [];
+    const db = {
+      c1: [msg(1, 'c1', '普通的一条 秘密')],
+      secret: [msg(2, 'secret', '这是 AI 之间的私聊 秘密')],
+    };
+    const { hits } = await searchAll(
+      {
+        contacts: [],
+        conversations: [conv('c1'), conv('secret', { isHidden: true })],
+        messages: {},
+        moments: [],
+      },
+      '秘密',
+      {
+        page: (convId, beforeId, limit) => {
+          asked.push(convId);
+          return pagerOver(db)(convId, beforeId, limit);
+        },
+      },
+    );
+    // Not merely filtered out of the results — never read in the first place.
+    expect(asked).not.toContain('secret');
+    expect(hits.every((h) => h.convId !== 'secret')).toBe(true);
+    expect(hits.filter((h) => h.kind === 'message')).toHaveLength(1);
   });
 });

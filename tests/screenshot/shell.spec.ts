@@ -9,7 +9,45 @@ import { test, expect } from '@playwright/test';
 async function settle(page: import('@playwright/test').Page) {
   // Wait for fonts + layout to settle so pixels are stable.
   await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(150);
+
+  // Then wait for the page to stop CHANGING.
+  //
+  // A fixed delay stopped being a settle point in M-G2: a chat thread loads
+  // from IndexedDB when the page opens, photos are materialized on demand, and
+  // the anchoring scroll runs in an effect after React commits. Each of those
+  // lands on its own schedule, so under parallel workers a fixed wait captured
+  // a half-built page maybe one run in three — and a flaky golden is worse
+  // than no golden, because it teaches you to ignore the gate.
+  //
+  // Quiescence is the honest condition: the DOM has stopped growing and
+  // nothing is still scrolling. It does not care WHICH async thing was late.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const sample = () => {
+          const el = document.querySelector('[data-thread-ready], .moments__scroll, .app-shell');
+          return [
+            document.body.innerHTML.length,
+            el?.scrollTop ?? 0,
+            el?.scrollHeight ?? 0,
+            document.querySelectorAll('img').length,
+          ].join(':');
+        };
+        let last = sample();
+        let stable = 0;
+        const deadline = performance.now() + 4000;
+        const tick = () => {
+          const now = sample();
+          stable = now === last ? stable + 1 : 0;
+          last = now;
+          // Three consecutive quiet samples ≈ 150ms of no change.
+          if (stable >= 3 || performance.now() > deadline) return resolve();
+          setTimeout(tick, 50);
+        };
+        setTimeout(tick, 50);
+      }),
+  );
+  await page.waitForTimeout(100);
 }
 
 /**

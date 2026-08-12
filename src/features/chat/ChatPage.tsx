@@ -13,6 +13,7 @@ import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
 import { registerMedia } from '../../data/media-registry';
 import { useMedia } from '../../components/useMedia';
+import { logError } from '../../lib/errlog';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
 import { storyRunning } from '../../ai/story-service';
@@ -173,11 +174,54 @@ export function ChatPage() {
     ),
   );
 
-  // Keep the view pinned to the newest message as bubbles arrive.
+  // Keep the view pinned to the newest message as bubbles arrive — but not
+  // when the growth came from loading OLDER messages, which prepends.
+  const pinToBottom = useRef(true);
   useEffect(() => {
+    if (!pinToBottom.current) {
+      pinToBottom.current = true;
+      return;
+    }
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [rows.length, isTyping, composer.bottomInset]);
+
+  // Older history, on demand (M-G2). Hydration holds a flat 200 per
+  // conversation and everything before that was unreachable — in the database,
+  // invisible to both scrolling and search.
+  const loadOlderMessages = useAppStore((s) => s.loadOlderMessages);
+  const openConversation = useAppStore((s) => s.openConversation);
+
+  // Threads are fetched on open, not at startup (M-G2). `threadReady` is a
+  // real readiness signal rather than test scaffolding: the page now paints
+  // before its messages exist, so anything that needs to observe the settled
+  // thread — the golden screenshots, and a future scroll-restore — has to be
+  // able to tell "still loading" from "loaded and empty".
+  const threadReady = useAppStore((s) => s.hasThread(convId));
+  useEffect(() => {
+    void openConversation(convId).catch((e) => logError('chat.open', e));
+  }, [convId, openConversation]);
+  const [atTop, setAtTop] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadOlder = async () => {
+    const el = scrollRef.current;
+    if (!el || loadingOlder || atTop) return;
+    setLoadingOlder(true);
+    // Anchor on the distance from the BOTTOM: prepending changes scrollHeight,
+    // and restoring scrollTop directly would jump the reader to a random spot.
+    const fromBottom = el.scrollHeight - el.scrollTop;
+    pinToBottom.current = false;
+    try {
+      const n = await loadOlderMessages(convId);
+      if (n === 0) setAtTop(true);
+      requestAnimationFrame(() => {
+        const cur = scrollRef.current;
+        if (cur) cur.scrollTop = cur.scrollHeight - fromBottom;
+      });
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   // Is a story playing here? Re-checked as the transcript grows, which is also
   // when a run ends or pauses. Never throws into the page: an unreadable save
@@ -385,11 +429,18 @@ export function ChatPage() {
 
       <div
         ref={scrollRef}
+        data-thread-ready={threadReady ? '1' : '0'}
+        onScroll={(e) => {
+          if (e.currentTarget.scrollTop <= 8) void loadOlder();
+        }}
         className="chat-page__scroll"
         style={{ paddingBottom: composer.bottomInset }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="chat-page__messages">
+          {/* Top-of-history affordance. Silent when there is nothing more:
+              WeChat shows no marker at the start of a thread either. */}
+          {loadingOlder && <div className="chat-page__older">正在加载更早的消息…</div>}
           {rows.map((row) =>
             row.kind === 'time' ? (
               <div className="msg-time" key={`t${row.ts}`}>

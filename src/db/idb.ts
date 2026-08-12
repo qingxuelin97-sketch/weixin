@@ -324,14 +324,28 @@ export async function idbQueryByIndex<T extends { id: number }>(
   return new Promise((resolve, reject) => {
     // Descending order by primary key within the matched index value.
     const req = index.openCursor(IDBKeyRange.only(value), 'prev');
+    // `beforeId` used to be applied by walking from the newest row and
+    // discarding everything above the cursor one at a time, so page k cost
+    // k × limit wasted steps — loading a year of history got slower with every
+    // page. `continuePrimaryKey` jumps the cursor straight to the first row
+    // below `beforeId`, making every page cost the same as the first.
+    let jumped = opts.beforeId == null;
     req.onsuccess = () => {
       const cursor = req.result;
       if (!cursor || results.length >= limit) {
         resolve(results);
         return;
       }
-      const row = cursor.value as T;
-      if (opts.beforeId == null || row.id < opts.beforeId) results.push(row);
+      if (!jumped) {
+        jumped = true;
+        // Only jump when the cursor is not already past the boundary; calling
+        // continuePrimaryKey backwards from where we are would throw.
+        if ((cursor.primaryKey as number) >= (opts.beforeId as number)) {
+          cursor.continuePrimaryKey(value, (opts.beforeId as number) - 1);
+          return;
+        }
+      }
+      results.push(cursor.value as T);
       cursor.continue();
     };
     req.onerror = () => reject(req.error);

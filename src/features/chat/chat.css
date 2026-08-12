@@ -649,3 +649,12 @@
   font-weight: var(--fw-medium);
   color: var(--color-text-primary);
 }
+
+/* Loading marker for older history (M-G2). Centred, small, grey — the same
+   register as the time bars it sits above, so it reads as chrome not content. */
+.chat-page__older {
+  padding: 8px 0;
+  text-align: center;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}

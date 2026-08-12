@@ -71,6 +71,12 @@ interface AppState {
   // selectors (stable signatures)
   contactById: (id: string) => ContactVM | undefined;
   messagesFor: (convId: string) => MessageVM[];
+  /** Has this conversation's thread been loaded (an empty thread still counts)? */
+  hasThread: (convId: string) => boolean;
+  /** Load a conversation's newest page on first open. Idempotent. */
+  openConversation: (convId: string, limit?: number) => Promise<void>;
+  /** Prepend the page before the oldest held message; returns how many arrived. */
+  loadOlderMessages: (convId: string, limit?: number) => Promise<number>;
   conversationById: (id: string) => ConversationVM | undefined;
   personaFor: (contactId: string) => PersonaVM | undefined;
   setTyping: (convId: string, on: boolean) => void;
@@ -151,12 +157,12 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
     repo.getContacts(),
     repo.getConversations(),
   ]);
+  // Messages are NOT loaded here. Hydration used to pull 200 per conversation
+  // — on the critical path of a white screen, growing linearly with how much
+  // the app is used — when the only thing the first screen draws is the
+  // conversation list, and every row already carries its own `lastMsgPreview`.
+  // `openConversation` fetches a thread when it is actually opened.
   const messages: Record<string, MessageVM[]> = {};
-  await Promise.all(
-    conversations.map(async (conv) => {
-      messages[conv.id] = await repo.getMessages(conv.id, { limit: 200 });
-    }),
-  );
   const personas: Record<string, PersonaVM> = {};
   await Promise.all(
     contacts
@@ -206,6 +212,57 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   contactById: (id) => get().contacts.find((cc) => cc.id === id),
   messagesFor: (convId) => get().messages[convId] ?? EMPTY_MESSAGES,
+
+  /**
+   * Has this conversation's thread been loaded?
+   *
+   * Distinct from "has messages": a conversation can legitimately be empty.
+   * Derived from the store rather than from a timer, so it flips in the SAME
+   * React commit that renders the messages — which is what makes it a sound
+   * readiness signal for anything observing the settled page.
+   */
+  hasThread: (convId) => get().messages[convId] != null,
+
+  /**
+   * Load a conversation's newest page, once, when it is opened.
+   *
+   * Idempotent: an already-loaded thread is left alone so re-entering does not
+   * discard messages that arrived since (or the older pages the user paged in).
+   */
+  openConversation: async (convId, limit = 60) => {
+    if (get().messages[convId] != null) return;
+    const rows = await repo.getMessages(convId, { limit });
+    set((s) => (s.messages[convId] != null ? s : { messages: { ...s.messages, [convId]: rows } }));
+  },
+
+  /**
+   * Prepend the page of messages before the oldest one currently held.
+   *
+   * The `beforeId` pagination pipeline has existed since M1 — `idb.ts` →
+   * `repo.getMessages` — with ZERO callers, while hydration loaded a flat 200
+   * per conversation. Everything older than that was in the database and
+   * unreachable from the app: you could not scroll to it and search could not
+   * find it, because search only ever looked at what the store held.
+   *
+   * Returns how many rows arrived, so the caller can stop asking at the top.
+   */
+  loadOlderMessages: async (convId, limit = 40) => {
+    const existing = get().messages[convId] ?? EMPTY_MESSAGES;
+    const oldest = existing[0]?.id;
+    if (oldest == null) return 0;
+    const older = await repo.getMessages(convId, { limit, beforeId: oldest });
+    if (older.length === 0) return 0;
+    set((s) => {
+      const cur = s.messages[convId] ?? EMPTY_MESSAGES;
+      // Guard against a concurrent load having already prepended these: ids
+      // are the autoincrement primary key, so "already present" is exact.
+      const have = new Set(cur.map((m) => m.id));
+      const fresh = older.filter((m) => !have.has(m.id));
+      if (fresh.length === 0) return s;
+      return { messages: { ...s.messages, [convId]: [...fresh, ...cur] } };
+    });
+    return older.length;
+  },
   conversationById: (id) => get().conversations.find((cc) => cc.id === id),
   personaFor: (contactId) => get().personas[contactId],
   setTyping: (convId, on) => set((s) => ({ typing: { ...s.typing, [convId]: on } })),

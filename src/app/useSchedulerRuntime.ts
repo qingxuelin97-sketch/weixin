@@ -205,7 +205,9 @@ export function useSchedulerRuntime(enabled: boolean): void {
               const ct = st.contactById(id);
               return ct?.remark ?? ct?.name ?? id;
             };
-            const tail = st.messagesFor(convId).slice(-12);
+            const tail = st.messagesFor(convId).length
+              ? st.messagesFor(convId).slice(-12)
+              : await repo.getMessages(convId, { limit: 12 });
             // Same discipline as the director (director.ts:231-237): above
             // 'off' the words never leave in full, so the judgement stays
             // honest even when a permissive channel is unavailable.
@@ -436,7 +438,11 @@ async function runForegroundPass(): Promise<void> {
     // Nudge: their last message sat unanswered for 6–48h. One per ignored
     // message EVER — the id is checked against all statuses, because enqueue
     // upserts and would otherwise revive a completed nudge as pending.
-    const last = s.messagesFor(conv.id).at(-1);
+    // Read through, not from the store: threads load on open (M-G2), so the
+    // nudge would otherwise only ever consider conversations the user had
+    // already visited this session — i.e. exactly the ones not being ignored.
+    const last =
+      s.messagesFor(conv.id).at(-1) ?? (await repo.getMessages(conv.id, { limit: 1 })).at(-1);
     if (last && shouldNudge(last, persona, now)) {
       const nudgeId = `nudge_${conv.id}_${last.id}`;
       if (!(await actionExists(nudgeId))) {

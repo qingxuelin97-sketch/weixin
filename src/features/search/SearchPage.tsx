@@ -14,8 +14,10 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../../store/appStore';
 import { Avatar } from '../../components/Avatar';
 import { IconBack, IconSearch } from '../../components/icons';
-import { search, groupByKind, highlightParts, type SearchHit } from '../../lib/search';
+import { search, searchAll, groupByKind, highlightParts, type SearchHit } from '../../lib/search';
 import { momentTimestamp } from '../../lib/time';
+import { repo } from '../../db/repo';
+import { logError } from '../../lib/errlog';
 import { useNow } from '../../lib/useNow';
 import './search.css';
 
@@ -52,10 +54,42 @@ export function SearchPage() {
     void loadMoments();
   }, [loadMoments]);
 
-  const hits = useMemo(
+  // The in-memory pass renders instantly off what the store already holds.
+  const shallow = useMemo(
     () => search({ contacts, conversations, messages, moments }, query),
     [contacts, conversations, messages, moments, query],
   );
+
+  // …then the database pass replaces it, reaching history hydration never
+  // loaded. Without this the app could not find a message it had stored
+  // perfectly well: search only ever looked at the flat 200 per conversation
+  // that hydration put in memory.
+  const [deep, setDeep] = useState<{ query: string; hits: SearchHit[]; truncated: boolean } | null>(
+    null,
+  );
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setDeep(null);
+      return;
+    }
+    let alive = true;
+    void searchAll(
+      { contacts, conversations, messages, moments },
+      q,
+      { page: (convId, beforeId, limit) => repo.getMessages(convId, { beforeId, limit }) },
+    )
+      .then((r) => {
+        // Ignore a result whose query the user has already typed past.
+        if (alive) setDeep({ query: q, hits: r.hits, truncated: r.truncated });
+      })
+      .catch((e) => logError('search.deep', e));
+    return () => {
+      alive = false;
+    };
+  }, [contacts, conversations, messages, moments, query]);
+
+  const hits = deep && deep.query === query.trim() ? deep.hits : shallow;
   const groups = useMemo(() => groupByKind(hits), [hits]);
 
   const open = (h: SearchHit) => {
