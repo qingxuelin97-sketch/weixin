@@ -26,6 +26,10 @@ import {
   storyTag,
   saveScript,
   getScript,
+  getSave,
+  putSave,
+  judgePrompt,
+  parseJudgement,
   type StorySaveRow,
 } from '../../src/ai/story-gm';
 import type { MemoryFactVM, MomentVM } from '../../src/data/types';
@@ -171,6 +175,56 @@ describe('script validation', () => {
       entry: 'a',
     };
     expect(hasEscapelessCycle(trap)).toBe(true);
+  });
+
+  it('REJECTS a script whose cycle has no exit, naming the trapped nodes', () => {
+    // The regression this pins (M-G0): `hasEscapelessCycle` shipped in M-E5
+    // with a `cycle` issue code reserved for it — and `validateScript` never
+    // called it. Every local check passes on the graph below (both nodes have
+    // outgoing edges, so `dead_end` is silent; an ending exists, so `no_ending`
+    // is silent), which meant a GENERATED script could strand the player in a
+    // two-node loop and still be accepted and stored.
+    //
+    // Delete the `strandedNodes` loop in validateScript and this turns red.
+    const trap: Script = {
+      ...SCRIPT,
+      nodes: [
+        { id: 'a', goal: 'x', directives: [], triggers: [{ when: 'expr:true', to: 'b' }] },
+        { id: 'b', goal: 'x', directives: [], triggers: [{ when: 'expr:true', to: 'a' }] },
+        // Reachable ending, so `no_ending` cannot be what fails it.
+        { id: 'z', goal: 'x', directives: [], triggers: [], ending: true },
+        { id: 'a0', goal: 'x', directives: [], triggers: [
+          { when: 'expr:true', to: 'a' },
+          { when: 'expr:false', to: 'z' },
+        ] },
+      ],
+      entry: 'a0',
+    };
+    const res = validateScript(trap);
+    expect(res.ok).toBe(false);
+    const cycles = res.issues.filter((i) => i.code === 'cycle');
+    expect(cycles.map((i) => i.nodeId).sort()).toEqual(['a', 'b']);
+    // The message has to be actionable: the self-repair loop feeds it back to
+    // the model verbatim, and "there is a cycle somewhere" fixes nothing.
+    expect(cycles[0].message).toContain('a');
+  });
+
+  it('accepts a cycle that does have an exit', () => {
+    // Loops are legitimate ("keep talking until the variable moves"). Only
+    // exit-less ones are the bug — over-rejecting would break real scripts.
+    const loop: Script = {
+      ...SCRIPT,
+      nodes: [
+        { id: 'a', goal: 'x', directives: [], triggers: [
+          { when: 'expr:vars.trust < 2', to: 'b' },
+          { when: 'expr:vars.trust >= 2', to: 'z' },
+        ] },
+        { id: 'b', goal: 'x', directives: [], triggers: [{ when: 'expr:true', to: 'a' }] },
+        { id: 'z', goal: 'x', directives: [], triggers: [], ending: true },
+      ],
+      entry: 'a',
+    };
+    expect(validateScript(loop).issues.filter((i) => i.code === 'cycle')).toHaveLength(0);
   });
 });
 
@@ -606,5 +660,224 @@ describe('one-line generation is ask → CHECK → repair', () => {
     expect(tierForPremise('写个成人向的故事', 'full')).toBe('full');
     // The global setting is still the ceiling — a premise cannot raise it.
     expect(tierForPremise('写个成人向的故事', 'off')).toBe('off');
+  });
+});
+
+/* ==================== the llm: trigger track ==================== */
+
+/**
+ * `specs/story-gm.md` specifies two trigger tracks. `evaluateTriggers` has
+ * always returned the `llm:` ones in `pending`, and `advance` has always passed
+ * that array through — and until M-G0 NOTHING read it. Node `n2` above hangs
+ * its only non-timeout exit on `llm:访客表现出害怕`, so every run of this script
+ * reached n2 and then sat there until the 6-turn timeout, always taking the
+ * same branch. The "dual track" was single-track.
+ */
+describe('soft conditions are actually judged', () => {
+  const n2 = SCRIPT.nodes.find((n) => n.id === 'n2')!;
+
+  it('builds a prompt that names each pending condition', () => {
+    const p = judgePrompt('揭开地下室的事', 'lin: 你还好吗', n2.triggers);
+    expect(p).toContain('访客表现出害怕');
+    // The condition must arrive WITHOUT its `llm:` prefix — that prefix is our
+    // routing syntax, not something to ask a model about.
+    expect(p).not.toContain('llm:');
+    expect(p).toContain('揭开地下室的事');
+  });
+
+  it('reads a verdict, and treats anything unexpected as “not yet”', () => {
+    expect(parseJudgement('1', n2.triggers)).toBe(n2.triggers[0]);
+    expect(parseJudgement('嗯，我认为是 1', n2.triggers)).toBe(n2.triggers[0]);
+    // 0 is the model's own "none of these".
+    expect(parseJudgement('0', n2.triggers)).toBeUndefined();
+    // Out of range, empty, and prose all mean the same thing. Advancing on a
+    // misparse skips a beat the author wrote and can strand the vars later
+    // nodes read; waiting just costs a turn and then hits the node's timeout,
+    // which is the exit the author already designed.
+    expect(parseJudgement('7', n2.triggers)).toBeUndefined();
+    expect(parseJudgement('', n2.triggers)).toBeUndefined();
+    expect(parseJudgement('说不好', n2.triggers)).toBeUndefined();
+  });
+
+  it('moves the run when the judge says a soft condition came true', async () => {
+    const { runStoryBeat } = await import('../../src/ai/story-service');
+    await saveScript(SCRIPT, 'builtin', T0);
+    await putSave(save({ id: 'save_soft', nodeId: 'n2' }));
+    let asked = 0;
+    await runStoryBeat('save_soft', {
+      appendMessage: async () => undefined,
+      playBeat: async () => {},
+      judgeTriggers: async (_c, _g, pending) => {
+        asked++;
+        return pending[0];
+      },
+      contactById: () => undefined,
+      now: () => T0,
+    });
+    expect(asked).toBe(1);
+    expect((await getSave('save_soft'))!.nodeId).toBe('end_warm');
+  });
+
+  it('does not spend a judgement when a local expr already fired', async () => {
+    const { runStoryBeat } = await import('../../src/ai/story-service');
+    await saveScript(SCRIPT, 'builtin', T0);
+    // n1's exit is `expr:vars.trust >= 3` — deterministic and already true.
+    await putSave(save({ id: 'save_expr', nodeId: 'n1', vars: { trust: 5, knows: false } }));
+    let asked = 0;
+    await runStoryBeat('save_expr', {
+      appendMessage: async () => undefined,
+      playBeat: async () => {},
+      judgeTriggers: async () => {
+        asked++;
+        return undefined;
+      },
+      contactById: () => undefined,
+      now: () => T0,
+    });
+    // Local first, by design: a deterministic condition is never second-guessed
+    // by a model, and the common beat stays free.
+    expect(asked).toBe(0);
+    expect((await getSave('save_expr'))!.nodeId).toBe('n2');
+  });
+
+  it('survives a judge that throws, falling back to the authored timeout', async () => {
+    const { runStoryBeat } = await import('../../src/ai/story-service');
+    await saveScript(SCRIPT, 'builtin', T0);
+    await putSave(save({ id: 'save_judgefail', nodeId: 'n2' }));
+    const r = await runStoryBeat('save_judgefail', {
+      appendMessage: async () => undefined,
+      playBeat: async () => {},
+      judgeTriggers: async () => {
+        throw new Error('429');
+      },
+      contactById: () => undefined,
+      now: () => T0,
+    });
+    // The beat completes; the run just stays put and counts toward `timeout`.
+    expect(r.finished).toBe(false);
+    const s = await getSave('save_judgefail')!;
+    expect(s!.nodeId).toBe('n2');
+    expect(s!.turnsInNode).toBe(1);
+  });
+
+  it('still runs a script with no judge hook at all', async () => {
+    const { runStoryBeat } = await import('../../src/ai/story-service');
+    await saveScript(SCRIPT, 'builtin', T0);
+    await putSave(save({ id: 'save_nojudge', nodeId: 'n2' }));
+    await runStoryBeat('save_nojudge', {
+      appendMessage: async () => undefined,
+      playBeat: async () => {},
+      contactById: () => undefined,
+      now: () => T0,
+    });
+    expect((await getSave('save_nojudge'))!.nodeId).toBe('n2');
+  });
+});
+
+/* ==================== the beat chain ==================== */
+
+/**
+ * The bug this section exists for (M-G0): `story_tick` was registered with a
+ * plain `registerHandler` while the comment above it claimed it was chained,
+ * and `runStoryBeat` queued its own successor on its LAST line — after the
+ * group generation that can time out. The scheduler marks a row done BEFORE
+ * running its handler and drops handler errors without retrying, so a single
+ * LLM failure inside `playBeat` ended the story permanently and silently.
+ */
+describe('a failed beat pauses the story instead of ending it', () => {
+  const SAVE_ID = 'save_chain';
+
+  async function pendingTicks(): Promise<string[]> {
+    const rows = await idbGetAll<{ id: string; kind: string; status: string }>('scheduled_actions');
+    return rows.filter((r) => r.kind === 'story_tick' && r.status === 'pending').map((r) => r.id).sort();
+  }
+
+  beforeEach(async () => {
+    for (const r of await idbGetAll<{ id: string }>('scheduled_actions')) {
+      await idbPut('scheduled_actions', { ...r, status: 'done' });
+    }
+    await saveScript(SCRIPT, 'builtin', T0);
+    await putSave(save({ id: SAVE_ID }));
+  });
+
+  it('queues the successor BEFORE the work that can fail', async () => {
+    const { chainNextBeat } = await import('../../src/ai/story-service');
+    await chainNextBeat({ saveId: SAVE_ID, convId: 'c1', tick: 1 }, T0);
+    // Chaining happens without the beat having run at all — that is the point.
+    expect(await pendingTicks()).toEqual([`story_${SAVE_ID}_t2`]);
+  });
+
+  it('keeps the run alive across a throwing beat, then pauses after MAX_STALLS', async () => {
+    const { chainNextBeat, runStoryBeat, MAX_STALLS, STALL_NOTICE } = await import(
+      '../../src/ai/story-service'
+    );
+    const appended: string[] = [];
+    const hooks = {
+      appendMessage: async (m: { content: string }) => {
+        appended.push(m.content);
+        return undefined;
+      },
+      playBeat: async () => {
+        throw new Error('LLM 超时');
+      },
+      contactById: () => undefined,
+      now: () => T0,
+    };
+
+    for (let i = 1; i <= MAX_STALLS; i++) {
+      // The scheduler always chains first, then works.
+      await chainNextBeat({ saveId: SAVE_ID, convId: 'c1', tick: i }, T0);
+      await expect(runStoryBeat(SAVE_ID, hooks)).rejects.toThrow('LLM 超时');
+      const s = await getSave(SAVE_ID);
+      expect(s!.stalls).toBe(i);
+      // Still active every time — a failed beat is a retry, not a death.
+      expect(s!.isActive).toBe(true);
+    }
+
+    // Having struck out, the run pauses itself rather than burning one LLM
+    // call every STORY_TICK_MS against a provider that is down.
+    const stalled = await getSave(SAVE_ID);
+    expect(typeof stalled!.stalledAt).toBe('number');
+    expect(appended).toContain(STALL_NOTICE);
+    // ...and the pause is what actually stops the chain.
+    const before = await pendingTicks();
+    await chainNextBeat({ saveId: SAVE_ID, convId: 'c1', tick: MAX_STALLS + 1 }, T0);
+    expect(await pendingTicks()).toEqual(before);
+  });
+
+  it('narrates a beat once even when it is retried', async () => {
+    const { runStoryBeat } = await import('../../src/ai/story-service');
+    const appended: string[] = [];
+    const hooks = {
+      appendMessage: async (m: { content: string }) => {
+        appended.push(m.content);
+        return undefined;
+      },
+      playBeat: async () => {
+        throw new Error('LLM 超时');
+      },
+      contactById: () => undefined,
+      now: () => T0,
+    };
+    await expect(runStoryBeat(SAVE_ID, hooks)).rejects.toThrow();
+    const afterFirst = appended.length;
+    await expect(runStoryBeat(SAVE_ID, hooks)).rejects.toThrow();
+    // The retry re-enters with the same unadvanced save; without the
+    // `stallsOf(save) === 0` gate it would reprint the scene-setting line.
+    expect(appended.length).toBe(afterFirst);
+  });
+
+  it('clears the strike count once a beat completes', async () => {
+    const { runStoryBeat } = await import('../../src/ai/story-service');
+    await putSave(save({ id: SAVE_ID, stalls: 2 }));
+    await runStoryBeat(SAVE_ID, {
+      appendMessage: async () => undefined,
+      playBeat: async () => {},
+      contactById: () => undefined,
+      now: () => T0,
+    });
+    // MAX_STALLS counts CONSECUTIVE failures: one bad night mid-story must not
+    // carry over and pause the run three nights later.
+    expect((await getSave(SAVE_ID))!.stalls).toBe(0);
   });
 });

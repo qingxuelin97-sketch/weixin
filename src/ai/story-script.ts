@@ -208,6 +208,18 @@ export function validateScript(raw: unknown): ValidationResult {
     issues.push({ code: 'no_ending', message: '剧本没有任何结局节点' });
   }
 
+  // Escapeless cycles. `strandedNodes` has existed since M-E5 with a `cycle`
+  // issue code reserved for it — and was never called from here, so every
+  // generated script with a two-node loop passed all eight other checks and
+  // shipped a story the player could not get out of.
+  for (const id of strandedNodes(script)) {
+    issues.push({
+      code: 'cycle',
+      message: `节点 ${id} 走不到任何结局——它所在的环没有出口`,
+      nodeId: id,
+    });
+  }
+
   // NSFW: an adult beat must be earned. Reaching it straight from the entry
   // makes the whole gating theatre (specs/nsfw.md) meaningless.
   const entryNode = script.nodes.find((n) => n.id === script.entry);
@@ -235,17 +247,24 @@ export function reachableFrom(script: Script): Set<string> {
 }
 
 /**
- * Does the graph contain a cycle among non-ending nodes?
+ * Reachable nodes from which NO ending is reachable — i.e. the places a player
+ * can walk into and never get out of.
  *
- * Cycles are ALLOWED — "keep talking until the variable moves" is a legitimate
- * beat. This exists so an author can be warned about one that has no exit, which
- * `dead_end` alone does not catch (a two-node loop with triggers pointing only
- * at each other is exit-less but not dead-ended).
+ * Cycles themselves are ALLOWED — "keep talking until the variable moves" is a
+ * legitimate beat. What is not allowed is a cycle with no exit, which
+ * `dead_end` cannot catch: a two-node loop whose triggers point only at each
+ * other has outgoing edges from every node, so every local check passes.
+ *
+ * Returns the offending ids (sorted, so messages are stable) rather than a
+ * boolean, because the generator's self-repair loop has to be told WHICH nodes
+ * to give an exit — "there is a cycle somewhere" is not actionable.
  */
-export function hasEscapelessCycle(script: Script): boolean {
+export function strandedNodes(script: Script): string[] {
   const byId = new Map(script.nodes.map((n) => [n.id, n]));
   const endings = new Set(script.nodes.filter((n) => n.ending).map((n) => n.id));
-  if (endings.size === 0) return true;
+  // No ending at all is reported by `no_ending`; every reachable node is
+  // stranded by definition, and saying so twice helps nobody.
+  if (endings.size === 0) return [];
 
   // Can each node reach SOME ending? Reverse-reachability from endings.
   const canFinish = new Set(endings);
@@ -261,7 +280,17 @@ export function hasEscapelessCycle(script: Script): boolean {
       }
     }
   }
-  return [...reachableFrom(script)].some((id) => !canFinish.has(id));
+  return [...reachableFrom(script)].filter((id) => !canFinish.has(id)).sort();
+}
+
+/**
+ * Does the graph strand the player anywhere? Thin wrapper over
+ * `strandedNodes`; kept because "is this script escapable" reads better than a
+ * length check at call sites that don't need the ids.
+ */
+export function hasEscapelessCycle(script: Script): boolean {
+  const endings = script.nodes.some((n) => n.ending);
+  return !endings || strandedNodes(script).length > 0;
 }
 
 /* ==================================================================== */

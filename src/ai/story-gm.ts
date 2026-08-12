@@ -34,6 +34,7 @@ import {
   evaluateTriggers,
   directiveTextFor,
   effectiveStoryLevel,
+  parseWhen,
   validateScript,
 } from './story-script';
 
@@ -75,6 +76,28 @@ export interface StorySaveRow {
   updatedAt: number;
   /** Snapshots for rollback, newest last. */
   history: StorySnapshot[];
+  /**
+   * Consecutive beats that threw (almost always an LLM timeout/rate-limit).
+   * Reset to 0 by the first beat that completes. Absent on rows written before
+   * M-G0 — read it through `stallsOf()`, never as a bare number.
+   */
+  stalls?: number;
+  /**
+   * Set once `stalls` crosses `MAX_STALLS`: the run stops chaining new beats
+   * instead of burning one LLM call every STORY_TICK_MS forever. The run is
+   * still `isActive` — it is paused, not ended, and the user can resume it.
+   */
+  stalledAt?: number;
+}
+
+/** Consecutive-failure count for a save row, tolerating pre-M-G0 rows. */
+export function stallsOf(save: Pick<StorySaveRow, 'stalls'>): number {
+  return typeof save.stalls === 'number' && Number.isFinite(save.stalls) ? save.stalls : 0;
+}
+
+/** A paused run: still active, but no longer scheduling beats on its own. */
+export function isStalled(save: Pick<StorySaveRow, 'stalledAt'>): boolean {
+  return typeof save.stalledAt === 'number';
 }
 
 export interface StorySnapshot {
@@ -281,6 +304,59 @@ export function advance(script: Script, save: StorySaveRow, now: number): Advanc
     moved: false,
     effects: none,
   };
+}
+
+/* ==================================================================== */
+/* The `llm:` trigger track                                              */
+/* ==================================================================== */
+
+/**
+ * Judging soft conditions (M-G0).
+ *
+ * `specs/story-gm.md` specifies two trigger tracks: `expr:` evaluated locally,
+ * and `llm:` judged by the GM for things no expression can express ("访客终于
+ *说出了实话"). `evaluateTriggers` has always returned the `llm:` ones in a
+ * `pending` array and `advance` has always passed it through — and NOTHING in
+ * the app ever read it. Every soft condition was a silently discarded edge, so
+ * a script that leaned on them just sat in its opening beat until the timeout.
+ *
+ * The prompt/parse pair is pure so the判定 is testable without a model; the
+ * call itself is injected (`StoryHooks.judgeTriggers`), because it carries the
+ * conversation transcript and therefore has to route on the conversation's
+ * tier, not on the story engine's opinion (constitution rule #6).
+ */
+export function judgePrompt(goal: string, recent: string, pending: Trigger[]): string {
+  const options = pending.map((t, i) => `${i + 1}. ${parseWhen(t.when).kind === 'llm' ? t.when.trim().slice(4).trim() : t.when}`);
+  return [
+    '你是这场戏的导演，要判断剧情是否可以推进。',
+    '',
+    `本幕的目标：${goal}`,
+    '',
+    '刚刚发生的对话：',
+    recent || '（还没有对话）',
+    '',
+    '下面是可能的推进条件，逐条判断哪一条已经**在上面的对话里真实发生**：',
+    ...options,
+    '',
+    '只回一个数字：满足的那一条的编号；如果都还没发生，回 0。不要解释。',
+  ].join('\n');
+}
+
+/**
+ * Parse the GM's verdict. Conservative by construction: anything that is not
+ * an in-range index means "not yet".
+ *
+ * That default matters. A misparse that advances the story skips a beat the
+ * author wrote and can strand `vars` the later nodes depend on; a misparse that
+ * waits costs one more turn and then hits the node's `timeout`, which is the
+ * exit the author already designed for exactly this case.
+ */
+export function parseJudgement(text: string, pending: Trigger[]): Trigger | undefined {
+  const m = /-?\d+/.exec(text ?? '');
+  if (!m) return undefined;
+  const idx = Number(m[0]);
+  if (!Number.isInteger(idx) || idx < 1 || idx > pending.length) return undefined;
+  return pending[idx - 1];
 }
 
 /** Move to a trigger's destination, snapshotting first. Pure. */

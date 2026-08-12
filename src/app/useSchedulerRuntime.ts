@@ -25,7 +25,8 @@ import { getEdge, effectiveAffinity, heartbeatAffinityMul } from '../ai/relation
 import { noteProactiveSent, getAgentState } from '../ai/agent-state';
 import { extractMemory, maintainMemory } from '../ai/memory';
 import { getExtractMarker, setExtractMarker } from '../ai/memory-service';
-import { tierFor, maxTier, globalTier } from '../lib/nsfw-tier';
+import { tierFor, maxTier, globalTier, tierOfConversation, redactForTier } from '../lib/nsfw-tier';
+import { renderTranscript } from '../ai/render-msg';
 import { logError } from '../lib/errlog';
 import { moodOf, moodParams } from '../lib/mood';
 import { affectFor } from '../lib/affect';
@@ -33,7 +34,8 @@ import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
-import { runStoryBeat, seedBuiltinScripts } from '../ai/story-service';
+import { chainNextBeat, runStoryBeat, seedBuiltinScripts } from '../ai/story-service';
+import { judgePrompt, parseJudgement } from '../ai/story-gm';
 import {
   type HandlerDeps,
   handleRpGrab,
@@ -150,40 +152,86 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerHandler('moment_like', (p) => handleMomentLike(deps, p));
     registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
 
-    // Story mode's beat (M-E5). `story_tick` has been a reserved kind since M1;
-    // this is its handler. Chained like the others so a failed beat pauses the
-    // story rather than ending it permanently.
-    registerHandler('story_tick', async (p) => {
-      const saveId = String(p.saveId ?? '');
-      if (!saveId) return;
-      await runStoryBeat(saveId, {
-        appendMessage: (m) => useAppStore.getState().appendMessage(m),
-        playBeat: async (convId, directives, goal) => {
-          const st = useAppStore.getState();
-          const c = st.conversationById(convId);
-          if (!c) return;
-          const members = (c.memberIds ?? []).map((id) => {
-            const ct = st.contactById(id);
-            return { contactId: id, name: ct?.remark ?? ct?.name ?? id, persona: st.personaFor(id) };
-          });
-          const speaker = members.find((m) => directives[m.contactId]);
-          if (!speaker?.persona) return;
-          // The GM's beat rides in as the director hint — per character, and
-          // ONLY that character's own instruction (never the whole script).
-          await sendGroupProactiveMessage(
-            c,
-            speaker,
-            members,
-            await globalTier(),
-            hooks,
-            st.contactById,
-            Date.now(),
-            `${goal}｜${directives[speaker.contactId]}`.slice(0, 200),
-          );
-        },
-        contactById: (id) => useAppStore.getState().contactById(id),
-        now: () => Date.now(),
-      });
+    // Story mode's beat (M-E5, chained in M-G0).
+    //
+    // This comment used to claim the handler was chained while the code below
+    // called plain `registerHandler`, and `runStoryBeat` queued its successor
+    // on its LAST line — after the group generation that can time out. Since
+    // the scheduler marks a row done before running it and drops handler
+    // errors without retrying, one flaky LLM call ended the story forever.
+    registerChainedHandler('story_tick', {
+      chain: (p) => chainNextBeat(p, Date.now()),
+      work: async (p) => {
+        const saveId = String(p.saveId ?? '');
+        if (!saveId) return;
+        await runStoryBeat(saveId, {
+          appendMessage: (m) => useAppStore.getState().appendMessage(m),
+          playBeat: async (convId, directives, goal) => {
+            const st = useAppStore.getState();
+            const c = st.conversationById(convId);
+            if (!c) return;
+            const members = (c.memberIds ?? []).map((id) => {
+              const ct = st.contactById(id);
+              return {
+                contactId: id,
+                name: ct?.remark ?? ct?.name ?? id,
+                persona: st.personaFor(id),
+              };
+            });
+            const speaker = members.find((m) => directives[m.contactId]);
+            if (!speaker?.persona) return;
+            // The GM's beat rides in as the director hint — per character, and
+            // ONLY that character's own instruction (never the whole script).
+            await sendGroupProactiveMessage(
+              c,
+              speaker,
+              members,
+              await globalTier(),
+              hooks,
+              st.contactById,
+              Date.now(),
+              `${goal}｜${directives[speaker.contactId]}`.slice(0, 200),
+            );
+          },
+          judgeTriggers: async (convId, goal, pending) => {
+            const st = useAppStore.getState();
+            const c = st.conversationById(convId);
+            if (!c) return undefined;
+            // Rule #6: this prompt carries the transcript, so the tier comes
+            // from the CONVERSATION's participants — never from a constant
+            // here. `tierOfConversation` is the authority for exactly this.
+            const tier = await tierOfConversation(c.memberIds ?? [], st.personaFor);
+            const nameOf = (id: string) => {
+              const ct = st.contactById(id);
+              return ct?.remark ?? ct?.name ?? id;
+            };
+            const tail = st.messagesFor(convId).slice(-12);
+            // Same discipline as the director (director.ts:231-237): above
+            // 'off' the words never leave in full, so the judgement stays
+            // honest even when a permissive channel is unavailable.
+            const recent =
+              tier === 'off'
+                ? renderTranscript(tail, { nameOf, maxChars: 120 })
+                : redactForTier(tail, nameOf);
+            const router = await getRouter();
+            const res = await router.complete(
+              { role: 'director', nsfwTier: tier },
+              {
+                messages: [{ role: 'user', content: judgePrompt(goal, recent, pending) }],
+                temperature: 0.2,
+                // The whole answer is one integer. Capping it here is what
+                // keeps the soft track from costing anything meaningful.
+                maxTokens: 8,
+              },
+              {},
+              `story:${convId}`,
+            );
+            return parseJudgement(res.text, pending);
+          },
+          contactById: (id) => useAppStore.getState().contactById(id),
+          now: () => Date.now(),
+        });
+      },
     });
 
     // Self-chaining kinds: the successor is queued BEFORE the work that can

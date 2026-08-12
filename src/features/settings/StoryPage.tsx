@@ -76,7 +76,9 @@ export function StoryPage() {
       now: Date.now(),
     });
     await putSave(save);
-    await scheduleNextBeat(save, Date.now());
+    // Tick 1 opens the chain; every later tick is queued by `chainNextBeat`
+    // before its beat runs, so a failed beat retries instead of ending the run.
+    await scheduleNextBeat(save, Date.now(), 1);
     await reload();
     showToast(`《${script.title}》开始了，去群里看`);
   };
