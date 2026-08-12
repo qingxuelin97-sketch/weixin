@@ -31,6 +31,7 @@ import { resolvePhotoBubble, photoDirective } from './photo-send';
 import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
+import { arcAwareness, freshArc, arcOpener, type PeerRef } from './rel-arcs';
 import { refreshConvState, convStateDirective } from './conv-state';
 import {
   detectThreads,
@@ -83,6 +84,27 @@ async function markThreadUsed(contactId: string, threadId: string): Promise<void
   // Bounded: only the newest 200 matter, and an unbounded settings row would
   // grow forever in a store that is read on every proactive message.
   await repo.putSetting(`threads:${contactId}`, [...used].slice(-200));
+}
+
+/**
+ * The other people this persona knows, for the relationship-arc layer.
+ *
+ * Sourced from her own `relations` card rather than from the contact list: an
+ * arc with someone she has never heard of is not an arc, and feeding every
+ * contact in the app into a social briefing would both cost tokens and invent
+ * a friendship out of nothing. Capped — this runs on every turn.
+ */
+export async function peersOf(persona: PersonaVM, max = 5): Promise<PeerRef[]> {
+  const ids = Object.keys(persona.relations ?? {}).filter(
+    (id) => id !== 'user' && id !== 'self' && id !== persona.contactId,
+  );
+  if (ids.length === 0) return [];
+  const contacts = await repo.getContacts();
+  const byId = new Map(contacts.map((c) => [c.id, c]));
+  return ids.slice(0, max).flatMap((id) => {
+    const c = byId.get(id);
+    return c ? [{ contactId: id, name: c.remark ?? c.name }] : [];
+  });
 }
 
 /** Persona row → the prompt layer's view. Shared with the Moments engine. */
@@ -371,6 +393,13 @@ async function generateAndPlayInner(
     }),
   );
   if (occasionLine) system += `\n\n${occasionLine}`;
+  // Where she currently stands with the people you BOTH know (M-H1). The
+  // social graph has been moving since M-E4 with no way for you to perceive
+  // it; this is the line that lets a falling-out come up when the subject
+  // does. Peers come from her own relations card — arcs with people she has
+  // never heard of are not arcs.
+  const arcAware = await arcAwareness(peer.id, await peersOf(persona), hooks.now());
+  if (arcAware) system += `\n\n${arcAware}`;
 
   // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:
   // it has no symptom except a bigger bill and a persona diluted by context.
@@ -650,7 +679,15 @@ export async function sendProactiveMessage(
         // forever, and a failed generation must not make her ask again.
         await markThreadUsed(peer.id, thread.id);
       } else {
-        material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+        // Something that happened with a MUTUAL friend, if anything just did
+        // (M-H1). The social graph has existed since M-E4 and was completely
+        // invisible: numbers moved, nothing was ever said. An agent who just
+        // fell out with someone you both know has an actual reason to message
+        // you, which is the whole difference between a heartbeat and a person.
+        const arc = await freshArc(peer.id, await peersOf(persona), at ?? hooks.now());
+        material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`, {
+          arc: arc ? arcOpener(arc.marker.kind, arc.peer.name) : undefined,
+        }).directive;
       }
     }
   } catch (e) {

@@ -14,7 +14,8 @@
 import type { PersonaVM, ContactVM, MomentVM } from '../data/types';
 import { seededRng } from '../lib/money';
 import { assembleSystemPrompt } from './prompt';
-import { toPersonaView } from './engine';
+import { toPersonaView, peersOf } from './engine';
+import { freshArc, arcMomentDirective } from './rel-arcs';
 import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
 import { pickImages } from '../data/moments-images';
@@ -191,6 +192,13 @@ export async function generateMomentPost(
   });
   const rng = seededRng(`mp:${peer.id}:${now}`);
   const imgCount = rng() < 0.45 ? 0 : rng() < 0.6 ? 1 : rng() < 0.85 ? 3 : 4;
+  // Something that just happened with a mutual friend, sometimes (M-H1). This
+  // is the surface where the social graph is most legible to the user: an
+  // unexplained, unnamed post right after a falling-out is how you find out
+  // there WAS one. Seeded and minority-weighted — a feed of subtweets is a
+  // different and much worse character than one that occasionally has a bad day.
+  const arc = rng() < 0.4 ? await freshArc(peer.id, await peersOf(persona), now) : null;
+  const material = arc ? arcMomentDirective(arc.marker.kind) : '';
 
   try {
     const router = await getRouter();
@@ -202,6 +210,7 @@ export async function generateMomentPost(
           {
             role: 'user',
             content:
+              (material ? `${material}\n` : '') +
               '写一条你现在会发的朋友圈。要求：' +
               '1) 第一人称，像真人随手发的，不是作文；' +
               '2) 40 字以内，可以只有一句话，允许口语和不完整句；' +

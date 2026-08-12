@@ -106,6 +106,18 @@ describe('the gift planner is actually consulted', () => {
   });
 });
 
+describe('the social graph reaches a surface the user can see', () => {
+  it('arcs are read on the reply path, the opener path and Moments', () => {
+    // M-E4's graph has been moving since it shipped and was invisible in all
+    // three places. Wiring it to exactly one surface would be almost as bad:
+    // an arc you can only see in a proactive message is an arc you will
+    // usually miss.
+    expect(read('src/ai/engine.ts').includes('arcAwareness(')).toBe(true);
+    expect(read('src/ai/engine.ts').includes('freshArc(')).toBe(true);
+    expect(read('src/ai/moments-engine.ts').includes('arcMomentDirective(')).toBe(true);
+  });
+});
+
 describe('group pacing reaches the director', () => {
   const ge = read('src/ai/group-engine.ts');
 

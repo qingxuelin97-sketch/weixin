@@ -112,7 +112,7 @@ export async function scheduleHeartbeat(
  * person reaches out because something reminded them of you.
  */
 export interface OpenerSource {
-  kind: 'memory' | 'moment' | 'greeting';
+  kind: 'memory' | 'moment' | 'greeting' | 'arc';
   /** The directive appended to the system prompt. */
   directive: string;
 }
@@ -128,11 +128,21 @@ export function pickOpener(
   facts: Array<{ fact: string; status: string }>,
   ownRecentMomentText: string | undefined,
   seed: string,
+  extra: {
+    /**
+     * Something that just happened with a mutual friend (M-H1). Ranked first
+     * when present, and deliberately not certain: news is the strongest reason
+     * to message someone, but a character who ONLY ever opens with gossip is a
+     * newsreader.
+     */
+    arc?: string;
+  } = {},
 ): OpenerSource {
   const rng = seededRng(`opener:${seed}`);
   const usable = facts.filter((f) => f.status === 'confirmed' && f.fact.trim());
   const roll = rng();
 
+  if (extra.arc && roll < 0.4) return { kind: 'arc', directive: extra.arc };
   if (usable.length > 0 && roll < 0.55) {
     const fact = usable[Math.floor(rng() * usable.length)].fact;
     return {
