@@ -106,6 +106,20 @@ describe('the gift planner is actually consulted', () => {
   });
 });
 
+describe('anti-AI-tone v2 runs on the output, not just in the prompt', () => {
+  for (const file of ['src/ai/engine.ts', 'src/ai/group-engine.ts']) {
+    it(`${file} scrubs and feeds back`, () => {
+      // The v1 rules are static text; the whole point of v2 is that something
+      // finally LOOKS at what came back. A version wired into only one of the
+      // two engines would leave the group — where repetition is most visible,
+      // because the lines are short and stacked — exactly as it was.
+      const src = read(file);
+      expect(src.includes('scrubBubbles(')).toBe(true);
+      expect(src.includes('styleNote(')).toBe(true);
+    });
+  }
+});
+
 describe('the social graph reaches a surface the user can see', () => {
   it('arcs are read on the reply path, the opener path and Moments', () => {
     // M-E4's graph has been moving since it shipped and was invisible in all

@@ -32,6 +32,7 @@ import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { arcAwareness, freshArc, arcOpener, type PeerRef } from './rel-arcs';
+import { ownLines, styleNote, scrubBubbles } from './anti-ai';
 import { refreshConvState, convStateDirective } from './conv-state';
 import {
   detectThreads,
@@ -400,6 +401,14 @@ async function generateAndPlayInner(
   // never heard of are not arcs.
   const arcAware = await arcAwareness(peer.id, await peersOf(persona), hooks.now());
   if (arcAware) system += `\n\n${arcAware}`;
+  // Anti-AI-tone v2 (M-H1): what her OWN last few lines look like. The v1
+  // rules ("don't write essays") are static — nothing ever looked at the
+  // output, so a catchphrase could open six replies in a row and every rule
+  // was still satisfied. The model varies well when told what it just did; it
+  // simply has no memory of it.
+  const ownRecent = ownLines(recent, peer.id);
+  const habit = styleNote(ownRecent, persona.catchphrases);
+  if (habit) system += `\n\n${habit}`;
 
   // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:
   // it has no symptom except a bigger bill and a persona diluted by context.
@@ -448,6 +457,14 @@ async function generateAndPlayInner(
       bubbles.push(b);
     }
     if (ctrl.signal.aborted) return;
+
+    // Drop what she has effectively already said, plus any assistant-speak the
+    // rules failed to prevent. Deterministic and free — the alternative is a
+    // second model call to judge the first one. Never empties the turn: a
+    // missing reply reads as a broken app, a repetitive one only reads as her.
+    const scrubbed = scrubBubbles(bubbles, ownRecent);
+    bubbles.length = 0;
+    bubbles.push(...scrubbed);
 
     // Prefetch voice synthesis in parallel while earlier bubbles play — the
     // awaited voiceMeta at append time then hits the content-addressed cache

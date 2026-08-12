@@ -36,6 +36,7 @@ import {
   socialDirective,
   topicKey,
 } from './group-topic';
+import { ownLines, styleNote, scrubBubbles } from './anti-ai';
 import { maxTier } from '../lib/nsfw-tier';
 import { playMessageSound } from '../lib/sound';
 import { moodOf } from '../lib/mood';
@@ -340,6 +341,12 @@ async function generateActorLines(
   const stanceLine = await describePeerEdges(member.contactId, peers, now);
   if (stanceLine) system += `\n\n${stanceLine}`;
   if (pacingLine) system += `\n\n${pacingLine}`;
+  // Her own habits in THIS room (M-H1). Group turns are short, which makes
+  // repetition far more visible than in a DM: three "哈哈哈" from the same
+  // member inside one screen is the loudest tell a group chat has.
+  const ownRecent = ownLines(recent, member.contactId);
+  const habit = styleNote(ownRecent, persona.catchphrases);
+  if (habit) system += `\n\n${habit}`;
   system += `\n\n# 本轮导演提示\n${direction}`;
 
   const size = promptStats(system);
@@ -370,7 +377,11 @@ async function generateActorLines(
     )) {
       out.push(b);
     }
-    return out;
+    // Same scrub as the single chat: her own repeats and any assistant-speak
+    // that got past the rules. Unlike the single chat, an emptied result is
+    // fine here — one member staying quiet is a normal thing in a group, so
+    // `scrubBubbles` is only asked to keep the turn non-empty, not to speak.
+    return scrubBubbles(out, ownRecent);
   } catch {
     return []; // stay silent rather than surface an error into the group
   }
