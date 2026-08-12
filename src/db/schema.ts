@@ -61,6 +61,8 @@ export const personas = sqliteTable('personas', {
   nsfwStyleSamplesJson: text('nsfw_style_samples_json'), // optional string[2]
   affinityInit: integer('affinity_init').notNull().default(20),
   affinityBaseline: integer('affinity_baseline').notNull().default(20),
+  /** 0..1 — how readily she sends a red packet / transfer of her own (M-H1). */
+  generosity: real('generosity').notNull().default(0.35),
   greeting: text('greeting'),
   storyRolesJson: text('story_roles_json'),
   extensionsJson: text('extensions_json'), // preserve unknown ST-V2 fields verbatim
@@ -352,6 +354,8 @@ export const SCHEDULED_ACTION_KINDS = [
   'recall',
   'mem_extract',
   'story_tick',
+  /** She sends YOU money — red packet or transfer, planned by money-motive. */
+  'ai_money',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

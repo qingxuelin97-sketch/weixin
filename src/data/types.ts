@@ -107,6 +107,11 @@ export interface PersonaVM {
   /** Starting closeness, 0..100. Scales like/comment rates and heartbeat warmth. */
   affinityInit: number;
   /**
+   * How open-handed, 0..1. Scales both the odds of her sending money at all and
+   * which rung of the amount ladder she picks. 0 = never sends any.
+   */
+  generosity: number;
+  /**
    * Media-library tags this persona draws配图 from (吃货人设发健身照=秒穿帮).
    * Empty = draws from the whole photo pool.
    */

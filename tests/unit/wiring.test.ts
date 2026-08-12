@@ -87,6 +87,25 @@ describe('the story beat does not schedule itself from inside its own work', () 
   });
 });
 
+describe('the gift planner is actually consulted', () => {
+  it('considerGift runs in the foreground pass', () => {
+    // A planner with no caller is the shape this repo keeps re-shipping:
+    // `money-motive` would pass every one of its own tests while she never
+    // sent anything, and the symptom ("she never gives me anything") is
+    // indistinguishable from the planner correctly saying no.
+    expect(
+      runtime.includes('considerGift('),
+      'considerGift 必须在前台 pass 里被调用，否则 AI 送礼整条线是死的。',
+    ).toBe(true);
+    expect(runtime.includes('considerGroupGift(')).toBe(true);
+  });
+
+  it('the delivery path is reachable from the handler bag', () => {
+    expect(runtime.includes('runGift(')).toBe(true);
+    expect(read('src/ai/handlers.ts').includes('d.runGift(')).toBe(true);
+  });
+});
+
 /**
  * Declared indexes must have a reader.
  *

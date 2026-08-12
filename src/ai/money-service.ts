@@ -57,12 +57,58 @@ export async function sendRedPacket(
   grabbers: Array<{ contactId: string; persona?: PersonaVM }>,
   hooks: MoneyHooks,
 ): Promise<RedPacketVM> {
-  const now = hooks.now();
-  const id = `rp_${now}`;
+  return createRedPacket('self', convId, totalFen, count, greeting, grabbers, hooks);
+}
+
+/**
+ * The same, sent BY an agent (M-H1).
+ *
+ * Money used to flow one way only — every packet in the codebase was
+ * `senderId: 'self'`, so she could take and never give. The mechanics are
+ * identical; the two differences are that no wallet is debited (her money is
+ * fiction, and inventing a ledger for it would make the user's balance a lie)
+ * and that the sender is excluded from the grab queue.
+ */
+export async function sendRedPacketFrom(
+  senderId: string,
+  convId: string,
+  totalFen: number,
+  count: number,
+  greeting: string,
+  grabbers: Array<{ contactId: string; persona?: PersonaVM }>,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<RedPacketVM> {
+  return createRedPacket(
+    senderId,
+    convId,
+    totalFen,
+    count,
+    greeting,
+    grabbers.filter((g) => g.contactId !== senderId),
+    hooks,
+    at,
+  );
+}
+
+async function createRedPacket(
+  senderId: string,
+  convId: string,
+  totalFen: number,
+  count: number,
+  greeting: string,
+  grabbers: Array<{ contactId: string; persona?: PersonaVM }>,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<RedPacketVM> {
+  // `at` lets a backfilled packet carry the timestamp it "happened" at while
+  // the row is still written now — same discipline as every other handler.
+  const now = at ?? hooks.now();
+  const id = `rp_${now}_${senderId}`;
   const rp: RedPacketVM = {
     id,
     convId,
-    senderId: 'self',
+    senderId,
     totalFen,
     count,
     kind: 'lucky',
@@ -73,11 +119,13 @@ export async function sendRedPacket(
     createdAt: now,
   };
   await repo.putRedPacket(rp);
-  await recordWalletTx('rp_out', -totalFen, '发出红包', id, now);
+  // Only the user has a wallet. An agent's packet costs nothing and must not
+  // touch the ledger the balance page reads.
+  if (senderId === 'self') await recordWalletTx('rp_out', -totalFen, '发出红包', id, now);
 
   await hooks.appendMessage({
     convId,
-    senderId: 'self',
+    senderId,
     type: 'rp',
     content: '',
     meta: { rpId: id, greeting: rp.greeting, opened: false },
@@ -132,26 +180,41 @@ export async function claimRedPacket(
   }
 
   // Once the last share is gone, settle "best luck" and close the packet.
+  const mine = rp.senderId === 'self';
   if (isFullyClaimed(rp, all)) {
     for (const c of markBestLuck(rp, all)) await repo.putClaim(c);
     await repo.putRedPacket({ ...rp, status: 'done' });
-    await markRpMessageOpened(rp, hooks, '已被领完');
+    await markRpMessageOpened(rp, hooks, mine ? '已被领完' : '已领取');
   } else if (claimerId === 'self') {
     await markRpMessageOpened(rp, hooks, '');
   }
 
+  // WeChat's grey line names both ends. Before agents could send packets this
+  // only ever ran for the user's own, so the sender was left implicit — which
+  // rendered as the headless 「你领取了的红包」 the moment one arrived from her.
+  const senderName = mine ? '自己' : (await peerName(rp.senderId));
   await hooks.appendMessage({
     convId: rp.convId,
     senderId: 'self',
     type: 'system',
     content:
       claimerId === 'self'
-        ? `你领取了${rp.senderId === 'self' ? '自己' : ''}的红包`
-        : `${claimerName}领取了你的红包`,
+        ? `你领取了${senderName}的红包`
+        : `${claimerName}领取了${mine ? '你' : senderName}的红包`,
     status: 'sent',
     createdAt: now,
   });
   return claim;
+}
+
+/** Display name for a non-self sender; falls back to the id rather than empty. */
+async function peerName(contactId: string): Promise<string> {
+  try {
+    const c = await repo.getContact(contactId);
+    return c?.remark ?? c?.name ?? contactId;
+  } catch {
+    return contactId;
+  }
 }
 
 /** Flip the red packet bubble to its dim/claimed state. */
@@ -204,6 +267,49 @@ export async function sendTransfer(
     fireAt: now + 4_000 + (amountFen % 5) * 1_000,
     payload: { transferId: id, convId },
     now,
+  });
+  return t;
+}
+
+/**
+ * A transfer sent BY an agent, to the user (M-H1).
+ *
+ * Deliberately NOT auto-accepted: in WeChat an incoming transfer sits there
+ * until you tap 收款, and that tap is the whole moment. The chat page already
+ * handles the tap for a pending transfer from the peer (`onMoneyTap`), and
+ * `acceptTransfer` already credits the wallet whenever `toId === 'self'` — so
+ * the money enters the ledger exactly when the user takes it, and never if
+ * they don't.
+ */
+export async function sendTransferFrom(
+  fromId: string,
+  convId: string,
+  amountFen: number,
+  note: string,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<TransferVM> {
+  const now = at ?? hooks.now();
+  const id = `tr_${now}_${fromId}`;
+  const t: TransferVM = {
+    id,
+    convId,
+    fromId,
+    toId: 'self',
+    amountFen,
+    note,
+    status: 'pending',
+    createdAt: now,
+  };
+  await repo.putTransfer(t);
+  await hooks.appendMessage({
+    convId,
+    senderId: fromId,
+    type: 'transfer',
+    content: '',
+    meta: { transferId: id, amountFen, note, status: 'pending' },
+    status: 'sent',
+    createdAt: now,
   });
   return t;
 }

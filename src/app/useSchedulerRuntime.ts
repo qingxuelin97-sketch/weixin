@@ -18,6 +18,7 @@ import {
   actionExists,
 } from '../ai/scheduler';
 import { claimRedPacket, acceptTransfer } from '../ai/money-service';
+import { runGift, considerGift, considerGroupGift } from '../ai/gift-service';
 import { sendProactiveMessage } from '../ai/engine';
 import { sendGroupProactiveMessage } from '../ai/group-engine';
 import { scheduleHeartbeat, shouldNudge } from '../ai/heartbeat';
@@ -48,6 +49,7 @@ import {
   handleHeartbeat,
   handleAgentDm,
   handleMomentPost,
+  handleAiMoney,
   chainHeartbeat as chainHeartbeatStep,
   chainAgentDm as chainAgentDmStep,
   chainMomentPost as chainMomentPostStep,
@@ -106,6 +108,22 @@ export function useSchedulerRuntime(enabled: boolean): void {
         const s = useAppStore.getState();
         await runMomentPost(persona, peer, s.contacts, s.personaFor, momentsHooks, at);
       },
+      runGift: (p) =>
+        runGift(p, {
+          hooks,
+          // Everyone in the room except the sender may grab a group packet;
+          // in a single chat this is empty and only the user can open it.
+          grabbers: (convId, senderId) => {
+            const s = useAppStore.getState();
+            const conv = s.conversationById(convId);
+            if (conv?.type !== 'group') return [];
+            return (conv.memberIds ?? [])
+              .filter((id) => id !== senderId && id !== 'self')
+              .map((id) => ({ contactId: id, persona: s.personaFor(id) }));
+          },
+          contactById: (id) => useAppStore.getState().contactById(id),
+          now: () => Date.now(),
+        }),
       runMomentLike: (momentId, contactId, at) =>
         runMomentLike(momentId, contactId, momentsHooks, at),
       runMomentComment: (momentId, commenter, persona, authorName, at) =>
@@ -151,6 +169,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerHandler('mem_extract', (p) => handleMemExtract(deps, p));
     registerHandler('moment_like', (p) => handleMomentLike(deps, p));
     registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
+    registerHandler('ai_money', (p) => handleAiMoney(deps, p));
 
     // Story mode's beat (M-E5, chained in M-G0).
     //
@@ -435,6 +454,23 @@ async function runForegroundPass(): Promise<void> {
       await scheduleNextMoment(persona, now);
     }
 
+    // Would she send you something today? Planned here rather than on a chain
+    // of its own because a gift is a REACTION — to the date, to a fight, to you
+    // having a bad day — and this pass already runs whenever the app is looked
+    // at. The planner says no on almost every call (see money-motive).
+    try {
+      const tail = s.messagesFor(conv.id);
+      await considerGift({
+        conv,
+        persona,
+        now,
+        recent: tail.length ? tail.slice(-30) : await repo.getMessages(conv.id, { limit: 30 }),
+      });
+    } catch (e) {
+      // Never let the money path block the rest of the foreground pass.
+      logError('gift.plan', e);
+    }
+
     // Nudge: their last message sat unanswered for 6–48h. One per ignored
     // message EVER — the id is checked against all statuses, because enqueue
     // upserts and would otherwise revive a completed nudge as pending.
@@ -455,6 +491,23 @@ async function runForegroundPass(): Promise<void> {
           id: nudgeId,
         });
       }
+    }
+  }
+
+  // 2.5) A festival packet in a group. Festivals only — an apology or a
+  //      "you seem down" packet in front of eight people is a different and
+  //      much worse gesture, so `planGroupGift` refuses everything else.
+  for (const conv of s.conversations) {
+    if (conv.type !== 'group') continue;
+    const members = (conv.memberIds ?? []).flatMap((id) => {
+      const persona = s.personaFor(id);
+      return persona ? [{ contactId: id, persona }] : [];
+    });
+    if (members.length === 0) continue;
+    try {
+      await considerGroupGift({ conv, members, now, facts: [] });
+    } catch (e) {
+      logError('gift.plan.group', e);
     }
   }
 

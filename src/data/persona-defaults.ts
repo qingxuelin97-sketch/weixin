@@ -47,6 +47,9 @@ export const PERSONA_DEFAULTS: Omit<PersonaVM, 'contactId' | 'core'> = {
   likeRate: 0.5,
   commentRate: 0.25,
   affinityInit: 20,
+  // Middling by default: she will send something on a birthday or after a
+  // fight, and roughly never otherwise.
+  generosity: 0.35,
   relations: {},
   imageTags: [],
 };

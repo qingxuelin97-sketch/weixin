@@ -29,6 +29,7 @@ import type {
 import type { LlmRouter } from '../llm/router';
 import type { ScheduledAction } from './scheduler';
 import type { DmPlan } from './agent-dm';
+import type { GiftPayload } from './gift-service';
 import type { EngineHooks } from './engine';
 import type { GroupMember } from './director';
 import { getConvState, putConvState, refineConvState } from './conv-state';
@@ -95,6 +96,8 @@ export interface HandlerDeps {
     authorName: string,
     at?: number,
   ) => Promise<void>;
+  /** Deliver a planned red packet / transfer from an agent (M-H1). */
+  runGift: (p: GiftPayload) => Promise<void>;
 
   // --- chaining ---
   chainHeartbeat: (persona: PersonaVM, convId: string, lastMsgAt?: number) => Promise<void>;
@@ -379,4 +382,42 @@ export async function handleMomentComment(
   const author = d.contactById(moment.authorId);
   const authorName = moment.authorId === 'self' ? '你' : (author?.remark ?? author?.name ?? '朋友');
   await d.runMomentComment(momentId, commenter, persona, authorName, optNum(payload.at));
+}
+
+/* ------------------------------ money ------------------------------ */
+
+/**
+ * She sends money (M-H1).
+ *
+ * The row was queued days or hours ago, so everything it assumed has to be
+ * re-checked here — the contact may have been deleted, the conversation may be
+ * gone, and a payload that has lost its amount must not become a ¥0.00 packet.
+ * Money is the one place in this app where acting on a stale plan is worse than
+ * not acting at all.
+ */
+export async function handleAiMoney(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const contactId = str(payload.contactId);
+  if (!convId || !contactId) return;
+  if (!d.conversationExists(convId)) return;
+  if (!d.contactById(contactId) || !d.personaFor(contactId)) return;
+  const amountFen = optNum(payload.amountFen);
+  if (!amountFen || amountFen <= 0 || !Number.isInteger(amountFen)) return;
+
+  await d.runGift({
+    convId,
+    contactId,
+    kind: payload.kind === 'transfer' ? 'transfer' : 'rp',
+    reason: str(payload.reason),
+    amountFen,
+    note: str(payload.note),
+    line: str(payload.line),
+    count: optNum(payload.count),
+  });
+  // Same stamp rule as a heartbeat: a gift that lands while you are looking at
+  // the screen should ding.
+  d.playMessageSound(d.now());
 }

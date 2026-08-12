@@ -304,6 +304,19 @@ export function PersonaEditPage() {
               spellCheck={false}
             />
           </div>
+          <div className="field field--divided">
+            <span className="field__label">
+              大方程度：{(p.generosity ?? 0.35).toFixed(2)}（她主动发红包/转账的意愿与金额）
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={p.generosity ?? 0.35}
+              onChange={(e) => set('generosity', Number(e.target.value))}
+            />
+          </div>
           <div className="field">
             <span className="field__label">初始亲密度：{p.affinityInit}（影响赞评与嘘寒问暖）</span>
             <input
