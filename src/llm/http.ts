@@ -44,8 +44,11 @@ function abortError(): LlmError {
  * RULE, now enforced by tests/unit/plugin-proxy.test.ts: a Capacitor plugin
  * proxy must NEVER be the resolution value of a promise. Wrap it in a plain
  * object whose methods close over the proxy.
+ *
+ * Exported (M-I9) so the ASR client shares this exact trap-safe wrapper for
+ * its multipart uploads instead of re-deriving the lesson the hard way.
  */
-async function nativeHttp(): Promise<null | {
+export async function nativeHttp(): Promise<null | {
   request: (o: unknown) => Promise<{ status: number; data: unknown }>;
 }> {
   try {
@@ -151,8 +154,14 @@ async function webFetch(req: HttpRequest, timeoutMs: number): Promise<HttpRespon
   }
 }
 
-/** Settle with the request, a timeout rejection, or an abort — whichever is first. */
-function raceDeadline<T>(p: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
+/**
+ * Settle with the request, a timeout rejection, or an abort — whichever is
+ * first. Exported (M-I9): every wrapper around an uninterruptible native
+ * promise must race a timer that actually REJECTS (constitution trap list —
+ * the old no-op setTimeout guard let a hung bridge call await forever). The
+ * ASR upload path reuses this instead of growing a second, subtly-wrong copy.
+ */
+export function raceDeadline<T>(p: Promise<T>, ms: number, signal?: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const done = () => {
       clearTimeout(timer);

@@ -10,6 +10,7 @@ import {
 import { requestPermission } from '../../lib/notify';
 import { repo } from '../../db/repo';
 import { visionEnabled, VISION_SETTING } from '../../ai/vision-context';
+import { isAsrReady } from '../../llm/asr';
 import type { NsfwTierVM } from '../../data/types';
 import './settings.css';
 import { Switch } from '../../components/Switch';
@@ -24,11 +25,15 @@ export function SettingsPage() {
   const [providerCount, setProviderCount] = useState(0);
   const [notifyOn, setNotifyOn] = useState<boolean | null>(null);
   const [backupHint, setBackupHint] = useState('');
+  const [asrHint, setAsrHint] = useState('');
 
   useEffect(() => {
     void repo.getSetting<NsfwTierVM>('nsfwGlobalTier').then((t) => setNsfw(t ?? 'off'));
     void repo.getProviders().then((p) => setProviderCount(p.filter((x) => x.enabled).length));
     void repo.getSetting<boolean>('notifyGranted').then((v) => setNotifyOn(v ?? false));
+    void isAsrReady()
+      .then((ok) => setAsrHint(ok ? '已配置' : '未配置'))
+      .catch(() => setAsrHint('未配置'));
     // Freshness nudge: data is the only asset this app has, and .aiwx is its
     // only escape hatch — surface staleness where the user will see it.
     void repo.getSetting<number>('lastBackupAt').then((t) => {
@@ -87,6 +92,11 @@ export function SettingsPage() {
           <div className="settings__row settings__row--divided" onClick={() => navigate('/settings/api')}>
             <span className="settings__label">API 与模型</span>
             <span className="settings__value">{providerCount > 0 ? `${providerCount} 个已启用` : '未配置'}</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div className="settings__row settings__row--divided" onClick={() => navigate('/settings/asr')}>
+            <span className="settings__label">语音输入（按住说话）</span>
+            <span className="settings__value">{asrHint}</span>
             <span className="settings__chevron">›</span>
           </div>
           <div className="settings__row settings__row--divided" onClick={toggleSound}>
