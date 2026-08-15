@@ -34,6 +34,7 @@ import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
 import { renderMessageBody } from '../../ai/render-msg';
 import { canRecall } from '../../lib/recall';
+import { gameSeed, rollDice, rollRps, type GameKind } from '../../lib/game';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
 import './chat.css';
 import '../settings/settings.css';
@@ -452,6 +453,101 @@ export function ChatPage() {
   };
 
   /**
+   * Ask the AI side to react to whatever is now newest in the thread —
+   * shared by every "user sent something that isn't text" path (photos,
+   * games, locations). One round for the whole batch.
+   */
+  const askReply = async () => {
+    const c = useAppStore.getState().conversationById(convId);
+    if (!c) return;
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+    if (c.type === 'group') {
+      const members: GroupMember[] = (c.memberIds ?? []).map((id) => {
+        const ct = contactById(id);
+        return { contactId: id, name: ct?.remark ?? ct?.name ?? id, persona: personaFor(id) };
+      });
+      await replyToLatestInGroup(c, members, globalTier, hooks, contactById);
+      return;
+    }
+    const peer = c.peerId ? contactById(c.peerId) : undefined;
+    const persona = c.peerId ? personaFor(c.peerId) : undefined;
+    if (peer && persona) await replyToLatest(convId, peer, persona, globalTier, hooks);
+  };
+
+  /**
+   * 表情游戏 (M-I13): send a dice / 猜拳 throw. The result is rolled ONCE,
+   * seeded from (convId, createdAt) — rule #4 — and stored in meta, so the
+   * face on screen, the projection the model reads, and any future replay
+   * all agree. She then gets a normal turn to react to it (接梗).
+   */
+  const sendGame = async (kind: GameKind) => {
+    if (!conv) return;
+    composer.closeAll();
+    const at = Date.now();
+    const result =
+      kind === 'dice' ? rollDice(gameSeed(convId, at, 'self')) : rollRps(gameSeed(convId, at, 'self'));
+    await appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'game',
+      content: '',
+      meta: { game: kind, result },
+      status: 'sent',
+      createdAt: at,
+    });
+    await askReply();
+  };
+
+  /** 位置 (M-I13): the + panel's map card — a place name is all it takes. */
+  const sendLocation = async (raw: string) => {
+    if (!conv) return;
+    const [name, address] = raw.split(/\||｜/).map((s) => s.trim());
+    await appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'location',
+      content: name.slice(0, 40),
+      meta: { name: name.slice(0, 40), ...(address ? { address: address.slice(0, 80) } : {}) },
+      status: 'sent',
+      createdAt: Date.now(),
+    });
+    await askReply();
+  };
+
+  /**
+   * 收藏 (M-I13): snapshot a message into the favorites store. A snapshot —
+   * not a reference — so the favorite survives the message (or the whole
+   * thread) being deleted, exactly like WeChat. Idempotent by id.
+   */
+  const favoriteMsg = async (m: MessageVM) => {
+    setMenu(null);
+    const senderName =
+      m.senderId === 'self'
+        ? '我'
+        : (senderFor(m.senderId)?.remark ?? contactById(m.senderId)?.name ?? '');
+    try {
+      await repo.putFavorite({
+        id: `fav_${m.convId}_${m.id}`,
+        msgId: m.id,
+        convId: m.convId,
+        senderId: m.senderId,
+        senderName,
+        convTitle: conv?.title ?? '',
+        type: m.type,
+        content: m.content,
+        ...(m.meta ? { meta: { ...m.meta } } : {}),
+        createdAt: m.createdAt,
+        favedAt: Date.now(),
+      });
+      showToast('已收藏');
+    } catch (e) {
+      logError('chat.favorite', e);
+      showToast('收藏失败');
+    }
+  };
+
+  /**
    * 相册发图：system file picker → import into the media library (photo pool,
    * 标签"聊天") → send as an image message whose content is the `idb:` ref.
    * Persisting through the library (not a one-off blob) keeps a single media
@@ -689,6 +785,11 @@ export function ChatPage() {
                   onMoneyTap={onMoneyTap}
                   onImageTap={onImageTap}
                   onMergedTap={(m) => navigate(`/merged/${convId}/${m.id}`)}
+                  onContactTap={(m) => {
+                    const cid = m.meta?.contactId as string | undefined;
+                    if (cid && contactById(cid)) navigate(`/contact/${cid}`);
+                    else showToast('该联系人已不存在');
+                  }}
                   onLongPress={(m, x, y) => {
                     if (selecting) return;
                     // Only open when there is at least one action — an empty
@@ -786,15 +887,23 @@ export function ChatPage() {
                 </button>
               </>
             )}
-          {['text', 'image', 'sticker'].includes(menu.msg.type) && !menu.msg.isRecalled && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                setForwarding(menu.msg);
-                setMenu(null);
-              }}
-            >
-              转发
+          {['text', 'image', 'sticker', 'location', 'file', 'link', 'contact_card'].includes(
+            menu.msg.type,
+          ) &&
+            !menu.msg.isRecalled && (
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setForwarding(menu.msg);
+                  setMenu(null);
+                }}
+              >
+                转发
+              </button>
+            )}
+          {menu.msg.type !== 'system' && !menu.msg.isRecalled && (
+            <button role="menuitem" onClick={() => void favoriteMsg(menu.msg)}>
+              收藏
             </button>
           )}
           <button
@@ -981,10 +1090,21 @@ export function ChatPage() {
             else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
             else if (key === 'call' && conv.type === 'single') navigate(`/call/${convId}`);
             else if (key === 'album') albumInputRef.current?.click();
+            else if (key === 'location') {
+              composer.closeAll();
+              void showPrompt({
+                title: '发送位置',
+                placeholder: '地名，如：星巴克(中山公园店)',
+              }).then((name) => {
+                if (name?.trim())
+                  void sendLocation(name.trim()).catch((err) => logError('chat.location', err));
+              });
+            } else if (key === 'fav') navigate('/favorites');
             else showToast('暂未开放');
           }}
           onEmoji={(e) => setDraft((d) => d + e)}
           onEmojiDelete={() => setDraft((d) => Array.from(d).slice(0, -1).join(''))}
+          onGame={(kind) => void sendGame(kind).catch((err) => logError('chat.game', err))}
         />
         <input
           ref={albumInputRef}

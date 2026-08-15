@@ -18,6 +18,8 @@
  * "what does the model actually see" question unit-testable, which it was not.
  */
 import type { MessageVM } from '../data/types';
+import { describeGame, type GameKind } from '../lib/game';
+import { humanSize } from './bubble-materialize';
 
 /** Integer fen → 人民币 string. Money is never rounded on the way to the model. */
 function yuan(fen: number): string {
@@ -159,6 +161,42 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
         .filter((s) => s !== ': ')
         .join('；');
       return `[转发了「${title}」共 ${items.length} 条${preview ? `，开头是：${preview}` : ''}]`;
+    }
+
+    case 'location': {
+      // The pin's NAME is the content; the address is detail. The model needs
+      // both to react like a person ("那家店我知道，在二楼").
+      const name = str(m.content) ?? str(meta.name) ?? '';
+      const address = str(meta.address);
+      return `[发了一个位置：${name || '未知地点'}${address ? `（${address}）` : ''}]`;
+    }
+
+    case 'contact_card': {
+      // The DISPLAY NAME only — `meta.contactId` is an internal id and leaking
+      // it invites the model to echo "ai_ada" into dialogue.
+      const name = str(meta.name) ?? str(m.content) ?? '';
+      return `[发了一张名片：${name || '某人'}]`;
+    }
+
+    case 'file': {
+      const fileName = str(meta.fileName) ?? str(m.content) ?? '';
+      const size = num(meta.sizeBytes);
+      return `[发了一个文件：${fileName || '未命名'}${size != null ? `，${humanSize(size)}` : ''}]`;
+    }
+
+    case 'link': {
+      const title = str(meta.title) ?? str(m.content) ?? '';
+      const summary = str(meta.summary);
+      return `[分享了一个链接：《${title || '无标题'}》${summary ? `，摘要：${summary}` : ''}]`;
+    }
+
+    case 'game': {
+      // The throw's RESULT is the whole point — "对方掷了骰子 3 点" is what lets
+      // her gloat or groan. The result is in meta (seeded at send time), never
+      // re-rolled here: this projection must agree with what the screen shows.
+      const game: GameKind = meta.game === 'rps' ? 'rps' : 'dice';
+      const result = num(meta.result) ?? 0;
+      return `[${describeGame(game, result)}]`;
     }
 
     default:

@@ -6,7 +6,7 @@
  * A JSON/schema parse failure is itself a refusal signal upstream (see router),
  * but here we always try to salvage a usable bubble.
  */
-import { BubbleSchema, type Bubble } from './types';
+import { BubbleSchema, BUBBLE_TYPES, type Bubble } from './types';
 
 const MAX_BUBBLES = 8;
 
@@ -32,6 +32,13 @@ function dropNulls(raw: unknown): unknown {
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (v !== null) out[k] = v;
   }
+  // A game bubble carries no content — the throw's result is decided by the
+  // engine's seeded roll, not by the model. `{"type":"dice"}` is therefore the
+  // CORRECT emission, and without this default it failed the schema and was
+  // repaired into a text bubble that printed the word "dice".
+  if ((out.type === 'dice' || out.type === 'rps') && typeof out.content !== 'string') {
+    out.content = '';
+  }
   return out;
 }
 
@@ -47,7 +54,7 @@ function coerceBubble(raw: unknown): Bubble | null {
       // the reason a voice message arrives as text.
       const t = o.type;
       const type =
-        typeof t === 'string' && ['text', 'voice', 'sticker', 'image', 'recall'].includes(t)
+        typeof t === 'string' && (BUBBLE_TYPES as readonly string[]).includes(t)
           ? (t as Bubble['type'])
           : 'text';
       return clampBubble({ type, content: content.trim() });

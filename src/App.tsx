@@ -37,6 +37,7 @@ import { StoryRunPage } from './features/story/StoryRunPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
 import { StatusPage } from './features/contacts/StatusPage';
 import { YearReportPage } from './features/me/YearReportPage';
+import { FavoritesPage } from './features/favorites/FavoritesPage';
 import { NewContactPage } from './features/contacts/NewContactPage';
 import { PersonaGeneratePage } from './features/contacts/PersonaGeneratePage';
 import { GroupCreatePage } from './features/contacts/GroupCreatePage';
@@ -160,6 +161,7 @@ export function App() {
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
               <Route path="/status/:contactId" element={<Push><StatusPage /></Push>} />
               <Route path="/report" element={<Push><YearReportPage /></Push>} />
+              <Route path="/favorites" element={<Push><FavoritesPage /></Push>} />
               <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />
               <Route path="/contact-new/ai" element={<Push><PersonaGeneratePage /></Push>} />
               <Route path="/group-new" element={<Push><GroupCreatePage /></Push>} />

@@ -39,6 +39,7 @@ const STORE_INTRODUCED_IN: Record<string, number> = {
   story_scripts: 6,
   story_saves: 6,
   worldbook: 8,
+  favorites: 9,
 };
 
 /**

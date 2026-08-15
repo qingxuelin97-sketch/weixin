@@ -23,6 +23,7 @@ import type {
   MomentCommentVM,
   MediaItemVM,
   ConvSummaryVM,
+  FavoriteVM,
 } from '../data/types';
 import {
   idbGetAll,
@@ -114,6 +115,12 @@ export interface Repo {
   putWorldbookEntry(e: import('../ai/worldbook').WorldbookEntry): Promise<void>;
   deleteWorldbookEntry(id: string): Promise<void>;
 
+  // favorites (收藏, M-I13). getFavorites filters hidden-conversation rows
+  // INSIDE the repo — the same rule as search(): a UI that forgets cannot leak.
+  getFavorites(): Promise<FavoriteVM[]>;
+  putFavorite(f: FavoriteVM): Promise<void>;
+  deleteFavorite(id: string): Promise<void>;
+
   // runtime media library (avatars + photo pools; see specs/data-schema.md)
   getMedia(kind?: MediaItemVM['kind']): Promise<MediaItemVM[]>;
   getMediaItem(id: string): Promise<MediaItemVM | undefined>;
@@ -165,6 +172,7 @@ export const DELETE_CONTACT_CASCADE: Record<string, 'cascade' | 'exempt'> = {
   story_scripts: 'exempt', // scripts reference roles, not contact ids
   story_saves: 'exempt',
   worldbook: 'cascade', // persona-scoped entries die with their contact
+  favorites: 'cascade', // snapshots FROM the contact (or their dead threads) go too
 };
 
 export class IdbRepo implements Repo {
@@ -266,6 +274,13 @@ export class IdbRepo implements Repo {
         (w.scope === 'persona' && w.scopeId === id) ||
         (w.scope === 'conv' && w.scopeId != null && deadIds.has(w.scopeId));
       if (dead) await idbDelete('worldbook', w.id);
+    }
+
+    // 7.7) Favorites: snapshots authored by the contact, or captured from a
+    //      thread that dies with them. Kept snapshots would keep rendering the
+    //      deleted person's name and words forever — the opposite of deletion.
+    for (const f of await idbGetAll<FavoriteVM>('favorites')) {
+      if (f.senderId === id || deadIds.has(f.convId)) await idbDelete('favorites', f.id);
     }
 
     // 8) Moments traces: their posts (with all social rows on them), and
@@ -499,6 +514,31 @@ export class IdbRepo implements Repo {
   }
   async deleteWorldbookEntry(id: string) {
     await idbDelete('worldbook', id);
+  }
+
+  /**
+   * Every favorite the USER may see, newest-favorited first.
+   *
+   * The hidden-conversation filter lives HERE, not in the page (CLAUDE.md
+   * §3.5): favorites are only ever created from visible chats, but a row that
+   * somehow references a hidden AI↔AI DM (a restore of a tampered backup, a
+   * future writer's bug) must still never surface — leaking one is an
+   * irreversible tell. A UI that forgets to filter cannot leak what the repo
+   * never returns.
+   */
+  async getFavorites() {
+    const [rows, convs] = await Promise.all([
+      idbGetAll<FavoriteVM>('favorites'),
+      this.getConversations(),
+    ]);
+    const hidden = new Set(convs.filter((c) => c.isHidden).map((c) => c.id));
+    return rows.filter((f) => !hidden.has(f.convId)).sort((a, b) => b.favedAt - a.favedAt);
+  }
+  async putFavorite(f: FavoriteVM) {
+    await idbPut('favorites', f);
+  }
+  async deleteFavorite(id: string) {
+    await idbDelete('favorites', id);
   }
 
   async getMedia(kind?: MediaItemVM['kind']) {

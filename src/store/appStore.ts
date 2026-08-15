@@ -645,6 +645,18 @@ export function previewOf(m: MessageVM, senderName?: string): string {
       return '[微信红包]';
     case 'transfer':
       return '[转账]';
+    case 'merged':
+      return '[聊天记录]';
+    case 'location':
+      return `[位置]${m.content ?? ''}`;
+    case 'contact_card':
+      return `[名片]${(m.meta?.name as string | undefined) ?? m.content ?? ''}`;
+    case 'file':
+      return `[文件]${(m.meta?.fileName as string | undefined) ?? m.content ?? ''}`;
+    case 'link':
+      return `[链接]${(m.meta?.title as string | undefined) ?? m.content ?? ''}`;
+    case 'game':
+      return '[动画表情]';
     default:
       return m.content ?? '';
   }

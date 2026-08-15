@@ -17,7 +17,8 @@ const DB_NAME = 'weixin-ai';
 // place either can come into being, and it only runs when the version rises.
 // Exported for tests/unit/idb-migration.test.ts, whose ledger machine-enforces
 // that rule — register new stores AND new indexes there when bumping.
-export const DB_VERSION = 8;
+// v9 adds favorites (收藏, M-I13).
+export const DB_VERSION = 9;
 
 export interface StoreDef {
   name: string;
@@ -88,6 +89,11 @@ export const STORES: StoreDef[] = [
   // layer. Separate from memory_facts on purpose: facts are extracted and
   // forgotten, entries are authored and eternal until edited.
   { name: 'worldbook', keyPath: 'id' },
+  // --- favorites (v9, M-I13) ---
+  // Snapshots of favorited messages. Keyed `fav_${convId}_${msgId}` so
+  // favoriting the same message twice is a natural upsert. Small store, read
+  // as a whole by the favorites page; no index needed at this scale.
+  { name: 'favorites', keyPath: 'id' },
 ];
 
 let dbPromise: Promise<IDBDatabase> | null = null;

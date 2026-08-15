@@ -45,7 +45,17 @@ export type MessageType =
   | 'call'
   | 'system'
   /** 合并转发 card (M-I6). meta: { title, items: Array<{ name, body, at }> } */
-  | 'merged';
+  | 'merged'
+  /** 位置卡片 (M-I13). content = 地名; meta: { name, address? }. 静态 SVG 简图，无外网瓦片。 */
+  | 'location'
+  /** 名片 (M-I13). meta: { contactId, name, wxid?, avatarColor?, avatarText? }; 点开进 /contact/:id。 */
+  | 'contact_card'
+  /** 假文件卡片 (M-I13). content = 文件名; meta: { fileName, sizeBytes, ext? }. 道具，不可下载。 */
+  | 'file'
+  /** 链接分享卡 (M-I13). content = 标题; meta: { title, summary? }. 缩略图为占位色块。 */
+  | 'link'
+  /** 表情游戏 (M-I13). meta: { game: 'dice' | 'rps', result }. 结果 seeded，落地即定，永不重掷。 */
+  | 'game';
 
 export interface MessageVM {
   id: number;
@@ -235,6 +245,31 @@ export interface MemoryFactVM {
    * longer happens").
    */
   storyTag?: string;
+}
+
+/**
+ * A favorited message (收藏, M-I13). A SNAPSHOT, not a reference: WeChat keeps
+ * a favorite alive after the source message is deleted or its thread is gone,
+ * so the row copies everything the favorites page renders. `msgId`/`convId`
+ * remain for provenance (and for the hidden-conversation filter in the repo).
+ */
+export interface FavoriteVM {
+  /** `fav_${convId}_${msgId}` — favoriting the same message twice is idempotent. */
+  id: string;
+  msgId: number;
+  convId: string;
+  senderId: string;
+  /** Display name at favoriting time (remark-aware). */
+  senderName: string;
+  /** Conversation title at favoriting time. */
+  convTitle: string;
+  type: MessageType;
+  content?: string;
+  meta?: Record<string, unknown>;
+  /** When the original message was sent. */
+  createdAt: number;
+  /** When the user favorited it (sort key of the favorites page). */
+  favedAt: number;
 }
 
 /** One rolling summary per conversation (conv_summaries store). */

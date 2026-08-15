@@ -9,9 +9,34 @@
  */
 import { z } from 'zod';
 
+/**
+ * Every bubble type a model may emit. ONE list — the schema below and the
+ * repair path in bubbles.ts both derive from it, so they cannot drift (they
+ * did once: a repaired bubble could only keep types from a hand-copied array).
+ *
+ * M-I13 additions map to rich message types at materialization time
+ * (src/ai/bubble-materialize.ts):
+ *   location → 'location' card    contact → 'contact_card' (name resolved)
+ *   file     → 'file' prop card   link    → 'link' share card
+ *   dice/rps → 'game' (seeded result — the model never picks its own number)
+ */
+export const BUBBLE_TYPES = [
+  'text',
+  'voice',
+  'sticker',
+  'image',
+  'recall',
+  'location',
+  'contact',
+  'file',
+  'link',
+  'dice',
+  'rps',
+] as const;
+
 /** One chat "bubble" — the atomic unit an AI turn is played back as. */
 export const BubbleSchema = z.object({
-  type: z.enum(['text', 'voice', 'sticker', 'image', 'recall']),
+  type: z.enum(BUBBLE_TYPES),
   content: z.string(),
   /** Emotion hint for TTS (voice bubbles). */
   emotion: z

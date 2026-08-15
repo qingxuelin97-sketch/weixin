@@ -6,6 +6,8 @@ import { fenToYuan } from '../../lib/money';
 import { playVoice } from '../../lib/voice';
 import { canReEdit } from '../../lib/recall';
 import { resolveImageRef } from '../../data/moments-images';
+import { RPS_GLYPHS, diceResult, rpsResult } from '../../lib/game';
+import { humanSize } from '../../ai/bubble-materialize';
 import type { MessageVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -20,6 +22,8 @@ interface Props {
   onImageTap?: (msg: MessageVM) => void;
   /** Tapping a 合并转发 card — the page opens the record viewer (M-I6). */
   onMergedTap?: (msg: MessageVM) => void;
+  /** Tapping a 名片 card — the page navigates to /contact/:id (M-I13). */
+  onContactTap?: (msg: MessageVM) => void;
   /** Long-press (or right-click) on the row — opens the recall/copy menu. */
   onLongPress?: (msg: MessageVM, x: number, y: number) => void;
   /** 重新编辑 on a recalled text message: refill the composer with the original. */
@@ -29,7 +33,7 @@ interface Props {
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onLongPress, onReEdit, onRetry }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onContactTap, onLongPress, onReEdit, onRetry }: Props) {
   // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
   // movement and had no fired guard, so releasing a long press on an image
   // ALSO opened the viewer. The hook fixes both.
@@ -108,7 +112,12 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
                       if (lp.fired()) return;
                       onMergedTap?.(msg);
                     }
-                  : undefined
+                  : msg.type === 'contact_card'
+                    ? () => {
+                        if (lp.fired()) return;
+                        onContactTap?.(msg);
+                      }
+                    : undefined
           }
         >
           <BubbleContent msg={msg} isSelf={isSelf} />
@@ -304,7 +313,201 @@ function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
       );
     }
 
+    case 'location': {
+      // 位置卡片 (M-I13): place name + a STATIC SVG mini-map. No network tiles
+      // — the map is a drawing, which also keeps it deterministic for goldens.
+      const name = msg.content ?? (msg.meta?.name as string | undefined) ?? '位置';
+      const address = msg.meta?.address as string | undefined;
+      return (
+        <div className={`bubble bubble--${side} loc-card`}>
+          <div className="loc-card__name">{name}</div>
+          <div className="loc-card__addr">{address ?? name}</div>
+          <div className="loc-card__map">
+            <MiniMap />
+          </div>
+        </div>
+      );
+    }
+
+    case 'contact_card': {
+      // 名片 (M-I13): tap-through to the contact's profile (the page owns the
+      // navigation). Avatar identity is SNAPSHOTTED in meta at send time, so
+      // the card still renders if the contact is later renamed or deleted.
+      const name = (msg.meta?.name as string | undefined) ?? msg.content ?? '';
+      const wxid = msg.meta?.wxid as string | undefined;
+      return (
+        <div className={`bubble bubble--${side} contact-card`}>
+          <div className="contact-card__main">
+            <Avatar
+              color={(msg.meta?.avatarColor as string | undefined) ?? 'var(--color-brand)'}
+              text={(msg.meta?.avatarText as string | undefined) ?? name.slice(0, 1)}
+              size={40}
+            />
+            <div className="contact-card__lines">
+              <div className="contact-card__name">{name}</div>
+              {wxid && <div className="contact-card__wxid">微信号：{wxid}</div>}
+            </div>
+          </div>
+          <div className="contact-card__footer">个人名片</div>
+        </div>
+      );
+    }
+
+    case 'file': {
+      // 假文件卡片 (M-I13): a prop, not a download — name / size / doc icon.
+      const fileName = (msg.meta?.fileName as string | undefined) ?? msg.content ?? '文件';
+      const sizeBytes = msg.meta?.sizeBytes as number | undefined;
+      const ext = ((msg.meta?.ext as string | undefined) ?? '').toUpperCase().slice(0, 4);
+      return (
+        <div className={`bubble bubble--${side} file-card`}>
+          <div className="file-card__main">
+            <div className="file-card__lines">
+              <div className="file-card__name">{fileName}</div>
+              {sizeBytes != null && <div className="file-card__size">{humanSize(sizeBytes)}</div>}
+            </div>
+            <div className="file-card__icon" aria-hidden>
+              <svg viewBox="0 0 30 36" width="30" height="36">
+                <path
+                  d="M4 2h15l7 7v25a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"
+                  fill="var(--color-cell-bg)"
+                  stroke="var(--color-hairline)"
+                  strokeWidth="1"
+                />
+                <path d="M19 2v7h7z" fill="var(--color-hairline)" />
+              </svg>
+              {ext && <span className="file-card__ext">{ext}</span>}
+            </div>
+          </div>
+          <div className="file-card__footer">微信文件</div>
+        </div>
+      );
+    }
+
+    case 'link': {
+      // 链接分享卡 (M-I13): title + summary + a placeholder thumb. The link is
+      // fictional — nothing to open, so the card is inert by design.
+      const title = (msg.meta?.title as string | undefined) ?? msg.content ?? '';
+      const summary = msg.meta?.summary as string | undefined;
+      return (
+        <div className={`bubble bubble--${side} link-card`}>
+          <div className="link-card__title">{title}</div>
+          <div className="link-card__row">
+            <div className="link-card__summary">{summary ?? title}</div>
+            <div className="link-card__thumb" aria-hidden>
+              <svg viewBox="0 0 20 20" width="18" height="18">
+                <path
+                  d="M8.5 11.5 11.5 8.5M7 13l-1.8 1.8a2.6 2.6 0 0 1-3.7-3.7L4.6 8a2.6 2.6 0 0 1 3.7 0M13 7l1.8-1.8a2.6 2.6 0 0 1 3.7 3.7L15.4 12a2.6 2.6 0 0 1-3.7 0"
+                  fill="none"
+                  stroke="var(--color-text-secondary)"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    case 'game': {
+      // 表情游戏 (M-I13): renders BARE like a sticker. The face shown is the
+      // stored seeded result — never re-rolled at render time.
+      if (msg.meta?.game === 'rps') {
+        return <div className="msg-game">{RPS_GLYPHS[rpsResult(msg.meta?.result)]}</div>;
+      }
+      return (
+        <div className="msg-game">
+          <DiceFace n={diceResult(msg.meta?.result)} />
+        </div>
+      );
+    }
+
     default:
       return <div className={`bubble bubble--${side}`}>{msg.content ?? `[${msg.type}]`}</div>;
   }
+}
+
+/** Pip layout per face, on a 3×3 grid (coordinates in a 48×48 viewBox). */
+const PIPS: Record<number, Array<[number, number]>> = {
+  1: [[24, 24]],
+  2: [
+    [14, 14],
+    [34, 34],
+  ],
+  3: [
+    [13, 13],
+    [24, 24],
+    [35, 35],
+  ],
+  4: [
+    [14, 14],
+    [34, 14],
+    [14, 34],
+    [34, 34],
+  ],
+  5: [
+    [13, 13],
+    [35, 13],
+    [24, 24],
+    [13, 35],
+    [35, 35],
+  ],
+  6: [
+    [14, 12],
+    [34, 12],
+    [14, 24],
+    [34, 24],
+    [14, 36],
+    [34, 36],
+  ],
+};
+
+/** A crisp SVG die face — emoji die glyphs render hairline-thin at 56px. */
+function DiceFace({ n }: { n: number }) {
+  const pips = PIPS[n] ?? PIPS[1];
+  return (
+    <svg viewBox="0 0 48 48" width="52" height="52" aria-label={`骰子 ${n} 点`}>
+      <rect
+        x="2"
+        y="2"
+        width="44"
+        height="44"
+        rx="9"
+        fill="var(--color-cell-bg)"
+        stroke="var(--color-hairline)"
+        strokeWidth="1.5"
+      />
+      {pips.map(([cx, cy], i) => (
+        <circle key={i} cx={cx} cy={cy} r="4.4" fill="var(--color-badge)" />
+      ))}
+    </svg>
+  );
+}
+
+/**
+ * The location card's static map: a hand-drawn block of "streets" with a pin.
+ * All strokes ride tokens, so it follows the theme like every other drawing.
+ */
+function MiniMap() {
+  return (
+    <svg viewBox="0 0 220 90" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" aria-hidden>
+      <rect x="0" y="0" width="220" height="90" fill="var(--color-page-bg)" />
+      {/* park block */}
+      <rect x="150" y="8" width="62" height="30" rx="4" fill="var(--color-brand)" opacity="0.18" />
+      {/* main roads */}
+      <path d="M0 30 H220 M0 66 H220 M46 0 V90 M118 0 V90 M178 0 V90" stroke="var(--color-cell-bg)" strokeWidth="8" fill="none" />
+      {/* minor roads */}
+      <path d="M0 48 H220 M84 0 V90 M148 30 V90" stroke="var(--color-cell-bg)" strokeWidth="3.5" fill="none" />
+      {/* road edges */}
+      <path d="M0 30 H220 M0 66 H220" stroke="var(--color-hairline)" strokeWidth="0.6" fill="none" />
+      {/* the pin, centered */}
+      <g transform="translate(110 28)">
+        <path
+          d="M0 26C0 26 -11 12.5 -11 5.5A11 11 0 0 1 11 5.5C11 12.5 0 26 0 26Z"
+          fill="var(--color-badge)"
+        />
+        <circle cx="0" cy="6" r="4.4" fill="var(--color-cell-bg)" />
+      </g>
+    </svg>
+  );
 }

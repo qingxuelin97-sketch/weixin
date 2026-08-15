@@ -28,6 +28,8 @@ import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
 import { collectTurnImages } from './vision-context';
 import { resolvePhotoBubble, photoDirective } from './photo-send';
+import { materializeBubble, type CardContact } from './bubble-materialize';
+import { gameDirective } from './game-react';
 import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
@@ -480,6 +482,11 @@ async function generateAndPlayInner(
     await isTtsAvailable().catch(() => false),
   );
   if (voiceLine) system += `\n\n${voiceLine}`;
+  // A live game at the tail (M-I13): when to throw back, when the results are
+  // in, and — for rps — that her own hand is unknown until it lands, so this
+  // turn must not comment on an outcome she cannot see.
+  const gameLine = gameDirective(recent, peer.id);
+  if (gameLine) system += `\n\n${gameLine}`;
 
   // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:
   // it has no symptom except a bigger bill and a persona diluted by context.
@@ -584,6 +591,31 @@ async function generateAndPlayInner(
 
       // Hide typing just before the last bubble lands.
       if (i === bubbles.length - 1) hooks.setTyping(convId, false);
+
+      // M-I13 rich types (location / contact / file / link / dice / rps) ride
+      // ONE shared materializer with the group engine. Everything seeded in it
+      // derives from (convId, at, i) — `at` is read once so the game seed and
+      // the stored createdAt are the same number (rule #4: replayable).
+      const at = hooks.now();
+      const rich = materializeBubble(b, {
+        convId,
+        at,
+        index: i,
+        resolveContact: cardResolver(contacts, peer.id),
+      });
+      if (rich) {
+        await hooks.appendMessage({
+          convId,
+          senderId: peer.id,
+          type: rich.type,
+          content: rich.content,
+          ...(rich.meta ? { meta: rich.meta } : {}),
+          status: 'sent',
+          createdAt: at,
+        });
+        playMessageSound(hooks.now());
+        continue;
+      }
 
       // A photo bubble names what she wants to show, not a file — resolve it
       // against the user's own pool. With no pool it becomes text: a broken
@@ -837,6 +869,38 @@ function bubbleToMsgType(b: Bubble): MessageVM['type'] {
   if (b.type === 'voice') return 'voice';
   if (b.type === 'image') return 'image';
   return 'text';
+}
+
+/**
+ * Name → contact resolver for `contact` bubbles (M-I13), shared with the
+ * group engine. Matches on remark first (what the user calls them), then the
+ * real name. `self` and the speaker are never card material: a card of the
+ * user is nonsense, and introducing yourself by card reads as a bug.
+ */
+export function cardResolver(
+  contacts: ContactVM[],
+  speakerId: string,
+): (name: string) => CardContact | undefined {
+  return (name: string) => {
+    const wanted = name.trim();
+    if (!wanted) return undefined;
+    const c = contacts.find(
+      (x) =>
+        x.id !== 'self' &&
+        x.id !== speakerId &&
+        x.type === 'ai' &&
+        (x.remark === wanted || x.name === wanted),
+    );
+    return c
+      ? {
+          contactId: c.id,
+          name: c.remark ?? c.name,
+          ...(c.wxid ? { wxid: c.wxid } : {}),
+          avatarColor: c.avatarColor,
+          avatarText: c.avatarText,
+        }
+      : undefined;
+  };
 }
 
 /** Rough voice length from text so the voice bar shows a plausible duration. */
