@@ -38,11 +38,27 @@
   line-height: 20px;
   text-align: center;
 }
-/* 朋友圈 row: friend's avatar thumbnail + red dot */
+/* 朋友圈 row: friend's avatar thumbnail + red dot (shown only with news, M-I15) */
 .discover__avatar-dot {
   position: relative;
-  width: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   height: 34px;
+}
+/* 「有新消息」缩略 beside the actor's face. Quiet — the dot carries the urgency. */
+.discover__news-hint {
+  font-size: 13px;
+  color: var(--color-text-placeholder);
+}
+/* Anchor box for the face + its corner dot. */
+.discover__avatar-wrap {
+  position: relative;
+  width: 26px;
+  height: 26px;
+}
+.discover__avatar-wrap .discover__mini-avatar {
+  inset: 0;
 }
 .discover__mini-avatar {
   position: absolute;

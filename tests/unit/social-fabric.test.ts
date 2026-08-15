@@ -339,6 +339,7 @@ function fakeDeps(opts: {
     runMomentPost: async () => {},
     runMomentLike: async () => {},
     runMomentComment: async () => {},
+    runMomentRepost: async () => {},
     runGift: async () => {},
     ringUser: () => true,
     chainHeartbeat: async () => {},

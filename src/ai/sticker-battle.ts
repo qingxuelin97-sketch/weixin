@@ -1,0 +1,91 @@
+/**
+ * 斗图 (M-I15): you send a sticker, she sometimes answers with one.
+ *
+ * Same design as voice-send.ts, and for the same reason: WHEN a person答图
+ * rather than打字 is entirely situational, and the base rules cannot encode
+ * it. The situations are well known to anyone who has been in a sticker war —
+ *
+ *   - a lone sticker sometimes gets a sticker back (the polite exchange);
+ *   - two in a row is an INVITATION: the reply probability jumps, because now
+ *     it's a game and dropping out loses;
+ *   - the streak can't run forever — someone always types "行了行了" and the
+ *     war ends, so the urge decays after a few rounds.
+ *
+ * Pure and seeded (constitution rule #4): the same message id always produces
+ * the same decision, so replays and tests agree. Zero LLM cost — a sticker
+ * answer is picked from her collected pool (sticker-taste) or the shared
+ * vocab, not generated.
+ */
+import { seededRng } from '../lib/money';
+import { STICKER_VOCAB } from '../data/stickers';
+
+export interface BattleContext {
+  /** Stable per-turn seed — use the persisted message id. */
+  seed: string;
+  /** How many consecutive sticker messages ended the transcript (yours+hers), ≥1. */
+  streak: number;
+}
+
+/**
+ * How likely she answers this sticker with a sticker, 0..1.
+ *
+ * One sticker: possible. A budding war (streak 2–4): likely — refusing to
+ * play reads colder than playing. Past that the urge falls off; sticker wars
+ * end because someone gets bored, and hers should too.
+ */
+export function battleUrge(streak: number): number {
+  if (streak <= 0) return 0;
+  if (streak === 1) return 0.35;
+  if (streak <= 4) return 0.65;
+  return Math.max(0.1, 0.65 - (streak - 4) * 0.2);
+}
+
+/** Seeded gate over the urge. */
+export function wantsBattle(ctx: BattleContext): boolean {
+  return seededRng(`stkbattle:${ctx.seed}`)() < battleUrge(ctx.streak);
+}
+
+export interface BattleReply {
+  /** What she sends: a custom ref (`idb:…`) or a vocab label (「捂脸」…). */
+  content: string;
+  /** Human reaction delay — finding the right sticker takes a beat. */
+  delayMs: number;
+}
+
+/**
+ * Her move in the sticker war, or null if she lets this one pass.
+ *
+ * Prefers her collected customs (using YOUR sticker back is the best move in
+ * any sticker war), falls back to the shared vocab. Never echoes the sticker
+ * you just sent — replaying the same card is a misfire, not a comeback.
+ */
+export function battleReply(
+  ctx: BattleContext,
+  customPool: readonly string[],
+  justSent?: string,
+): BattleReply | null {
+  const rng = seededRng(`stkbattle:${ctx.seed}`);
+  if (rng() >= battleUrge(ctx.streak)) return null;
+  const customs = customPool.filter((r) => r !== justSent);
+  const labels = Object.keys(STICKER_VOCAB).filter((l) => l !== justSent);
+  // 70% reach for a custom when she has any — that's the whole point of
+  // collecting them — otherwise the vocab carries the round.
+  const useCustom = customs.length > 0 && (labels.length === 0 || rng() < 0.7);
+  const pool = useCustom ? customs : labels;
+  if (pool.length === 0) return null;
+  const content = pool[Math.floor(rng() * pool.length)];
+  return { content, delayMs: Math.round(800 + rng() * 1700) };
+}
+
+/**
+ * Trailing sticker streak of a transcript (both sides count — a war is a
+ * dialogue). Callers pass the tail message types, newest last.
+ */
+export function stickerStreak(tailTypes: readonly string[]): number {
+  let n = 0;
+  for (let i = tailTypes.length - 1; i >= 0; i--) {
+    if (tailTypes[i] !== 'sticker') break;
+    n++;
+  }
+  return n;
+}

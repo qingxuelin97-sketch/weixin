@@ -11,6 +11,7 @@ import {
   handleAgentDm,
   handleMomentPost,
   handleMomentComment,
+  handleMomentRepost,
   dmPlanFrom,
   type HandlerDeps,
 } from '../../src/ai/handlers';
@@ -117,6 +118,7 @@ function harness(over: Partial<HandlerDeps> = {}): Harness {
     runMomentLike: async (m, c) => void calls.push(`like:${m}:${c}`),
     runMomentComment: async (m, c, _p, authorName) =>
       void calls.push(`comment:${m}:${c.id}:${authorName}`),
+    runMomentRepost: async (m, c) => void calls.push(`repost:${m}:${c.id}`),
     runGift: async (p) => void calls.push(`gift:${p.kind}:${p.contactId}:${p.amountFen}`),
     ringUser: (convId, contactId) => {
       calls.push(`ring:${convId}:${contactId}`);
@@ -354,6 +356,18 @@ describe('moments', () => {
   it('drops a comment on a moment that no longer exists', async () => {
     const { deps, calls } = harness({ getMoment: async () => undefined });
     await handleMomentComment(deps, { momentId: 'gone', contactId: 'ai_lin' });
+    expect(calls).toEqual([]);
+  });
+
+  it('delegates a repost with the resolved reposter (M-I15)', async () => {
+    const { deps, calls } = harness();
+    await handleMomentRepost(deps, { momentId: 'mo1', contactId: 'ai_lin' });
+    expect(calls).toEqual(['repost:mo1:ai_lin']);
+  });
+
+  it('drops a repost whose reposter no longer exists', async () => {
+    const { deps, calls } = harness();
+    await handleMomentRepost(deps, { momentId: 'mo1', contactId: 'ghost' });
     expect(calls).toEqual([]);
   });
 });

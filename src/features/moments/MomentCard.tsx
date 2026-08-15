@@ -4,12 +4,20 @@
  *
  * The "··" button toggles a small dark capsule with 赞 / 评论 — WeChat slides it
  * out from the right of the button, anchored to the timestamp row.
+ *
+ * M-I15 additions:
+ *  - #话题# runs render as tappable links into the topic page;
+ *  - a repost renders the ROOT original as a grey quote card (snapshot fields,
+ *    so a deleted original degrades gracefully instead of breaking);
+ *  - the author name is tappable (→ 个人相册页) when the parent wires it;
+ *  - the capsule gains 转发 on posts the parent allows reposting.
  */
 import { useState } from 'react';
 import { Avatar } from '../../components/Avatar';
 import { ImageViewer } from '../../components/ImageViewer';
 import { resolveImageRef } from '../../data/moments-images';
 import { momentTimestamp } from '../../lib/time';
+import { topicSegments } from '../../lib/topics';
 import type { MomentVM, MomentLikeVM, MomentCommentVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -30,6 +38,12 @@ interface Props {
   onDeleteComment?: (c: MomentCommentVM) => void;
   /** 删除 link on one's own post (M-I6). Absent on others' posts. */
   onDelete?: () => void;
+  /** 转发 in the capsule (M-I15). Absent = not repostable from this surface. */
+  onRepost?: () => void;
+  /** Tap a #话题# run (M-I15). Absent = topics render as plain text. */
+  onTopicTap?: (tag: string) => void;
+  /** Tap the author's name (M-I15 → 个人相册页). */
+  onAuthorTap?: () => void;
 }
 
 /**
@@ -40,6 +54,36 @@ function gridClass(n: number): string {
   if (n === 1) return 'moment__images moment__images--single';
   if (n === 4) return 'moment__images moment__images--quad';
   return 'moment__images moment__images--grid';
+}
+
+/** Post text with #话题# runs linked. Lossless for the prose in between. */
+function MomentText({ text, onTopicTap }: { text: string; onTopicTap?: (tag: string) => void }) {
+  const segs = topicSegments(text);
+  return (
+    <p className="moment__text">
+      {segs.map((s, i) =>
+        s.kind === 'topic' ? (
+          <span
+            key={i}
+            className="moment__topic"
+            role={onTopicTap ? 'link' : undefined}
+            onClick={
+              onTopicTap
+                ? (e) => {
+                    e.stopPropagation();
+                    onTopicTap(s.value);
+                  }
+                : undefined
+            }
+          >
+            #{s.value}#
+          </span>
+        ) : (
+          <span key={i}>{s.value}</span>
+        ),
+      )}
+    </p>
+  );
 }
 
 export function MomentCard({
@@ -55,6 +99,9 @@ export function MomentCard({
   onReplyComment,
   onDeleteComment,
   onDelete,
+  onRepost,
+  onTopicTap,
+  onAuthorTap,
 }: Props) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -74,9 +121,33 @@ export function MomentCard({
         size={40}
       />
       <div className="moment__body">
-        <div className="moment__author">{author ? (author.remark ?? author.name) : '未知'}</div>
+        <div
+          className="moment__author"
+          role={onAuthorTap ? 'link' : undefined}
+          onClick={onAuthorTap}
+        >
+          {author ? (author.remark ?? author.name) : '未知'}
+        </div>
 
-        {moment.text && <p className="moment__text">{moment.text}</p>}
+        {moment.text && <MomentText text={moment.text} onTopicTap={onTopicTap} />}
+
+        {/* 转发卡片 (M-I15): the quoted ROOT original. Rendered from the row's
+            own snapshot fields — never from any conversation — so the card
+            keeps working after the original is deleted, and no hidden-surface
+            content can reach it (see moment-repost.ts). */}
+        {moment.repostOf && (
+          <div className="moment__repost">
+            {moment.repostAuthorId ? (
+              <>
+                <span className="moment__repost-author">{nameOf(moment.repostAuthorId)}</span>
+                <span>：{moment.repostExcerpt ?? '[动态]'}</span>
+              </>
+            ) : (
+              // Original author deleted — the cascade scrubbed the snapshot.
+              <span>{moment.repostExcerpt ?? '原内容已删除'}</span>
+            )}
+          </div>
+        )}
 
         {imgs.length > 0 && (
           <div className={gridClass(imgs.length)}>
@@ -130,6 +201,19 @@ export function MomentCard({
                 >
                   评论
                 </button>
+                {onRepost && (
+                  <>
+                    <span className="moment__capsule-div" />
+                    <button
+                      onClick={() => {
+                        onRepost();
+                        setActionsOpen(false);
+                      }}
+                    >
+                      转发
+                    </button>
+                  </>
+                )}
               </div>
             )}
             <button

@@ -5,16 +5,26 @@
  * as the cover scrolls away — that transition is one of the most recognizable
  * things about this screen, so it is driven by real scroll position rather than
  * a fixed threshold guess.
+ *
+ * M-I15: the cover can be a photo from the media library (settings KV
+ * `momentsCoverRef`), a seeded low-frequency「XX 刚看过你的朋友圈」hint row
+ * appears under the cover, entering the page clears the Discover-tab news
+ * badge, and cards gain 转发 / #话题# / author-album navigation.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMedia } from '../../components/useMedia';
 import { useAppStore } from '../../store/appStore';
 import { Avatar } from '../../components/Avatar';
+import { Sheet } from '../../components/Sheet';
 import { IconBack } from '../../components/icons';
 import { MomentCard } from './MomentCard';
 import { showConfirm } from '../../components/dialog';
 import { useNow } from '../../lib/useNow';
+import { repo } from '../../db/repo';
+import { listRegisteredMedia } from '../../data/media-registry';
+import { resolveImageRef } from '../../data/moments-images';
+import { recentVisitor, visitorLine } from '../../ai/moments-visitors';
 import type { MomentCommentVM } from '../../data/types';
 import './moments.css';
 
@@ -22,6 +32,9 @@ import './moments.css';
 const COVER_H = 260;
 /** Cards mounted up front, and the step added on each scroll toward the end. */
 const INITIAL_CARDS = 12;
+
+/** Settings row holding the cover's media ref (`idb:<id>`). Absent = gradient. */
+export const COVER_SETTING_KEY = 'momentsCoverRef';
 
 export function MomentsPage() {
   const navigate = useNavigate();
@@ -36,6 +49,7 @@ export function MomentsPage() {
   const likesFor = useAppStore((s) => s.likesFor);
   const commentsFor = useAppStore((s) => s.commentsFor);
   const toggleLike = useAppStore((s) => s.toggleLike);
+  const markMomentsSeen = useAppStore((s) => s.markMomentsSeen);
 
   // Photos are materialized on demand (M-G1): ask for the ones this feed
   // draws, and re-render when they arrive. Priming the whole library here
@@ -48,6 +62,27 @@ export function MomentsPage() {
     void loadMoments();
   }, [loadMoments]);
 
+  // Looking at the feed consumes the news badge (M-I15). On mount, not on
+  // every render — the watermark is "when you last opened the page".
+  useEffect(() => {
+    void markMomentsSeen(Date.now()).catch(() => {});
+  }, [markMomentsSeen]);
+
+  // 封面 (M-I15): user-chosen library photo behind the name/avatar corner.
+  const [coverRef, setCoverRef] = useState<string | undefined>();
+  const [coverPicker, setCoverPicker] = useState(false);
+  useEffect(() => {
+    void repo
+      .getSetting<string>(COVER_SETTING_KEY)
+      .then((r) => setCoverRef(r || undefined))
+      .catch(() => {});
+  }, []);
+  const pickCover = async (ref: string | undefined) => {
+    setCoverPicker(false);
+    setCoverRef(ref);
+    await repo.putSetting(COVER_SETTING_KEY, ref ?? '');
+  };
+
   const self = contacts.find((c) => c.type === 'self');
   // One index, not a linear scan per call. `nameOf` is invoked for every like
   // and every comment on every card, so `contacts.find` made drawing the feed
@@ -58,6 +93,16 @@ export function MomentsPage() {
     const c = byId.get(id);
     return c ? (c.remark ?? c.name) : id;
   };
+
+  // 模拟访客感 (M-I15): seeded, low-frequency, minute-tick driven — pure of
+  // the wall clock (constitution #4), so the same hour names the same visitor.
+  const visitor = useMemo(() => {
+    const ids = contacts
+      .filter((c) => c.type === 'ai')
+      .map((c) => c.id)
+      .sort();
+    return recentVisitor(ids, now);
+  }, [contacts, now]);
 
   /**
    * Cards actually mounted, grown as the user scrolls.
@@ -71,9 +116,12 @@ export function MomentsPage() {
   const [shown, setShown] = useState(INITIAL_CARDS);
   const visible = useMemo(() => moments.slice(0, shown), [moments, shown]);
 
-  // Only what is mounted: priming the whole page's images would exceed the
-  // object-URL cap and make the registry evict what it just materialized.
-  useMedia(useMemo(() => visible.flatMap((m) => m.imageRefs ?? []), [visible]));
+  // Only what is mounted (+ the cover): priming the whole page's images would
+  // exceed the object-URL cap and make the registry evict what it just made.
+  useMedia(
+    useMemo(() => [coverRef, ...visible.flatMap((m) => m.imageRefs ?? [])], [coverRef, visible]),
+  );
+  const coverUrl = coverRef ? resolveImageRef(coverRef).url : undefined;
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -108,6 +156,17 @@ export function MomentsPage() {
     setReplyTo(null);
   };
 
+  const coverChoices = listRegisteredMedia('photo');
+  // Prime the picker grid only while it is open — the sheet shows the whole
+  // photo library, which must not ride along on every ordinary feed visit.
+  useMedia(
+    useMemo(
+      () => (coverPicker ? coverChoices.map((c) => `idb:${c.id}`) : []),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [coverPicker, coverChoices.length],
+    ),
+  );
+
   return (
     <div className="moments">
       <header
@@ -132,12 +191,27 @@ export function MomentsPage() {
       </header>
 
       <div className="moments__scroll" ref={scrollRef} onScroll={onScroll}>
-        <div className="moments__cover">
+        <div
+          className="moments__cover"
+          role="button"
+          aria-label="更换封面"
+          onClick={() => setCoverPicker(true)}
+        >
+          {coverUrl && <img className="moments__cover-img" src={coverUrl} alt="" />}
           <div className="moments__self">
             <span className="moments__self-name">{self ? (self.remark ?? self.name) : '我'}</span>
             <Avatar text={self?.avatarText ?? '我'} color={self?.avatarColor ?? 'var(--color-text-secondary)'} imageRef={self?.avatarRef} size={64} />
           </div>
         </div>
+
+        {visitor && (
+          <div className="moments__visitor">
+            <span className="moments__visitor-eye" aria-hidden>
+              👀
+            </span>
+            {visitorLine(nameOf(visitor.contactId))}
+          </div>
+        )}
 
         {moments.length === 0 ? (
           <p className="moments__empty">还没有动态。点右上角相机发一条吧。</p>
@@ -174,6 +248,16 @@ export function MomentsPage() {
                         if (ok) void deleteComment(m.id, c.id);
                       });
                     }}
+                    // 转发 (M-I15): others' posts only — reposting your own is
+                    // a gesture WeChat doesn't offer, and the builder refuses
+                    // it anyway. The page re-reads the source from storage.
+                    onRepost={
+                      m.authorId !== 'self'
+                        ? () => navigate(`/moments/repost/${m.id}`)
+                        : undefined
+                    }
+                    onTopicTap={(tag) => navigate(`/moments/topic/${encodeURIComponent(tag)}`)}
+                    onAuthorTap={() => navigate(`/moments/album/${m.authorId}`)}
                     onDelete={
                       m.authorId === 'self'
                         ? () => {
@@ -207,6 +291,34 @@ export function MomentsPage() {
           </div>
         )}
       </div>
+
+      {/* 封面选择 (M-I15): the photo library, plus a reset row. */}
+      {coverPicker && (
+        <Sheet open onClose={() => setCoverPicker(false)} title="更换朋友圈封面">
+          {coverChoices.length === 0 ? (
+            <p className="moments__cover-empty">
+              素材库还没有照片。到 设置 → 素材库 导入后再来选。
+            </p>
+          ) : (
+            <div className="moments__cover-grid">
+              {coverChoices.map((c) => (
+                <button
+                  key={c.id}
+                  className={`moments__cover-choice${coverRef === `idb:${c.id}` ? ' moments__cover-choice--on' : ''}`}
+                  onClick={() => void pickCover(`idb:${c.id}`)}
+                >
+                  {c.url && <img src={c.url} alt="" loading="lazy" />}
+                </button>
+              ))}
+            </div>
+          )}
+          {coverRef && (
+            <button className="moments__cover-reset" onClick={() => void pickCover(undefined)}>
+              恢复默认封面
+            </button>
+          )}
+        </Sheet>
+      )}
     </div>
   );
 }

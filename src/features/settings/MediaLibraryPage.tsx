@@ -21,6 +21,8 @@ import './settings.css';
 
 type Kind = MediaItemVM['kind'];
 
+const KIND_LABEL: Record<Kind, string> = { avatar: '头像', photo: '照片', sticker: '表情' };
+
 export function MediaLibraryPage() {
   const [kind, setKind] = useState<Kind>('avatar');
   const [tagsInput, setTagsInput] = useState('');
@@ -99,13 +101,13 @@ export function MediaLibraryPage() {
       <div className="page-body settings">
         <div className="settings__group">
           <div className="segmented">
-            {(['avatar', 'photo'] as Kind[]).map((k) => (
+            {(['avatar', 'photo', 'sticker'] as Kind[]).map((k) => (
               <div
                 key={k}
                 className={`segmented__item${kind === k ? ' segmented__item--active' : ''}`}
                 onClick={() => setKind(k)}
               >
-                {k === 'avatar' ? `头像（${listRegisteredMedia('avatar').length}）` : `照片（${listRegisteredMedia('photo').length}）`}
+                {`${KIND_LABEL[k]}（${listRegisteredMedia(k).length}）`}
               </div>
             ))}
           </div>
@@ -125,7 +127,9 @@ export function MediaLibraryPage() {
             <span className="field__hint">
               {kind === 'avatar'
                 ? '头像库：在人设编辑页/个人资料页里选用。建议方图。'
-                : '照片池：AI 发朋友圈/聊天配图从这里抽取；标签对应人设编辑页的「配图标签」。'}
+                : kind === 'photo'
+                  ? '照片池：AI 发朋友圈/聊天配图从这里抽取；标签对应人设编辑页的「配图标签」。'
+                  : '自定义表情（M-I15）：聊天表情面板「我的表情」区从这里读取。你发过的表情，AI 会偷偷收藏并偶尔用回给你。'}
             </span>
           </div>
           <button className="btn-primary" onClick={() => fileRef.current?.click()}>

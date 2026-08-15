@@ -173,11 +173,22 @@ function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
     case 'text':
       return <div className={`bubble bubble--${side}`}>{msg.content}</div>;
 
-    case 'sticker':
+    case 'sticker': {
+      // Custom sticker (M-I15): content is a media ref, drawn as an image.
+      // Falls back to the placeholder path below while the blob materializes.
+      if (msg.content?.startsWith('idb:')) {
+        const { url, background } = resolveImageRef(msg.content);
+        return url ? (
+          <img className="msg-sticker-img" src={url} alt="" loading="lazy" />
+        ) : (
+          <div className="msg-sticker-img" style={{ background }} />
+        );
+      }
       // Stickers render bare (no bubble background), like real WeChat.
       // Through the vocabulary: `content` is a semantic label, and printing it
       // raw rendered words like 「开心」 at 64px where a sticker should be.
       return <div className="msg-sticker">{stickerGlyph(msg.content)}</div>;
+    }
 
     case 'image': {
       // content is an image ref (idb:/img:/ph:) — schema had the type since M1,

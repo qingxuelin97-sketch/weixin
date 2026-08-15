@@ -33,7 +33,13 @@ import { moodOf, moodParams } from '../lib/mood';
 import { affectFor, recordAffect } from '../lib/affect';
 import { noteDrift, driftedPersona } from '../ai/drift';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
-import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
+import {
+  runMomentPost,
+  runMomentLike,
+  runMomentComment,
+  runMomentRepost,
+  scheduleNextMoment,
+} from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
 import { chainNextBeat, runStoryBeat, seedBuiltinScripts } from '../ai/story-service';
@@ -50,6 +56,7 @@ import {
   handleHeartbeat,
   handleAgentDm,
   handleMomentPost,
+  handleMomentRepost,
   handleAiMoney,
   handleAiCall,
   handleJointPlan,
@@ -164,6 +171,10 @@ export function useSchedulerRuntime(enabled: boolean): void {
         runMomentLike(momentId, contactId, momentsHooks, at),
       runMomentComment: (momentId, commenter, persona, authorName, at) =>
         runMomentComment(momentId, commenter, persona, authorName, momentsHooks, at),
+      runMomentRepost: async (momentId, reposter, persona, at) => {
+        const s = useAppStore.getState();
+        await runMomentRepost(momentId, reposter, persona, s.contacts, s.personaFor, momentsHooks, at);
+      },
 
       chainHeartbeat: async (persona, convId, lastMsgAt) => {
         // Anti-spam bookkeeping: two unanswered reaches in a row → 24h cooldown.
@@ -207,6 +218,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerHandler('mem_extract', (p) => handleMemExtract(deps, p));
     registerHandler('moment_like', (p) => handleMomentLike(deps, p));
     registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
+    registerHandler('moment_repost', (p) => handleMomentRepost(deps, p));
     registerHandler('ai_money', (p) => handleAiMoney(deps, p));
     registerHandler('ai_call', (p) => handleAiCall(deps, p));
     // Social fabric (M-I3): hatched by a completed agent DM, fired here.
@@ -688,7 +700,16 @@ async function runForegroundPass(): Promise<void> {
     // `duePending(MAX_SAFE_INTEGER)`, whose upper-bound key range then covered
     // the entire index: v6 added `byFireAt` precisely to stop this read being
     // a full scan, and that one argument handed the optimisation straight back.
-    await syncNotifications(await pendingActions(), s.contacts, now);
+    //
+    // 朋友圈赞评通知 (M-I15): the allowlist of the user's own posts rides in so
+    // queued likes/comments on THEM notify too — built from stored rows here,
+    // the one place with feed context, so notify-service itself stays pure.
+    const selfMomentIds = new Set(
+      (await repo.getMoments({ limit: 60 }).catch(() => []))
+        .filter((m) => m.authorId === 'self')
+        .map((m) => m.id),
+    );
+    await syncNotifications(await pendingActions(), s.contacts, now, { selfMomentIds });
   } catch {
     /* notifications are a bonus; never let them break the foreground path */
   }

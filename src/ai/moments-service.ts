@@ -10,11 +10,14 @@ import type { MomentVM, MomentLikeVM, MomentCommentVM, ContactVM, PersonaVM } fr
 import { enqueue } from './scheduler';
 import {
   planReactions,
+  planRepost,
   collectReactors,
   nextMomentAt,
   generateMomentPost,
   generateMomentComment,
+  generateRepostText,
 } from './moments-engine';
+import { repostMoment } from './moment-repost';
 import { repo } from '../db/repo';
 
 export interface MomentsHooks {
@@ -46,6 +49,18 @@ export async function scheduleReactionsFor(
       now,
       // Stable id: re-running the planner for the same post can't double-queue.
       id: `${p.kind}_${moment.id}_${p.contactId}`,
+    });
+  }
+  // 转发 (M-I15): rarely, one close friend reposts a USER post. The planner
+  // refuses everything else, so no queue row exists to go wrong for AI posts.
+  const rp = planRepost(moment.id, moment.authorId, moment.createdAt, reactors, 'react');
+  if (rp) {
+    await enqueue({
+      kind: 'moment_repost',
+      fireAt: rp.at,
+      payload: { momentId: moment.id, contactId: rp.contactId },
+      now,
+      id: `moment_repost_${moment.id}_${rp.contactId}`,
     });
   }
 }
@@ -113,6 +128,38 @@ export async function runMomentLike(
     contactId,
     createdAt: at ?? hooks.now(),
   });
+}
+
+/**
+ * Execute a due `moment_repost` (M-I15): an AI puts the user's post on her own
+ * wall with a one-line caption.
+ *
+ * The quote goes through `repostMoment`, which re-reads the source from
+ * storage by id — the same leak rule as the user path, enforced twice. A
+ * source deleted since planning publishes nothing, silently. The new post
+ * draws its own likes/comments; it can never draw another repost, because
+ * `planRepost` only ever fires on posts authored by 'self'.
+ */
+export async function runMomentRepost(
+  momentId: string,
+  reposter: ContactVM,
+  persona: PersonaVM,
+  contacts: ContactVM[],
+  personaFor: (id: string) => PersonaVM | undefined,
+  hooks: MomentsHooks,
+  at?: number,
+): Promise<void> {
+  const source = await repo.getMoment(momentId);
+  if (!source) return; // post deleted before the repost landed
+  const stamp = at ?? hooks.now();
+  const text = await generateRepostText(persona, reposter, source, stamp);
+  const posted = await repostMoment(
+    momentId,
+    { authorId: reposter.id, text, now: stamp },
+    { getMoment: (id) => repo.getMoment(id), addMoment: hooks.addMoment },
+  );
+  if (!posted) return;
+  await scheduleReactionsFor(posted, contacts, personaFor, hooks.now());
 }
 
 /** Execute a due `moment_comment`. */

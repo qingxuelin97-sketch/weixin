@@ -18,9 +18,21 @@ const PLUS_ITEMS = [
   { key: 'fav', label: '收藏', color: 'var(--color-brand)' },
 ];
 
+/** A custom sticker tile the「我的表情」strip renders. */
+export interface CustomStickerVM {
+  /** Media-library id; sending uses the `idb:<id>` ref. */
+  id: string;
+  /** Live object URL, or '' while the blob is still materializing. */
+  url: string;
+}
+
 /**
  * The emoji / + panel. Its height is locked to the measured keyboard height by
  * the composer hook so swapping keyboard⇄panel never shifts the layout.
+ *
+ * M-I15: the emoji page grows a「我的表情」section — user-imported sticker
+ * images that SEND on tap (they are messages, not draft characters, which is
+ * why they take a separate callback from `onEmoji`).
  */
 export function ComposerPanels({
   mode,
@@ -29,6 +41,9 @@ export function ComposerPanels({
   onEmoji,
   onEmojiDelete,
   disabledKeys,
+  stickers,
+  onSticker,
+  onManageStickers,
 }: {
   mode: ComposerMode;
   height: number;
@@ -40,20 +55,54 @@ export function ComposerPanels({
   onEmojiDelete?: () => void;
   /** + panel tiles rendered greyed-out (e.g. 'transfer' in a group chat). */
   disabledKeys?: string[];
+  /** 我的表情 (M-I15): custom stickers from the media library. */
+  stickers?: CustomStickerVM[];
+  /** A custom sticker tapped — sends immediately as a sticker message. */
+  onSticker?: (ref: string) => void;
+  /** The「+」tile at the strip's end — jumps to the media library to import. */
+  onManageStickers?: () => void;
 }) {
   if (mode !== 'emoji' && mode !== 'plus') return null;
   return (
     <div className="composer-panel" style={{ height }}>
       {mode === 'emoji' ? (
-        <div className="emoji-grid">
-          {EMOJIS.map((e, i) => (
-            <button key={i} className="emoji-grid__item" onClick={() => onEmoji?.(e)}>
-              {e}
+        <div className="composer-panel__scroll">
+          <div className="emoji-grid">
+            {EMOJIS.map((e, i) => (
+              <button key={i} className="emoji-grid__item" onClick={() => onEmoji?.(e)}>
+                {e}
+              </button>
+            ))}
+            <button className="emoji-grid__item emoji-grid__del" aria-label="删除" onClick={() => onEmojiDelete?.()}>
+              ⌫
             </button>
-          ))}
-          <button className="emoji-grid__item emoji-grid__del" aria-label="删除" onClick={() => onEmojiDelete?.()}>
-            ⌫
-          </button>
+          </div>
+          {onSticker && (
+            <>
+              <div className="sticker-strip__label">我的表情</div>
+              <div className="sticker-strip">
+                {(stickers ?? []).map((s) => (
+                  <button
+                    key={s.id}
+                    className="sticker-strip__item"
+                    aria-label="发送表情"
+                    onClick={() => onSticker(`idb:${s.id}`)}
+                  >
+                    {s.url && <img src={s.url} alt="" loading="lazy" />}
+                  </button>
+                ))}
+                {onManageStickers && (
+                  <button
+                    className="sticker-strip__item sticker-strip__add"
+                    aria-label="添加表情"
+                    onClick={onManageStickers}
+                  >
+                    ＋
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       ) : (
         <div className="plus-grid">

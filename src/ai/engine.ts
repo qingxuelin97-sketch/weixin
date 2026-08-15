@@ -35,6 +35,7 @@ import { arcAwareness, freshArc, arcOpener, type PeerRef } from './rel-arcs';
 import { ownLines, styleNote, scrubBubbles } from './anti-ai';
 import { noteDrift } from './drift';
 import { voiceDirective } from './voice-send';
+import { agentStickerPool, maybeAgentSticker } from './sticker-taste';
 import { refreshConvState, convStateDirective } from './conv-state';
 import { worldLinesFor } from './worldbook';
 import {
@@ -544,6 +545,15 @@ async function generateAndPlayInner(
       if (b.type === 'voice') void voiceMeta(b.content, persona, b.emotion, tier).catch(() => {});
     }
 
+    // 她也用你的表情包 (M-I15): when the model already chose to send a sticker,
+    // a seeded minority of those turns swaps the vocab glyph for one of the
+    // customs she has "collected" from what you send her. Riding the model's
+    // own sticker decision keeps the emotional timing right for free; one
+    // storage read, only on turns that actually contain a sticker.
+    const stickerPool = bubbles.some((b) => b.type === 'sticker')
+      ? await agentStickerPool(peer.id).catch(() => [] as string[])
+      : [];
+
     for (let i = 0; i < bubbles.length; i++) {
       const b = bubbles[i];
       // Budgeted pacing: the LLM's real latency (2-8s on free reasoning models)
@@ -606,11 +616,17 @@ async function generateAndPlayInner(
         continue;
       }
 
+      // Seeded per (turn, bubble index) so a replayed turn swaps identically.
+      const customSticker =
+        b.type === 'sticker'
+          ? maybeAgentSticker(stickerPool, `${convId}:${recent.at(-1)?.id ?? 0}:${i}`)
+          : null;
+
       await hooks.appendMessage({
         convId,
         senderId: peer.id,
         type: bubbleToMsgType(b),
-        content: photo ? photo.ref : b.content,
+        content: photo ? photo.ref : (customSticker ?? b.content),
         // The description rides along as the caption so a later turn can refer
         // back to "那张饼干的照片" rather than to an opaque handle.
         ...(photo ? { meta: { caption: photo.caption } } : {}),

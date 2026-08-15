@@ -26,8 +26,12 @@ export interface ContactVM {
  */
 export interface MediaItemVM {
   id: string;
-  /** 'avatar' items feed the avatar picker; 'photo' items feed聊天/朋友圈配图. */
-  kind: 'avatar' | 'photo';
+  /**
+   * 'avatar' items feed the avatar picker; 'photo' items feed聊天/朋友圈配图;
+   * 'sticker' items (M-I15) feed the composer's「我的表情」panel. Row-level
+   * field — adding a kind needs NO idb migration, only UI awareness.
+   */
+  kind: 'avatar' | 'photo' | 'sticker';
   /** Free-form persona tags (风景/美食/自拍…). Empty = usable by everyone. */
   tags: string[];
   mime: string;
@@ -281,6 +285,18 @@ export interface MomentVM {
   storySaveId?: string;
   /** `scriptId#seq` — see MemoryFactVM.storyTag. Rollback finds posts by this. */
   storyTag?: string;
+  /**
+   * 转发 (M-I15): ROOT original's id — chains collapse, a repost of a repost
+   * still points at the first post. Quote content may ONLY be derived from a
+   * stored feed row (src/ai/moment-repost.ts is the sole builder); that is the
+   * structural guarantee that hidden-conversation content can never ride a
+   * repost chain onto the feed.
+   */
+  repostOf?: string;
+  /** Snapshot of the original author, so a deleted original still renders. */
+  repostAuthorId?: string;
+  /** Snapshot excerpt of the original's text (built by repostExcerpt, capped). */
+  repostExcerpt?: string;
 }
 
 /** A like. `id` is `${momentId}:${contactId}` — one like per person per moment. */

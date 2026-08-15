@@ -30,6 +30,7 @@ export type NotifyKind =
   | 'greeting' // 早安/晚安 — anchored to a time of day
   | 'festival' // holiday wishes — anchored to a date
   | 'promise' // "明天提醒你" — anchored to an agreed moment
+  | 'reaction' // 「赞了你的朋友圈」— the act IS the content, so it ages true (M-I15)
   | 'followup'; // references recent conversation — NOT pre-generatable
 
 export interface ScheduledNotification {
@@ -49,7 +50,10 @@ export const NO_PREVIEW_BODY = '[你收到一条消息]';
  * still be true whenever it fires.
  */
 export function canPregenerateBody(kind: NotifyKind): boolean {
-  return kind === 'greeting' || kind === 'festival' || kind === 'promise';
+  // 'reaction' qualifies (M-I15): the body describes the ACT ("赞了你的朋友圈"),
+  // not any generated text, so it is true whenever the queued like fires. A
+  // comment's TEXT is generated at fire time and therefore stays 'followup'.
+  return kind === 'greeting' || kind === 'festival' || kind === 'promise' || kind === 'reaction';
 }
 
 /** The body that will actually be displayed, after grading. */

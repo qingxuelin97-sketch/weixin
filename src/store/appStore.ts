@@ -30,6 +30,7 @@ import { recordRelEvent } from '../ai/relationship';
 import { cancelActionsForConversation } from '../ai/scheduler';
 import { abortConversation } from '../ai/engine';
 import { applyStoryStamp } from '../ai/story-stamp';
+import { collectMomentsNews, type MomentsNews } from '../ai/moments-news';
 import { logError } from '../lib/errlog';
 
 /** A like warms the (liker, author) edge — fire-and-forget, never blocks UI. */
@@ -79,6 +80,17 @@ interface AppState {
   /** Keyed by momentId so selectors can return a stable reference (see CLAUDE.md §3.5). */
   momentLikes: Record<string, MomentLikeVM[]>;
   momentComments: Record<string, MomentCommentVM[]>;
+  /**
+   * 朋友圈新消息 (M-I15): likes/comments on the user's own posts since they
+   * last opened the feed. DERIVED from stored rows + the `momentsSeenAt`
+   * setting (never counted in place), so restarts and backfill cannot make the
+   * Discover-tab badge lie. Stable reference; only refresh/markSeen replace it.
+   */
+  momentsNews: MomentsNews;
+  /** Recompute momentsNews from storage. Cheap (one feed page + social rows). */
+  refreshMomentsNews: () => Promise<void>;
+  /** The user just looked at the feed: persist the watermark, clear the badge. */
+  markMomentsSeen: (now: number) => Promise<void>;
 
   // selectors (stable signatures)
   contactById: (id: string) => ContactVM | undefined;
@@ -142,6 +154,7 @@ const EMPTY_MESSAGES: MessageVM[] = [];
 // Module-level constants: returning a fresh [] from a selector re-renders forever.
 const EMPTY_LIKES: MomentLikeVM[] = [];
 const EMPTY_COMMENTS: MomentCommentVM[] = [];
+const EMPTY_NEWS: MomentsNews = { count: 0, items: [] };
 
 // Fixed timestamp for seeded rows so first-run state is deterministic.
 const SEED_BASE = 1_754_500_000_000;
@@ -238,6 +251,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   momentsLoaded: false,
   momentLikes: {},
   momentComments: {},
+  momentsNews: EMPTY_NEWS,
 
   contactById: (id) => get().contacts.find((cc) => cc.id === id),
   messagesFor: (convId) => get().messages[convId] ?? EMPTY_MESSAGES,
@@ -527,7 +541,14 @@ export const useAppStore = create<AppState>((set, get) => ({
               : c,
           ),
         messages,
-        moments: s.moments.filter((m) => !deadMoments.has(m.id)),
+        moments: s.moments
+          .filter((m) => !deadMoments.has(m.id))
+          // Mirror the repo cascade's repost-snapshot scrub (M-I15) 1:1.
+          .map((m) => {
+            if (m.repostAuthorId !== id) return m;
+            const { repostAuthorId: _drop, ...rest } = m;
+            return { ...rest, repostExcerpt: '原内容已删除' };
+          }),
         momentLikes,
         momentComments,
         activeConvId: s.activeConvId && deadIds.has(s.activeConvId) ? null : s.activeConvId,
@@ -561,6 +582,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       momentLikes: { ...s.momentLikes, [m.id]: EMPTY_LIKES },
       momentComments: { ...s.momentComments, [m.id]: EMPTY_COMMENTS },
     }));
+    // A friend REPOSTING you is news the same way a like is (M-I15).
+    if (m.authorId !== 'self' && m.repostOf) void get().refreshMomentsNews().catch(() => {});
   },
 
   toggleLike: async (momentId, contactId, now) => {
@@ -593,6 +616,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (cur.some((l) => l.id === like.id)) return s;
       return { momentLikes: { ...s.momentLikes, [like.momentId]: [...cur, like] } };
     });
+    // A friend's like on one of YOUR posts is news (M-I15). Fire-and-forget:
+    // the badge is bookkeeping and must never delay the reaction itself.
+    if (like.contactId !== 'self') void get().refreshMomentsNews().catch(() => {});
   },
 
   addComment: async (c) => {
@@ -605,6 +631,30 @@ export const useAppStore = create<AppState>((set, get) => ({
         ),
       },
     }));
+    if (c.authorId !== 'self') void get().refreshMomentsNews().catch(() => {});
+  },
+
+  refreshMomentsNews: async () => {
+    // Newest feed page only: the badge is about the recent past, and anything
+    // older than a page of posts has scrolled out of "news" territory anyway.
+    const moments = await repo.getMoments({ limit: 60 });
+    const mine = moments.filter((m) => m.authorId === 'self');
+    if (mine.length === 0) {
+      if (get().momentsNews.count !== 0) set({ momentsNews: EMPTY_NEWS });
+      return;
+    }
+    const { likes, comments } = await repo.getMomentSocial(mine.map((m) => m.id));
+    const seenAt = (await repo.getSetting<number>('momentsSeenAt')) ?? 0;
+    // The FULL page rides in (not just `mine`): a friend's repost of your post
+    // is a new moment authored by them, and the collector spots it by repostOf.
+    const news = collectMomentsNews(moments, likes, comments, seenAt);
+    // Keep the stable EMPTY_NEWS reference for the common nothing-new case.
+    set({ momentsNews: news.count === 0 ? EMPTY_NEWS : news });
+  },
+
+  markMomentsSeen: async (now) => {
+    await repo.putSetting('momentsSeenAt', now);
+    if (get().momentsNews.count !== 0) set({ momentsNews: EMPTY_NEWS });
   },
 }));
 

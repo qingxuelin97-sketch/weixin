@@ -353,3 +353,135 @@
   border: none;
   padding: 0;
 }
+
+/* ---- M-I15: cover photo, visitor hint, topics, repost card, album ---- */
+
+/* User-chosen cover photo fills the gradient box; the gradient stays as the
+   loading/placeholder ground underneath. */
+.moments__cover {
+  overflow: hidden;
+}
+.moments__cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* Keep the name/avatar corner above the photo. */
+.moments__self {
+  z-index: 1;
+}
+
+/* Cover picker sheet */
+.moments__cover-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 8px 16px;
+}
+.moments__cover-choice {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--color-moments-image-empty);
+  cursor: pointer;
+}
+.moments__cover-choice--on {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+}
+.moments__cover-choice img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.moments__cover-reset {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 8px 16px 12px;
+  padding: 10px 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-input-field-bg);
+  color: var(--color-text-primary);
+  font-size: 15px;
+  cursor: pointer;
+}
+.moments__cover-empty {
+  padding: 16px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+/* 「XX 刚看过你的朋友圈」— a passing hint, styled like a whisper not a banner. */
+.moments__visitor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 28px 16px 0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--color-moments-comment-bg);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.moments__visitor-eye {
+  font-size: 13px;
+}
+/* When the visitor row is present it absorbs the list's cover clearance. */
+.moments__visitor + .moments__list {
+  padding-top: 12px;
+}
+
+/* #话题# runs inside post text — link-blue, tappable. */
+.moment__topic {
+  color: var(--color-link);
+  cursor: pointer;
+}
+
+/* 转发卡片: the quoted root original. Grey block, author in link-blue. */
+.moment__repost {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 3px;
+  background: var(--color-moments-comment-bg);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+.moment__repost-author {
+  color: var(--color-link);
+}
+/* On the repost composer the same card previews under the textarea. */
+.publish__repost-preview {
+  margin: 0 16px 16px;
+}
+
+/* Album & topic pages: white cards on the moments ground, no cover offset. */
+.moments__album {
+  background: var(--color-moments-bg);
+}
+.moments__list--album {
+  padding: 0 0 24px;
+}
+.moments__topic-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 16px 6px;
+}
+.moments__topic-tag {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-link);
+}
+.moments__topic-count {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
