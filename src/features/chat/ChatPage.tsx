@@ -35,6 +35,7 @@ import { repo } from '../../db/repo';
 import { renderMessageBody } from '../../ai/render-msg';
 import { canRecall } from '../../lib/recall';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
+import { typingRhythm } from '../../lib/typing-rhythm';
 import './chat.css';
 import '../settings/settings.css';
 import { useNow } from '../../lib/useNow';
@@ -55,6 +56,62 @@ export function ChatPage() {
   const patchConversation = useAppStore((s) => s.patchConversation);
   const showToast = useAppStore((s) => s.showToast);
   const isTyping = useAppStore((s) => Boolean(s.typing[convId]));
+
+  // 输入抖动 (M-I16 在线感): while she is generating, the indicator breathes —
+  // 「输入中…停顿…又输入」 on a seeded rhythm (typingRhythm, 铁律 4) instead of
+  // burning solid for the whole round trip. The stepper is a UI timer
+  // (presentation only, frozen clocks in screenshots never fire it); every
+  // duration comes from the seeded pure function.
+  const [typingPaused, setTypingPaused] = useState(false);
+  useEffect(() => {
+    if (!isTyping) {
+      setTypingPaused(false);
+      return;
+    }
+    const lastId = useAppStore.getState().messagesFor(convId).at(-1)?.id ?? 0;
+    const beats = typingRhythm(`${convId}:${lastId}`);
+    let i = 0;
+    let t: ReturnType<typeof setTimeout>;
+    const step = () => {
+      const b = beats[i % beats.length];
+      i++;
+      setTypingPaused(!b.on);
+      t = setTimeout(step, b.ms);
+    };
+    step();
+    return () => clearTimeout(t);
+  }, [isTyping, convId]);
+  const typingShown = isTyping && !typingPaused;
+
+  // 已读回执 (M-I16, opt-in): WeChat has none, so this ships OFF and lives
+  // behind the `readReceipts` settings KV. Purely a projection of data the
+  // read-delay mechanism already produces: your last message counts as read
+  // once she has replied after it — or is typing right now (the engine's
+  // readDelay elapsed, i.e. she "saw" it).
+  const [readReceipts, setReadReceipts] = useState(false);
+  useEffect(() => {
+    void repo
+      .getSetting<boolean>('readReceipts')
+      .then((v) => setReadReceipts(Boolean(v)))
+      .catch(() => {});
+  }, []);
+  const readMarkId = useMemo(() => {
+    if (!readReceipts) return null;
+    let lastSelf: MessageVM | undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].senderId === 'self') {
+        lastSelf = messages[i];
+        break;
+      }
+    }
+    if (!lastSelf || lastSelf.status === 'failed') return null;
+    const read =
+      isTyping ||
+      messages.some(
+        (m) => m.senderId !== 'self' && m.type !== 'system' && m.createdAt >= lastSelf!.createdAt,
+      );
+    return read ? lastSelf.id : null;
+  }, [messages, readReceipts, isTyping]);
   // Being *in* this conversation zeroes its badge, so no per-conv exception here.
   const totalUnread = useAppStore((s) =>
     s.conversations.reduce((n, c) => n + (c.isMuted || c.isHidden ? 0 : c.unreadCount), 0),
@@ -529,7 +586,7 @@ export function ChatPage() {
           </button>
         </div>
         <div className="navbar__title chat-nav__title">
-          {isTyping ? '对方正在输入…' : conv.title}
+          {typingShown ? '对方正在输入…' : conv.title}
         </div>
         <div className="navbar__right">
           <button className="navbar__btn" aria-label="更多" onClick={() => navigate(`/chat/${convId}/info`)}>
@@ -645,11 +702,12 @@ export function ChatPage() {
                   }}
                   onReEdit={(m) => setDraft(m.content ?? '')}
                   onRetry={(m) => guard('chat.retry', () => retrySend(m))}
+                  readMark={!isGroup && row.msg.id === readMarkId}
                 />
               </div>
             ),
           )}
-          {isTyping && !isGroup && (
+          {typingShown && !isGroup && (
             <div className="msg-row msg--enter" aria-label="对方正在输入">
               <div className="msg-row__avatar">
                 <Avatar

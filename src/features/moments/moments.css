@@ -105,6 +105,16 @@
   font-weight: 600;
   color: var(--color-link);
 }
+/* 「刚刚活跃」绿点 (M-I16): seeded low-frequency presence hint by the name. */
+.moment__active-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-brand);
+  margin-left: 6px;
+  vertical-align: middle;
+}
 .moment__text {
   margin: 4px 0 0;
   font-size: 15px;

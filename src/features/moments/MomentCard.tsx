@@ -30,6 +30,8 @@ interface Props {
   onDeleteComment?: (c: MomentCommentVM) => void;
   /** 删除 link on one's own post (M-I6). Absent on others' posts. */
   onDelete?: () => void;
+  /** 「刚刚活跃」绿点 (M-I16): seeded presence projection, computed by the page. */
+  activeDot?: boolean;
 }
 
 /**
@@ -55,6 +57,7 @@ export function MomentCard({
   onReplyComment,
   onDeleteComment,
   onDelete,
+  activeDot,
 }: Props) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -74,7 +77,10 @@ export function MomentCard({
         size={40}
       />
       <div className="moment__body">
-        <div className="moment__author">{author ? (author.remark ?? author.name) : '未知'}</div>
+        <div className="moment__author">
+          {author ? (author.remark ?? author.name) : '未知'}
+          {activeDot && <span className="moment__active-dot" title="刚刚活跃" aria-label="刚刚活跃" />}
+        </div>
 
         {moment.text && <p className="moment__text">{moment.text}</p>}
 
