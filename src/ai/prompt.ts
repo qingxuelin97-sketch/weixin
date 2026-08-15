@@ -31,6 +31,12 @@ export interface SceneContext {
 export interface MemoryInjection {
   pinned: string[]; // core-profile facts, always in full
   topK: string[]; // scored facts
+  /**
+   * Matched worldbook lines (M-I4). Rendered INSIDE this layer — the
+   * six-layer order is constitutional, and user-decreed lore is still
+   * "things she knows", not a seventh layer.
+   */
+  world?: string[];
 }
 
 export interface AssembleInput {
@@ -209,8 +215,10 @@ export function assembleSystemPrompt(input: AssembleInput): string {
   // Boundary layer — after persona, before scene.
   blocks.push(`# 边界\n${nsfwLayer(nsfwTier, persona.nsfwStyleSamples)}`);
 
-  if (memory && (memory.pinned.length || memory.topK.length)) {
-    const facts = [...memory.pinned, ...memory.topK].map((f) => `- ${f}`).join('\n');
+  if (memory && (memory.pinned.length || memory.topK.length || memory.world?.length)) {
+    const facts = [...memory.pinned, ...memory.topK, ...(memory.world ?? [])]
+      .map((f) => `- ${f}`)
+      .join('\n');
     blocks.push(`# 你记得的事\n${facts}`);
   }
 

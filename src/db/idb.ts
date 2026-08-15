@@ -17,7 +17,7 @@ const DB_NAME = 'weixin-ai';
 // place either can come into being, and it only runs when the version rises.
 // Exported for tests/unit/idb-migration.test.ts, whose ledger machine-enforces
 // that rule — register new stores AND new indexes there when bumping.
-export const DB_VERSION = 7;
+export const DB_VERSION = 8;
 
 export interface StoreDef {
   name: string;
@@ -83,6 +83,11 @@ export const STORES: StoreDef[] = [
   // without its own migration.
   { name: 'story_scripts', keyPath: 'id' },
   { name: 'story_saves', keyPath: 'id', indexes: [{ name: 'byScript', keyPath: 'scriptId' }] },
+  // --- worldbook (v8, M-I4) ---
+  // User-authored lore entries, matched by keyword into the prompt's memory
+  // layer. Separate from memory_facts on purpose: facts are extracted and
+  // forgotten, entries are authored and eternal until edited.
+  { name: 'worldbook', keyPath: 'id' },
 ];
 
 let dbPromise: Promise<IDBDatabase> | null = null;

@@ -38,6 +38,7 @@ const STORE_INTRODUCED_IN: Record<string, number> = {
   media: 5,
   story_scripts: 6,
   story_saves: 6,
+  worldbook: 8,
 };
 
 /**

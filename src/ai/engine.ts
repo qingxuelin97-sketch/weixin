@@ -36,6 +36,7 @@ import { ownLines, styleNote, scrubBubbles } from './anti-ai';
 import { noteDrift } from './drift';
 import { voiceDirective } from './voice-send';
 import { refreshConvState, convStateDirective } from './conv-state';
+import { worldLinesFor } from './worldbook';
 import {
   detectThreads,
   threadsFromFacts,
@@ -329,15 +330,19 @@ async function generateAndPlayInner(
     .map((m) => m.content ?? '')
     .join(' ')
     .slice(0, 200);
-  const memory = selectFactsForInjection(facts, hooks.now(), {
-    surface: 'single',
-    tier,
-    query,
-  });
+  const memory: ReturnType<typeof selectFactsForInjection> & { world?: string[] } =
+    selectFactsForInjection(facts, hooks.now(), {
+      surface: 'single',
+      tier,
+      query,
+    });
   // Rolling summary from the memory loop — "上次聊到哪" survives the 30-message
   // context window. (Was a settings read that nothing ever wrote, M2–M-D1.)
   const summaryRow = await repo.getConvSummary(convId);
   if (summaryRow?.summary) memory.topK = [`上次你们聊到：${summaryRow.summary}`, ...memory.topK];
+  // Worldbook (M-I4): user-decreed lore, matched on the same query, capped by
+  // its own budget, injected inside the memory layer.
+  memory.world = await worldLinesFor({ query, contactId: persona.contactId, convId, tier });
 
   // Relations keyed by contactId are translated to display names — the model
   // must never see internal ids, or it will echo them into dialogue.
@@ -362,7 +367,7 @@ async function generateAndPlayInner(
     persona: toPersonaView(persona, peer.remark ?? peer.name),
     relations: relationsRec,
     nsfwTier: tier,
-    memory: memory.pinned.length || memory.topK.length ? memory : undefined,
+    memory: memory.pinned.length || memory.topK.length || memory.world?.length ? memory : undefined,
     scene: {
       kind: 'single',
       now: new Date(hooks.now()),

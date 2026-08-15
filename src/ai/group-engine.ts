@@ -12,6 +12,7 @@ import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
 import { assembleSystemPrompt, promptStats, relationsForPrompt } from './prompt';
 import { getGroupCfg, spiceLine, topicsLine } from './group-config';
+import { worldLinesFor } from './worldbook';
 import { affectFor, affectLine } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { refreshConvState, convStateDirective } from './conv-state';
@@ -299,15 +300,24 @@ async function generateActorLines(
   const { affect } = await affectFor(member.contactId, now);
   // Group actors see the room's photos too — same list, same route, same tier.
   const images = await collectTurnImages(recent);
-  const memory = selectFactsForInjection([...facts, ...groupFacts], now, {
-    surface: 'group',
+  const groupQuery = recent
+    .slice(-4)
+    .map((m) => m.content ?? '')
+    .join(' ')
+    .slice(0, 200);
+  const memory: ReturnType<typeof selectFactsForInjection> & { world?: string[] } =
+    selectFactsForInjection([...facts, ...groupFacts], now, {
+      surface: 'group',
+      tier,
+      // Topical retrieval for the actor too: what the group is talking about now.
+      query: groupQuery,
+    });
+  // Worldbook (M-I4): lore scoped to this member or this room rides along.
+  memory.world = await worldLinesFor({
+    query: groupQuery,
+    contactId: member.contactId,
+    convId: conv.id,
     tier,
-    // Topical retrieval for the actor too: what the group is talking about now.
-    query: recent
-      .slice(-4)
-      .map((m) => m.content ?? '')
-      .join(' ')
-      .slice(0, 200),
   });
 
   let system = assembleSystemPrompt({
@@ -326,7 +336,7 @@ async function generateActorLines(
       return n === id ? undefined : n; // nameOf falls back to the raw id; never leak it
     }),
     nsfwTier: tier,
-    memory: memory.pinned.length || memory.topK.length ? memory : undefined,
+    memory: memory.pinned.length || memory.topK.length || memory.world?.length ? memory : undefined,
     scene: {
       kind: 'group',
       now: new Date(now),

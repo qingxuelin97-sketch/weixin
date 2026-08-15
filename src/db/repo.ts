@@ -105,6 +105,11 @@ export interface Repo {
   getComments(momentId: string): Promise<MomentCommentVM[]>;
   putComment(c: MomentCommentVM): Promise<void>;
 
+  // worldbook (M-I4): user-authored lore, matched into the prompt's memory layer
+  getWorldbook(): Promise<import('../ai/worldbook').WorldbookEntry[]>;
+  putWorldbookEntry(e: import('../ai/worldbook').WorldbookEntry): Promise<void>;
+  deleteWorldbookEntry(id: string): Promise<void>;
+
   // runtime media library (avatars + photo pools; see specs/data-schema.md)
   getMedia(kind?: MediaItemVM['kind']): Promise<MediaItemVM[]>;
   getMediaItem(id: string): Promise<MediaItemVM | undefined>;
@@ -155,6 +160,7 @@ export const DELETE_CONTACT_CASCADE: Record<string, 'cascade' | 'exempt'> = {
   media: 'exempt', // the user's own library — avatars are assigned, not owned
   story_scripts: 'exempt', // scripts reference roles, not contact ids
   story_saves: 'exempt',
+  worldbook: 'cascade', // persona-scoped entries die with their contact
 };
 
 export class IdbRepo implements Repo {
@@ -248,6 +254,14 @@ export class IdbRepo implements Repo {
       );
     for (const r of settingRows) {
       if (isTheirs(r.key)) await idbDelete('settings', r.key);
+    }
+
+    // 7.5) Worldbook: entries scoped to this persona, or to a dead thread.
+    for (const w of await this.getWorldbook()) {
+      const dead =
+        (w.scope === 'persona' && w.scopeId === id) ||
+        (w.scope === 'conv' && w.scopeId != null && deadIds.has(w.scopeId));
+      if (dead) await idbDelete('worldbook', w.id);
     }
 
     // 8) Moments traces: their posts (with all social rows on them), and
@@ -460,6 +474,17 @@ export class IdbRepo implements Repo {
   }
   async putComment(c: MomentCommentVM) {
     await idbPut('moment_comments', c);
+  }
+
+  async getWorldbook() {
+    const all = await idbGetAll<import('../ai/worldbook').WorldbookEntry>('worldbook');
+    return all.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  async putWorldbookEntry(e: import('../ai/worldbook').WorldbookEntry) {
+    await idbPut('worldbook', e);
+  }
+  async deleteWorldbookEntry(id: string) {
+    await idbDelete('worldbook', id);
   }
 
   async getMedia(kind?: MediaItemVM['kind']) {
