@@ -343,3 +343,13 @@
   font-size: 11px;
   color: var(--color-text-on-brand);
 }
+
+/* 删除 link on one's own post (M-I6): quiet link-blue beside the timestamp. */
+.moment__delete {
+  margin-left: 10px;
+  color: var(--color-link);
+  font-size: var(--fs-small-gray);
+  background: none;
+  border: none;
+  padding: 0;
+}

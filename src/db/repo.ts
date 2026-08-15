@@ -104,6 +104,10 @@ export interface Repo {
   deleteLike(id: string): Promise<void>;
   getComments(momentId: string): Promise<MomentCommentVM[]>;
   putComment(c: MomentCommentVM): Promise<void>;
+  /** Delete one comment (自己的评论, M-I6). */
+  deleteComment(id: string): Promise<void>;
+  /** Delete a post AND its social rows (自己的动态, M-I6). */
+  deleteMoment(id: string): Promise<void>;
 
   // worldbook (M-I4): user-authored lore, matched into the prompt's memory layer
   getWorldbook(): Promise<import('../ai/worldbook').WorldbookEntry[]>;
@@ -474,6 +478,16 @@ export class IdbRepo implements Repo {
   }
   async putComment(c: MomentCommentVM) {
     await idbPut('moment_comments', c);
+  }
+  async deleteComment(id: string) {
+    await idbDelete('moment_comments', id);
+  }
+  async deleteMoment(id: string) {
+    // Social rows go WITH the post — orphaned likes resurface if a moment id
+    // is ever reused (the deleteConversation lesson, applied here).
+    for (const l of await this.getLikes(id)) await idbDelete('moment_likes', l.id);
+    for (const c of await this.getComments(id)) await idbDelete('moment_comments', c.id);
+    await idbDelete('moments', id);
   }
 
   async getWorldbook() {

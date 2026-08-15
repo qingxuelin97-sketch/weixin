@@ -114,6 +114,10 @@ interface AppState {
    * in-flight generation for their threads → repo cascade → in-memory mirror.
    */
   deleteContact: (id: string) => Promise<void>;
+  /** Delete one's own comment (M-I6). */
+  deleteComment: (momentId: string, commentId: string) => Promise<void>;
+  /** Delete one's own moment with its social rows (M-I6). */
+  deleteMoment: (momentId: string) => Promise<void>;
   loadMoments: (force?: boolean) => Promise<void>;
   addMoment: (m: MomentVM) => Promise<void>;
   /** Add or remove a like. Returns true if the moment is liked afterwards. */
@@ -422,6 +426,31 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.contacts.map((x) => (x.id === c.id ? c : x))
         : [...s.contacts, c],
     }));
+  },
+
+  deleteComment: async (momentId, commentId) => {
+    await repo.deleteComment(commentId);
+    set((s) => ({
+      momentComments: {
+        ...s.momentComments,
+        [momentId]: (s.momentComments[momentId] ?? []).filter((c) => c.id !== commentId),
+      },
+    }));
+  },
+
+  deleteMoment: async (momentId) => {
+    await repo.deleteMoment(momentId);
+    set((s) => {
+      const momentLikes = { ...s.momentLikes };
+      const momentComments = { ...s.momentComments };
+      delete momentLikes[momentId];
+      delete momentComments[momentId];
+      return {
+        moments: s.moments.filter((m) => m.id !== momentId),
+        momentLikes,
+        momentComments,
+      };
+    });
   },
 
   deleteContact: async (id) => {

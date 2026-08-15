@@ -24,6 +24,12 @@ interface Props {
   now: number;
   onToggleLike: () => void;
   onComment: () => void;
+  /** Tap someone ELSE's comment → reply to it (M-I6). */
+  onReplyComment?: (c: MomentCommentVM) => void;
+  /** Tap one's OWN comment → offer deletion (M-I6). */
+  onDeleteComment?: (c: MomentCommentVM) => void;
+  /** 删除 link on one's own post (M-I6). Absent on others' posts. */
+  onDelete?: () => void;
 }
 
 /**
@@ -46,6 +52,9 @@ export function MomentCard({
   now,
   onToggleLike,
   onComment,
+  onReplyComment,
+  onDeleteComment,
+  onDelete,
 }: Props) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -92,7 +101,14 @@ export function MomentCard({
         )}
 
         <div className="moment__meta">
-          <span className="moment__time">{momentTimestamp(moment.createdAt, now)}</span>
+          <span className="moment__time">
+            {momentTimestamp(moment.createdAt, now)}
+            {onDelete && (
+              <button className="moment__delete" onClick={onDelete}>
+                删除
+              </button>
+            )}
+          </span>
           <div className="moment__actions">
             {actionsOpen && (
               <div className="moment__capsule" role="group">
@@ -143,7 +159,16 @@ export function MomentCard({
             )}
             {likes.length > 0 && comments.length > 0 && <div className="moment__reaction-div" />}
             {comments.map((c) => (
-              <div key={c.id} className="moment__comment">
+              <div
+                key={c.id}
+                className="moment__comment"
+                role="button"
+                // Own comment → delete; someone else's → reply. Same tap, the
+                // ownership decides — exactly the device behavior.
+                onClick={() =>
+                  c.authorId === 'self' ? onDeleteComment?.(c) : onReplyComment?.(c)
+                }
+              >
                 <span className="moment__comment-author">{nameOf(c.authorId)}</span>
                 {c.replyToCommentId && (
                   <>

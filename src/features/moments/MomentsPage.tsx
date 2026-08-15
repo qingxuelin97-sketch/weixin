@@ -13,6 +13,7 @@ import { useAppStore } from '../../store/appStore';
 import { Avatar } from '../../components/Avatar';
 import { IconBack } from '../../components/icons';
 import { MomentCard } from './MomentCard';
+import { showConfirm } from '../../components/dialog';
 import { useNow } from '../../lib/useNow';
 import type { MomentCommentVM } from '../../data/types';
 import './moments.css';
@@ -83,6 +84,12 @@ export function MomentsPage() {
     }
   };
 
+  // 回复某人 (M-I6): replyToCommentId had render logic since M4 and no writer
+  // — tapping a friend's comment now targets the composer at it.
+  const [replyTo, setReplyTo] = useState<MomentCommentVM | null>(null);
+  const deleteComment = useAppStore((s) => s.deleteComment);
+  const deleteMoment = useAppStore((s) => s.deleteMoment);
+
   const submitComment = async (momentId: string) => {
     const text = draft.trim();
     if (!text) return;
@@ -91,10 +98,14 @@ export function MomentsPage() {
       momentId,
       authorId: 'self',
       text,
+      ...(replyTo && replyTo.momentId === momentId
+        ? { replyToCommentId: replyTo.id }
+        : {}),
       createdAt: Date.now(),
     } satisfies MomentCommentVM);
     setDraft('');
     setComposingOn(null);
+    setReplyTo(null);
   };
 
   return (
@@ -145,14 +156,45 @@ export function MomentsPage() {
                     now={now}
                     selfLiked={likes.some((l) => l.contactId === 'self')}
                     onToggleLike={() => void toggleLike(m.id, 'self', Date.now())}
-                    onComment={() => setComposingOn(m.id)}
+                    onComment={() => {
+                      setReplyTo(null);
+                      setComposingOn(m.id);
+                    }}
+                    onReplyComment={(c) => {
+                      setReplyTo(c);
+                      setComposingOn(m.id);
+                    }}
+                    onDeleteComment={(c) => {
+                      void showConfirm({
+                        title: '删除评论',
+                        body: c.text.slice(0, 40),
+                        confirmText: '删除',
+                        danger: true,
+                      }).then((ok) => {
+                        if (ok) void deleteComment(m.id, c.id);
+                      });
+                    }}
+                    onDelete={
+                      m.authorId === 'self'
+                        ? () => {
+                            void showConfirm({
+                              title: '删除该条朋友圈',
+                              body: '删除后无法恢复。',
+                              confirmText: '删除',
+                              danger: true,
+                            }).then((ok) => {
+                              if (ok) void deleteMoment(m.id);
+                            });
+                          }
+                        : undefined
+                    }
                   />
                   {composingOn === m.id && (
                     <div className="moments__composer">
                       <input
                         autoFocus
                         value={draft}
-                        placeholder="评论"
+                        placeholder={replyTo ? `回复${nameOf(replyTo.authorId)}` : '评论'}
                         onChange={(e) => setDraft(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && void submitComment(m.id)}
                       />
