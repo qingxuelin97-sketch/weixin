@@ -24,13 +24,12 @@ jobs:
       - run: pnpm test
 
   screenshot:
-    name: golden screenshots (non-blocking until goldens regenerated in CI)
+    name: golden screenshots
     runs-on: ubuntu-latest
-    # Goldens are committed from a dev container; CI CJK font may differ, so this
-    # is advisory until the baselines are regenerated inside this exact runner
-    # (run `pnpm test:screenshot:update` here and commit). Until then it never
-    # blocks a merge — its value is the uploaded diff report.
-    continue-on-error: true
+    # BLOCKING since M-I11. The baselines are generated under fonts-noto-cjk —
+    # the same package this job installs — so CI pixels match the committed
+    # goldens. If you regenerate goldens, do it in an environment with
+    # fonts-noto-cjk installed (CLAUDE.md 陷阱清单), or this job goes red.
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

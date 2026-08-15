@@ -137,6 +137,10 @@ src/
 - **CryptoKey 经 JSON 序列化变 `{}`**：备份导出 settings 全表就会把主密钥导成空壳，
   恢复写回后 keystore 永久损坏。设备本地密钥行要行级排除（导出滤掉、恢复保本机），
   读取时用 `instanceof CryptoKey` 校验而不是 truthiness——空壳是 truthy 的。
+- **golden 必须在装有 `fonts-noto-cjk` 的环境里生成**：截图 CI job 自 M-I11 起是**阻塞**的，
+  它装的就是这个包。开发容器默认**没有** CJK 字体（Chromium 会用别的回退字体渲染，截图照样
+  "好看"——但每个字的像素都和 CI 不同，52 张全红）。新会话跑 `pnpm test:screenshot` 前先
+  `sudo apt-get install -y fonts-noto-cjk`；忘了装的症状是"本地全绿、重基线后 CI 全红"。
 - **不要为"截图稳定"冻结业务时钟**：组件里硬编码 NOW 常量意味着真机上所有相对时间戳
   永远错（diffDays 为负渲染成「星期六」）。确定性归测试侧：Playwright
   `page.clock.setFixedTime(种子纪元)`，业务代码用真实时钟（`useNow()` 分钟级 tick）。
