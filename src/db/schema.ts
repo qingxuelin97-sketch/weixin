@@ -367,6 +367,8 @@ export const SCHEDULED_ACTION_KINDS = [
   'group_event',
   /** An AI proposes forming a group with two mutual friends, in her 1:1 (M-I3). */
   'agent_invite',
+  /** Periodic .aiwx backup (M-I17). Self-chaining; frequency set on 备份页. */
+  'auto_backup',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

@@ -1,11 +1,19 @@
 /**
- * Backup & restore screen.
+ * Backup & restore screen (v2, M-I17).
  *
  * Restore replaces everything, so this page is deliberately unhurried about it:
  * the file is parsed and its manifest summarized BEFORE anything is written, and
  * the user confirms against real row counts rather than a yes/no prompt.
+ *
+ * v2 adds three sections:
+ *   自动备份 — 关/每日/每周 chained through scheduled_actions (`auto_backup`);
+ *   备份历史 — the app-managed shelf: restore / share / delete per entry.
+ *     Entries show aggregate counts only — never conversation content, so a
+ *     hidden AI↔AI DM cannot leak through this page (CLAUDE.md rule);
+ *   存储引擎 — native-only SQLite migration + the 回退到 IndexedDB switch.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { SubNav } from '../../components/SubNav';
 import { saveTextFile } from '../../lib/save-file';
 import { repo } from '../../db/repo';
@@ -14,9 +22,35 @@ import {
   serializeBackup,
   parseBackup,
   restoreBackup,
+  applyIncrementalBackup,
+  backupMode,
   backupFilename,
   type BackupFile,
 } from '../../lib/backup';
+import {
+  listBackupHistory,
+  readBackupContent,
+  deleteBackupEntry,
+  shareBackupEntry,
+  recordBackup,
+  resolveRestoreChain,
+  type BackupHistoryEntry,
+} from '../../lib/backup-history';
+import {
+  getAutoBackupFreq,
+  setAutoBackupFreq,
+  BACKUP_WATERMARKS_KEY,
+  type AutoBackupFreq,
+} from '../../ai/auto-backup';
+import {
+  isSqliteActive,
+  sqliteMigratedAt,
+  openNativeSqliteDb,
+  activateSqliteDriver,
+  revertToIdb,
+} from '../../db/driver';
+import { migrateToSqlite, type MigrateProgressEvent } from '../../db/migrate-to-sqlite';
+import { showConfirm } from '../../components/dialog';
 import './settings.css';
 import { Switch } from '../../components/Switch';
 
@@ -38,11 +72,44 @@ const STORE_LABEL: Record<string, string> = {
   media: '素材图片',
 };
 
+const FREQ_LABEL: Record<AutoBackupFreq, string> = {
+  off: '关',
+  daily: '每日',
+  weekly: '每周',
+};
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fmtTime(t: number): string {
+  return new Date(t).toLocaleString('zh-CN', { hour12: false });
+}
+
 export function BackupPage() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [pending, setPending] = useState<BackupFile | null>(null);
   const [includeMedia, setIncludeMedia] = useState(true);
+  const [freq, setFreq] = useState<AutoBackupFreq>('off');
+  const [history, setHistory] = useState<BackupHistoryEntry[]>([]);
+  const [engine, setEngine] = useState<'idb' | 'sqlite'>('idb');
+  const [migratedAt, setMigratedAt] = useState(0);
+  const [migrateProgress, setMigrateProgress] = useState<MigrateProgressEvent | null>(null);
+  const isNative = Capacitor.isNativePlatform();
+
+  const refresh = async () => {
+    setFreq(await getAutoBackupFreq());
+    setHistory(await listBackupHistory());
+    setEngine(isSqliteActive() ? 'sqlite' : 'idb');
+    setMigratedAt(await sqliteMigratedAt());
+  };
+  useEffect(() => {
+    void refresh().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const summarize = (counts: Record<string, number>) =>
     Object.entries(counts)
@@ -62,6 +129,22 @@ export function BackupPage() {
       await saveTextFile(name, json, 'application/json', '保存备份文件');
       // Freshness marker for the "该备份了" nudge on the settings page.
       await repo.putSetting('lastBackupAt', now);
+      // Manual fulls join the history shelf and advance the watermarks, so
+      // later auto increments chain onto a full the shelf actually holds.
+      await recordBackup(
+        {
+          id: `mb_${now}`,
+          name,
+          createdAt: now,
+          bytes: json.length,
+          mode: 'full',
+          source: 'manual',
+          counts: file.manifest.counts,
+        },
+        json,
+      ).catch(() => {}); // shelf is a bonus; the shared file already left
+      await repo.putSetting(BACKUP_WATERMARKS_KEY, file.manifest.watermarks ?? {});
+      await refresh();
       setStatus(`已导出：${summarize(file.manifest.counts)}`);
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
@@ -94,16 +177,124 @@ export function BackupPage() {
     if (!pending) return;
     setBusy(true);
     try {
-      const res = await restoreBackup(pending, Date.now());
-      setPending(null);
-      const unknown = res.unknownStores.length
-        ? `（${res.unknownStores.length} 项本版本无法识别，已跳过）`
-        : '';
-      setStatus(`恢复完成：${summarize(res.restored)}${unknown}。请重启 App 以重新加载。`);
+      if (backupMode(pending) === 'incremental') {
+        // A hand-picked increment applies onto whatever is present. The full
+        // chain flow lives in the history list; this is the escape hatch.
+        const applied = await applyIncrementalBackup(pending, Date.now());
+        setPending(null);
+        setStatus(`已叠加增量：${summarize(applied)}。请重启 App 以重新加载。`);
+      } else {
+        const res = await restoreBackup(pending, Date.now());
+        setPending(null);
+        const unknown = res.unknownStores.length
+          ? `（${res.unknownStores.length} 项本版本无法识别，已跳过）`
+          : '';
+        setStatus(`恢复完成：${summarize(res.restored)}${unknown}。请重启 App 以重新加载。`);
+      }
     } catch (e) {
       setStatus(`恢复失败：${(e as Error).message}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const changeFreq = async (next: AutoBackupFreq) => {
+    setFreq(next);
+    await setAutoBackupFreq(next, Date.now());
+  };
+
+  const restoreFromHistory = async (entry: BackupHistoryEntry) => {
+    const chain = resolveRestoreChain(history, entry.id);
+    if (!chain) {
+      setStatus('该增量备份缺少对应的全量基础，无法恢复');
+      return;
+    }
+    const ok = await showConfirm({
+      title: '从历史恢复',
+      body:
+        `将恢复到 ${fmtTime(entry.createdAt)} 的备份` +
+        (chain.length > 1 ? `（1 个全量 + ${chain.length - 1} 个增量按序叠加）` : '') +
+        '。当前数据会被整库替换，替换前会留一份快照。',
+      confirmText: '恢复',
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const now = Date.now();
+      const [base, ...incs] = chain;
+      await restoreBackup(parseBackup(await readBackupContent(base)), now);
+      for (const inc of incs) {
+        await applyIncrementalBackup(parseBackup(await readBackupContent(inc)), now);
+      }
+      setStatus('恢复完成。请重启 App 以重新加载。');
+    } catch (e) {
+      setStatus(`恢复失败：${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteFromHistory = async (entry: BackupHistoryEntry) => {
+    const ok = await showConfirm({
+      title: '删除该备份',
+      body: `${entry.name}（${fmtBytes(entry.bytes)}）将被删除，不可恢复。`,
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
+    await deleteBackupEntry(entry.id);
+    await refresh();
+  };
+
+  const runMigration = async () => {
+    const ok = await showConfirm({
+      title: '迁移到 SQLite',
+      body:
+        '将把全部数据复制到原生 SQLite 数据库（IndexedDB 原数据保留不动）。' +
+        '完成后 App 改用 SQLite；随时可回退。',
+      confirmText: '开始迁移',
+    });
+    if (!ok) return;
+    setBusy(true);
+    setStatus(null);
+    try {
+      const db = await openNativeSqliteDb();
+      const res = await migrateToSqlite(db, {
+        now: () => Date.now(),
+        onProgress: setMigrateProgress,
+      });
+      if (res.ok) {
+        activateSqliteDriver(db);
+        setStatus('迁移完成，已切换到 SQLite。');
+      } else {
+        setStatus(res.aborted ? '迁移已中断，可随时继续。' : `迁移失败：${res.error ?? '未知错误'}`);
+      }
+    } catch (e) {
+      setStatus(`迁移失败：${(e as Error).message}`);
+    } finally {
+      setMigrateProgress(null);
+      setBusy(false);
+      await refresh();
+    }
+  };
+
+  const toggleEngine = async () => {
+    if (engine === 'sqlite') {
+      const ok = await showConfirm({
+        title: '回退到 IndexedDB',
+        body:
+          '将改回使用 IndexedDB（数据仍在原处，未被迁移动过）。' +
+          '切换到 SQLite 之后新产生的内容不会自动回流，重新迁移会以 IndexedDB 为准覆盖。',
+        confirmText: '回退',
+        danger: true,
+      });
+      if (!ok) return;
+      await revertToIdb();
+      setStatus('已回退到 IndexedDB。请重启 App 以重新加载。');
+      await refresh();
+    } else {
+      await runMigration();
     }
   };
 
@@ -138,14 +329,19 @@ export function BackupPage() {
 
         {pending && (
           <div className="settings__group">
-            <div className="settings__group-title">确认恢复</div>
+            <div className="settings__group-title">
+              {backupMode(pending) === 'incremental' ? '确认叠加增量' : '确认恢复'}
+            </div>
             <p className="settings__hint">
               该备份创建于{' '}
-              {new Date(pending.manifest.createdAt).toLocaleString('zh-CN', { hour12: false })}，
+              {fmtTime(pending.manifest.createdAt)}，
+              {backupMode(pending) === 'incremental' ? '为增量包，' : ''}
               包含：{summarize(pending.manifest.counts) || '（空）'}。
             </p>
             <p className="settings__hint settings__hint--warn">
-              恢复会<strong>整库替换</strong>当前数据，不是合并。现有内容会在替换前留一份快照。
+              {backupMode(pending) === 'incremental'
+                ? '增量恢复会在当前数据之上叠加该包的内容；请确认当前数据已经是它所基于的全量状态。'
+                : '恢复会整库替换当前数据，不是合并。现有内容会在替换前留一份快照。'}
             </p>
             <div className="settings__actions">
               <button className="settings__btn" disabled={busy} onClick={() => setPending(null)}>
@@ -156,11 +352,103 @@ export function BackupPage() {
                 disabled={busy}
                 onClick={() => void confirmRestore()}
               >
-                确认恢复
+                {backupMode(pending) === 'incremental' ? '确认叠加' : '确认恢复'}
               </button>
             </div>
           </div>
         )}
+
+        <div className="settings__group">
+          <div className="settings__group-title">自动备份</div>
+          <div className="segmented">
+            {(['off', 'daily', 'weekly'] as AutoBackupFreq[]).map((f) => (
+              <div
+                key={f}
+                className={`segmented__item${freq === f ? ' segmented__item--active' : ''}`}
+                onClick={() => void changeFreq(f)}
+              >
+                {FREQ_LABEL[f]}
+              </div>
+            ))}
+          </div>
+          <p className="settings__hint">
+            按所选频率自动生成备份到下方历史列表：每 7 次做一次全量，其余为增量（只含新增内容，
+            体积很小）。新的全量会自动清理它之前的旧自动备份。
+          </p>
+        </div>
+
+        <div className="settings__group">
+          <div className="settings__group-title">备份历史</div>
+          {history.length === 0 && <p className="settings__hint">还没有备份记录。</p>}
+          {history.map((e) => (
+            <div key={e.id} className="settings__row settings__row--divided">
+              <span className="settings__label">
+                {fmtTime(e.createdAt)}
+                <br />
+                <span className="settings__value">
+                  {e.mode === 'full' ? '全量' : '增量'} · {fmtBytes(e.bytes)} ·{' '}
+                  {e.source === 'auto' ? '自动' : '手动'}
+                </span>
+              </span>
+              <span className="settings__actions">
+                <button
+                  className="settings__btn"
+                  disabled={busy}
+                  onClick={() => void restoreFromHistory(e)}
+                >
+                  恢复
+                </button>
+                <button
+                  className="settings__btn"
+                  disabled={busy}
+                  onClick={() => void shareBackupEntry(e).catch(() => {})}
+                >
+                  分享
+                </button>
+                <button
+                  className="settings__btn settings__btn--danger"
+                  disabled={busy}
+                  onClick={() => void deleteFromHistory(e)}
+                >
+                  删除
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="settings__group">
+          <div className="settings__group-title">存储引擎</div>
+          <div className="settings__row settings__row--divided">
+            <span className="settings__label">当前引擎</span>
+            <span className="settings__value">
+              {engine === 'sqlite'
+                ? `SQLite（${fmtTime(migratedAt)} 迁移）`
+                : 'IndexedDB'}
+            </span>
+          </div>
+          {isNative ? (
+            <div className="settings__row" onClick={() => void toggleEngine()}>
+              <span className="settings__label">
+                {engine === 'sqlite' ? '回退到 IndexedDB' : '迁移到 SQLite'}
+              </span>
+              <Switch
+                on={engine === 'sqlite'}
+                disabled={busy}
+                onChange={() => void toggleEngine()}
+              />
+            </div>
+          ) : (
+            <p className="settings__hint">Web 端固定使用 IndexedDB；SQLite 仅在 App 内可用。</p>
+          )}
+          {migrateProgress && (
+            <p className="settings__hint">
+              正在迁移 {STORE_LABEL[migrateProgress.store] ?? migrateProgress.store}（
+              {migrateProgress.storeIndex + 1}/{migrateProgress.storeCount}）：
+              {migrateProgress.rows}/{migrateProgress.totalRows} 行
+            </p>
+          )}
+        </div>
 
         {status && <p className="settings__hint">{status}</p>}
       </div>

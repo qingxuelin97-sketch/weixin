@@ -24,6 +24,7 @@ import {
   seedMomentComments,
 } from '../data/seed';
 import { repo, IdbRepo } from '../db/repo';
+import { initStorageDriver } from '../db/driver';
 import { registerMediaMeta, materializeMedia } from '../data/media-registry';
 import { makePersona } from '../data/persona-defaults';
 import { recordRelEvent } from '../ai/relationship';
@@ -155,6 +156,10 @@ type Set = (partial: Partial<AppState>) => void;
 type Get = () => AppState;
 
 async function doHydrate(set: Set, _get: Get): Promise<void> {
+  // Choose the storage driver BEFORE the first Repo read (M-I17): on a native
+  // device that completed the SQLite migration this swaps the driver in;
+  // everywhere else it is a no-op and IndexedDB stays. Never throws.
+  await initStorageDriver();
   // First run: write seed into the Repo so the app has believable friends.
   if (await repo.isEmpty()) {
     const seedMsgs = seedConversations.flatMap((conv) =>
