@@ -123,6 +123,13 @@ function harness(over: Partial<HandlerDeps> = {}): Harness {
       return true;
     },
 
+    addMoment: async (m) => void calls.push(`moment:${m.authorId}:${m.text ?? ''}`),
+    enqueue: async (o) => void calls.push(`enqueue:${o.kind}:${o.id ?? '-'}`),
+    visibleConvWithUser: (contactId) =>
+      [...conversations.values()].find(
+        (c) => c.type === 'single' && c.peerId === contactId && !c.isHidden,
+      ),
+
     chainHeartbeat: async (persona, convId) => void calls.push(`chainHb:${persona.contactId}:${convId}`),
     chainAgentDm: async () => void calls.push('chainDm'),
     chainMomentPost: async (p) => void calls.push(`chainPost:${p.contactId}`),

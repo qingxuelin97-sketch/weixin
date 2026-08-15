@@ -52,6 +52,8 @@ import {
   handleMomentPost,
   handleAiMoney,
   handleAiCall,
+  handleJointPlan,
+  handleAgentForward,
   chainHeartbeat as chainHeartbeatStep,
   chainAgentDm as chainAgentDmStep,
   chainMomentPost as chainMomentPostStep,
@@ -100,6 +102,18 @@ export function useSchedulerRuntime(enabled: boolean): void {
 
       getRouter,
       now: () => Date.now(),
+
+      // Social fabric (M-I3).
+      addMoment: (m) => useAppStore.getState().addMoment(m),
+      enqueue: async (opts) => {
+        await enqueue({ ...opts, now: Date.now() });
+      },
+      visibleConvWithUser: (contactId) =>
+        useAppStore
+          .getState()
+          .conversations.find(
+            (c) => c.type === 'single' && c.peerId === contactId && !c.isHidden,
+          ),
 
       claimRedPacket: (rpId, contactId, name, h) => claimRedPacket(rpId, contactId, name, h),
       acceptTransfer: (transferId, h) => acceptTransfer(transferId, h),
@@ -187,6 +201,9 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
     registerHandler('ai_money', (p) => handleAiMoney(deps, p));
     registerHandler('ai_call', (p) => handleAiCall(deps, p));
+    // Social fabric (M-I3): hatched by a completed agent DM, fired here.
+    registerHandler('joint_plan', (p) => handleJointPlan(deps, p));
+    registerHandler('agent_forward', (p) => handleAgentForward(deps, p));
 
     // Story mode's beat (M-E5, chained in M-G0).
     //

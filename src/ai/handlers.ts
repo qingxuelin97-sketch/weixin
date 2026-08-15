@@ -34,6 +34,19 @@ import type { EngineHooks } from './engine';
 import type { GroupMember } from './director';
 import { getConvState, putConvState, refineConvState } from './conv-state';
 import { logError } from '../lib/errlog';
+import { maxTier } from '../lib/nsfw-tier';
+import { dmConvId } from './agent-dm';
+import { extractJson } from './generate-chain';
+import type { ScheduledActionKind } from '../db/schema';
+import {
+  maybeJointPlan,
+  jointMomentsSystem,
+  parseJointMoments,
+  jointStaggerMs,
+  JOINT_ACTIVITIES,
+  type JointKind,
+} from './social-plans';
+import { canForwardFrom, maybeForward, forwardLine } from './agent-forward';
 
 /**
  * Everything the handlers are allowed to touch. Narrow on purpose: adding a
@@ -100,6 +113,19 @@ export interface HandlerDeps {
   runGift: (p: GiftPayload) => Promise<void>;
   /** Raise an incoming-call overlay. Returns false if it could not ring. */
   ringUser: (convId: string, contactId: string, reason: string) => boolean;
+
+  // --- social fabric (M-I3) ---
+  /** Publish a moment directly (joint plans write both sides themselves). */
+  addMoment: (m: MomentVM) => Promise<void>;
+  /** Queue a scheduled action. Stable id = idempotent upsert (see scheduler). */
+  enqueue: (opts: {
+    kind: ScheduledActionKind;
+    fireAt: number;
+    payload: Record<string, unknown>;
+    id?: string;
+  }) => Promise<void>;
+  /** The contact's user-visible 1:1 thread, if any. Hidden DMs never match. */
+  visibleConvWithUser: (contactId: string) => ConversationVM | undefined;
 
   // --- chaining ---
   chainHeartbeat: (persona: PersonaVM, convId: string, lastMsgAt?: number) => Promise<void>;
@@ -333,7 +359,155 @@ export async function handleAgentDm(
 ): Promise<void> {
   const plan = dmPlanFrom(payload, d.now());
   if (!plan) return;
-  await d.runAgentDm(plan);
+  const ok = await d.runAgentDm(plan);
+  if (!ok) return;
+
+  // Social fabric (M-I3): a completed private exchange occasionally hatches
+  // visible consequences. Both decisions are pure and seeded off the DM's
+  // identity, and both enqueue with STABLE ids — replaying this handler
+  // (backfill, retry) upserts the same rows instead of multiplying them.
+  const now = d.now();
+  const dmId = dmConvId(plan.a, plan.b);
+  try {
+    const jp = maybeJointPlan(dmId, now);
+    if (jp) {
+      await d.enqueue({
+        kind: 'joint_plan',
+        fireAt: jp.fireAt,
+        payload: { a: plan.a, b: plan.b, kind: jp.kind, dmId, at: jp.fireAt },
+        id: `joint_${dmId}_${jp.fireAt}`,
+      });
+    }
+    // A forward quotes the user's own words into the group — allowed ONLY
+    // from a user-visible thread. The hidden DM that triggered this handler
+    // is never a quotable source; `maybeForward` re-checks that too.
+    const src = d.visibleConvWithUser(plan.a);
+    if (src) {
+      const lastUser = [...d.messagesFor(src.id)]
+        .reverse()
+        .find((m) => m.senderId === 'self' && m.type === 'text' && m.content && !m.isRecalled);
+      const fw = maybeForward(src, lastUser?.content, dmId, now);
+      if (fw) {
+        await d.enqueue({
+          kind: 'agent_forward',
+          fireAt: fw.fireAt,
+          payload: {
+            speakerId: plan.a,
+            sourceConvId: src.id,
+            groupId: plan.groupId,
+            quote: fw.quote,
+            at: fw.fireAt,
+          },
+          id: `fwd_${dmId}_${fw.fireAt}`,
+        });
+      }
+    }
+  } catch (e) {
+    logError('social.hatch', e); // the DM itself succeeded — never undo that
+  }
+}
+
+/* --------------------------- social fabric (M-I3) --------------------------- */
+
+/**
+ * A joint plan materializes: ONE LLM call writes BOTH members' moments about
+ * the same outing, staggered by a believable gap. Either contact having been
+ * deleted since the plan was hatched drops the whole thing silently.
+ */
+export async function handleJointPlan(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const a = str(payload.a);
+  const b = str(payload.b);
+  const kindRaw = str(payload.kind);
+  const dmId = str(payload.dmId);
+  if (!(kindRaw in JOINT_ACTIVITIES)) return;
+  const kind = kindRaw as JointKind;
+  const ca = d.contactById(a);
+  const cb = d.contactById(b);
+  const pa = d.personaFor(a);
+  const pb = d.personaFor(b);
+  if (!ca || !cb || !pa || !pb) return;
+  const at = optNum(payload.at) ?? d.now();
+
+  const router = await d.getRouter();
+  // Rule #6: the pair's real tier, derived — moments are user-visible surface.
+  const tier = maxTier(await d.getGlobalTier(), [pa, pb]);
+  const raw = await router.complete(
+    {
+      role: 'chat',
+      nsfwTier: tier,
+    },
+    {
+      messages: [
+        {
+          role: 'system',
+          content: jointMomentsSystem(
+            kind,
+            { name: ca.remark ?? ca.name, style: pa.speechStyle },
+            { name: cb.remark ?? cb.name, style: pb.speechStyle },
+          ),
+        },
+        { role: 'user', content: '写吧。' },
+      ],
+      json: true,
+      maxTokens: 300,
+    },
+    {},
+    `joint:${dmId}`,
+  );
+  const texts = parseJointMoments(extractJson(raw.text));
+  if (!texts) return;
+
+  await d.addMoment({
+    id: `m_joint_${dmId}_${at}_a`,
+    authorId: a,
+    text: texts.a,
+    imageRefs: [],
+    isNsfw: false,
+    createdAt: at,
+  });
+  await d.addMoment({
+    id: `m_joint_${dmId}_${at}_b`,
+    authorId: b,
+    text: texts.b,
+    imageRefs: [],
+    isNsfw: false,
+    createdAt: at + jointStaggerMs(dmId, at),
+  });
+}
+
+/**
+ * A planned forward fires. The hidden-source check runs AGAIN here — the
+ * plan-time check protects the queue, this one protects the screen, and the
+ * screen is the one that cannot be un-shown.
+ */
+export async function handleAgentForward(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const speakerId = str(payload.speakerId);
+  const sourceConvId = str(payload.sourceConvId);
+  const groupId = str(payload.groupId);
+  const quote = str(payload.quote);
+  if (!speakerId || !sourceConvId || !groupId || !quote.trim()) return;
+
+  const src = d.conversationById(sourceConvId);
+  if (!canForwardFrom(src)) return; // hidden content NEVER leaves verbatim
+
+  const group = d.conversationById(groupId);
+  if (!group || group.type !== 'group' || group.isHidden) return;
+  if (!(group.memberIds ?? []).includes(speakerId)) return; // left the room since
+
+  await d.hooks.appendMessage({
+    convId: groupId,
+    senderId: speakerId,
+    type: 'text',
+    content: forwardLine(quote),
+    status: 'sent',
+    createdAt: optNum(payload.at) ?? d.now(),
+  });
 }
 
 /* ------------------------------ moments ------------------------------ */

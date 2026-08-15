@@ -358,6 +358,10 @@ export const SCHEDULED_ACTION_KINDS = [
   'ai_money',
   /** She calls YOU. The most intrusive thing this app can do; see call-motive. */
   'ai_call',
+  /** Two AIs' DM hatched a plan that later materializes as paired moments (M-I3). */
+  'joint_plan',
+  /** An AI carries a line from a USER-VISIBLE conversation into a group (M-I3). */
+  'agent_forward',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];
