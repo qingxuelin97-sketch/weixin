@@ -23,6 +23,12 @@ import { getDrift, explainDrift, resetDrift, type DriftExplanation } from '../..
 import { importStCard, exportStCard } from '../../ai/sillytavern';
 import { saveTextFile } from '../../lib/save-file';
 import { logError } from '../../lib/errlog';
+import { humanizePersona, HUMANIZE_LEVEL_LABELS, type HumanizeLevel } from '../../ai/humanize';
+import { applyPersonaPatch } from '../../data/persona-patch';
+import { HumanizeDiffSheet } from './HumanizeDiffSheet';
+import { showActionSheet } from '../../components/dialog';
+import { getRouter } from '../../llm/service';
+import { globalTier } from '../../lib/nsfw-tier';
 import './settings.css';
 import { Switch } from '../../components/Switch';
 
@@ -133,6 +139,53 @@ export function PersonaEditPage() {
     await putPersona(p);
     showToast('已保存');
     navigate(-1);
+  };
+
+  // 一键拟人化 (M-I2): pick a level → chain → per-field diff → apply as PATCH.
+  // Fills the form like the ST import does; nothing lands until 保存.
+  const [hBusy, setHBusy] = useState(false);
+  const [hPatch, setHPatch] = useState<Partial<PersonaVM> | null>(null);
+  const humanize = async () => {
+    if (hBusy) return;
+    const levels: HumanizeLevel[] = ['light', 'medium', 'heavy'];
+    const idx = await showActionSheet({
+      title: '拟人化力度',
+      actions: levels.map((l) => HUMANIZE_LEVEL_LABELS[l]),
+    });
+    if (idx == null) return;
+    setHBusy(true);
+    try {
+      const router = await getRouter();
+      // Rule #6: the tier is derived from the global setting, never declared.
+      const tier = await globalTier();
+      const out = await humanizePersona(
+        p,
+        contact?.remark ?? contact?.name ?? '她',
+        levels[idx],
+        {
+          complete: async (messages, opts) =>
+            (
+              await router.complete(
+                { role: 'reasoning', nsfwTier: tier },
+                { messages, json: opts.json, maxTokens: opts.maxTokens, temperature: 0.9 },
+                {},
+                `humanize:${contactId}`,
+              )
+            ).text,
+          onProgress: (note) => showToast(note),
+        },
+      );
+      if (!out.ok || !out.value) {
+        showToast(out.error ?? '拟人化失败');
+        return;
+      }
+      setHPatch(out.value);
+    } catch (err) {
+      logError('persona.humanize', err);
+      showToast('拟人化失败');
+    } finally {
+      setHBusy(false);
+    }
   };
 
   // Relations targets: the user + every OTHER AI contact.
@@ -505,6 +558,15 @@ export function PersonaEditPage() {
             already owns is unreachable, and every character made here is
             trapped inside this app. */}
         <div className="settings__group">
+          <div className="settings__group-title">一键拟人化</div>
+          <div className="settings__row" role="button" onClick={() => guard('persona.humanize', humanize)}>
+            <span className="settings__label">{hBusy ? '正在改写…' : 'AI 给这张卡加人味'}</span>
+            <span className="settings__value">逐字段可选</span>
+            <span className="settings__chevron">›</span>
+          </div>
+        </div>
+
+        <div className="settings__group">
           <div className="settings__group-title">角色卡（SillyTavern V2）</div>
           <label className="settings__row">
             <span className="settings__label">导入角色卡</span>
@@ -526,6 +588,24 @@ export function PersonaEditPage() {
           保存
         </button>
       </div>
+
+      {hPatch && (
+        <HumanizeDiffSheet
+          open
+          original={p}
+          patch={hPatch}
+          onClose={() => setHPatch(null)}
+          onApply={(accepted) => {
+            // Patch semantics end to end: only accepted fields move, locked
+            // fields can't move even if the model tried (applyPersonaPatch
+            // strips them again as the last line of defense).
+            const { persona } = applyPersonaPatch(p, accepted);
+            setP(persona);
+            setHPatch(null);
+            showToast('已应用，确认后记得保存');
+          }}
+        />
+      )}
     </>
   );
 }
