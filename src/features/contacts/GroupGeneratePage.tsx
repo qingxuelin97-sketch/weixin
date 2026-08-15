@@ -24,7 +24,9 @@ import {
   buildGroup,
   newBuildState,
   isBuildComplete,
-  BUILD_STATE_KEY,
+  buildStateKey,
+  ACTIVE_BUILD_KEY,
+  LEGACY_BUILD_STATE_KEY,
   type BuildState,
 } from '../../ai/group-build';
 import { repo } from '../../db/repo';
@@ -56,17 +58,28 @@ export function GroupGeneratePage() {
 
   // An unfinished build from a previous visit. The contacts it already made
   // are in the database; without this the user would generate — and pay for —
-  // a second copy of every one of them.
+  // a second copy of every one of them. States are keyed per conversation
+  // (M-I1); the active pointer names the one this page should offer to resume.
+  // Pre-I1 installs may still hold the old singleton row — migrate it once.
   useEffect(() => {
-    void repo
-      .getSetting<BuildState>(BUILD_STATE_KEY)
-      .then((saved) => {
-        if (!saved?.blueprint?.members?.length || isBuildComplete(saved)) return;
-        stateRef.current = saved;
-        setBp(saved.blueprint);
-        setSize(saved.blueprint.members.length);
-      })
-      .catch(() => {});
+    void (async () => {
+      let saved = await repo.getSetting<string>(ACTIVE_BUILD_KEY).then((convId) =>
+        convId ? repo.getSetting<BuildState>(buildStateKey(convId)) : undefined,
+      );
+      if (!saved) {
+        const legacy = await repo.getSetting<BuildState>(LEGACY_BUILD_STATE_KEY);
+        if (legacy?.blueprint?.members?.length) {
+          await repo.putSetting(buildStateKey(legacy.convId), legacy);
+          await repo.putSetting(ACTIVE_BUILD_KEY, legacy.convId);
+          await repo.putSetting(LEGACY_BUILD_STATE_KEY, undefined);
+          saved = legacy;
+        }
+      }
+      if (!saved?.blueprint?.members?.length || isBuildComplete(saved)) return;
+      stateRef.current = saved;
+      setBp(saved.blueprint);
+      setSize(saved.blueprint.members.length);
+    })().catch(() => {});
   }, []);
 
   const complete = async (
@@ -102,7 +115,9 @@ export function GroupGeneratePage() {
         return;
       }
       setBp(out.value);
-      stateRef.current = newBuildState(out.value, Date.now());
+      const fresh = newBuildState(out.value, Date.now());
+      stateRef.current = fresh;
+      await repo.putSetting(ACTIVE_BUILD_KEY, fresh.convId).catch(() => {});
     } catch (e) {
       logError('group.blueprint', e);
       setError(e instanceof Error ? e.message : '生成失败');
@@ -170,7 +185,7 @@ export function GroupGeneratePage() {
         // Checkpoint after every member, so a reload does not turn 7 paid-for
         // cards into 7 duplicate contacts on the next attempt.
         saveState: async (s) => {
-          await repo.putSetting(BUILD_STATE_KEY, s).catch(() => {});
+          await repo.putSetting(buildStateKey(s.convId), s).catch(() => {});
         },
         now: () => Date.now(),
         onProgress: (note, done, total) => setProgress(`${note}（${done}/${total}）`),
@@ -184,7 +199,10 @@ export function GroupGeneratePage() {
         out.skipped.length ? `建好了，${out.skipped.length} 人没写成，可再点一次续写` : '群建好了',
       );
       if (!cancelRef.current) {
-        await repo.putSetting(BUILD_STATE_KEY, { ...state, historyDone: true }).catch(() => {});
+        await repo
+          .putSetting(buildStateKey(state.convId), { ...state, historyDone: true })
+          .catch(() => {});
+        await repo.putSetting(ACTIVE_BUILD_KEY, '').catch(() => {});
         navigate(`/chat/${out.convId}`, { replace: true });
       }
     } catch (e) {

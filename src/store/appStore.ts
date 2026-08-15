@@ -28,6 +28,7 @@ import { registerMediaMeta, materializeMedia } from '../data/media-registry';
 import { makePersona } from '../data/persona-defaults';
 import { recordRelEvent } from '../ai/relationship';
 import { cancelActionsForConversation } from '../ai/scheduler';
+import { abortConversation } from '../ai/engine';
 import { logError } from '../lib/errlog';
 
 /** A like warms the (liker, author) edge — fire-and-forget, never blocks UI. */
@@ -108,6 +109,11 @@ interface AppState {
   addConversation: (c: ConversationVM) => Promise<void>;
   putPersona: (p: PersonaVM) => Promise<void>;
   putContact: (c: ContactVM) => Promise<void>;
+  /**
+   * Remove a contact and every trace of them (M-I1). Orchestrates: abort any
+   * in-flight generation for their threads → repo cascade → in-memory mirror.
+   */
+  deleteContact: (id: string) => Promise<void>;
   loadMoments: (force?: boolean) => Promise<void>;
   addMoment: (m: MomentVM) => Promise<void>;
   /** Add or remove a like. Returns true if the moment is liked afterwards. */
@@ -416,6 +422,63 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.contacts.map((x) => (x.id === c.id ? c : x))
         : [...s.contacts, c],
     }));
+  },
+
+  deleteContact: async (id) => {
+    // Abort BEFORE the rows go: a reply landing after the cascade would
+    // recreate messages for a thread whose contact no longer exists.
+    const s0 = get();
+    const deadConvs = s0.conversations.filter(
+      (c) =>
+        c.type === 'single' &&
+        (c.peerId === id || (c.isHidden && (c.memberIds ?? []).includes(id))),
+    );
+    for (const c of deadConvs) abortConversation(c.id);
+
+    await repo.deleteContact(id);
+
+    // Mirror the cascade's visible slice in memory. Cheaper and less
+    // disruptive than a full re-hydrate, and exact because the repo cascade's
+    // rules are restated here 1:1 for the four stores the UI holds.
+    set((s) => {
+      const deadIds = new Set(deadConvs.map((c) => c.id));
+      const messages = { ...s.messages };
+      for (const cid of deadIds) delete messages[cid];
+      const personas: typeof s.personas = {};
+      for (const [pid, p] of Object.entries(s.personas)) {
+        if (pid === id) continue;
+        personas[pid] = id in p.relations
+          ? { ...p, relations: Object.fromEntries(Object.entries(p.relations).filter(([k]) => k !== id)) }
+          : p;
+      }
+      const deadMoments = new Set(s.moments.filter((m) => m.authorId === id).map((m) => m.id));
+      const momentLikes: typeof s.momentLikes = {};
+      for (const [mid, ls] of Object.entries(s.momentLikes)) {
+        if (deadMoments.has(mid)) continue;
+        momentLikes[mid] = ls.filter((l) => l.contactId !== id);
+      }
+      const momentComments: typeof s.momentComments = {};
+      for (const [mid, cs] of Object.entries(s.momentComments)) {
+        if (deadMoments.has(mid)) continue;
+        momentComments[mid] = cs.filter((c) => c.authorId !== id);
+      }
+      return {
+        contacts: s.contacts.filter((c) => c.id !== id),
+        personas,
+        conversations: s.conversations
+          .filter((c) => !deadIds.has(c.id))
+          .map((c) =>
+            c.type === 'group' && c.memberIds?.includes(id)
+              ? { ...c, memberIds: c.memberIds.filter((m) => m !== id) }
+              : c,
+          ),
+        messages,
+        moments: s.moments.filter((m) => !deadMoments.has(m.id)),
+        momentLikes,
+        momentComments,
+        activeConvId: s.activeConvId && deadIds.has(s.activeConvId) ? null : s.activeConvId,
+      };
+    });
   },
 
   /**

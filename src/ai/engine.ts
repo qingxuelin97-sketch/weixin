@@ -73,6 +73,19 @@ function releaseInFlight(convId: string, ctrl: AbortController): void {
   if (inFlight.get(convId) === ctrl) inFlight.delete(convId);
 }
 
+/**
+ * Hard-stop whatever this conversation is generating (M-I1).
+ *
+ * Exists for the deleteContact cascade: a reply that lands AFTER its thread
+ * was deleted re-creates message rows for a conversation that no longer has a
+ * contact. The map slot is cleared too — this abort is deliberate teardown,
+ * not a takeover by a newer send.
+ */
+export function abortConversation(convId: string): void {
+  inFlight.get(convId)?.abort();
+  inFlight.delete(convId);
+}
+
 const RECENT_WINDOW = 30; // messages of context sent to the model
 
 /** Threads already followed up on. One question per thread, ever. */

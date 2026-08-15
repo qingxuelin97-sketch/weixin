@@ -20,6 +20,7 @@
  */
 import type { ContactVM, ConversationVM, MessageVM, PersonaVM } from '../data/types';
 import { AVATAR_PALETTE } from '../data/avatar-palette';
+import { mergeRelationEdges } from '../data/persona-patch';
 import { relationsFor, stampHistory, type GroupBlueprint } from './group-generate';
 
 /** Everything the build needs from the outside world. */
@@ -45,6 +46,18 @@ export interface BuildDeps {
   now: () => number;
   onProgress?: (note: string, done: number, total: number) => void;
   cancelled?: () => boolean;
+  /**
+   * The conversation this build targets, when it already exists (rebuild).
+   * A hit switches step 3 from "create the room" to "merge into the room":
+   * union rosters, keep pin/mute/unread, adopt the blueprint's title.
+   */
+  getConversation?: (id: string) => Promise<ConversationVM | undefined>;
+  /**
+   * Newest existing message's timestamp for the target conversation.
+   * The seeded backlog is floored here — a fabricated line stamped before a
+   * real message breaks `rowid order == time order` (CLAUDE.md §3.5).
+   */
+  latestMessageAt?: (convId: string) => Promise<number | undefined>;
 }
 
 export interface BuildState {
@@ -59,15 +72,22 @@ export interface BuildState {
 }
 
 /**
- * Where an unfinished build is parked.
+ * Where an unfinished build is parked — one row PER TARGET CONVERSATION.
  *
- * One row, because there is only ever one build in flight — and because a
- * half-built group is not something to accumulate. It matters that this
- * survives a reload: the CONTACTS are already in the database by then, so a
- * user who reloads mid-build and starts over gets a second copy of everyone
- * they already paid for.
+ * The old singleton (`groupBuild`) meant a rebuild of group A silently
+ * clobbered the resume state of a half-built group B, turning B's paid-for
+ * cards into duplicates on the next attempt. Keying by convId (precedent:
+ * `topic:<convId>`) makes concurrent states coexist; the ACTIVE pointer is
+ * only a convenience for "continue where I left off" on the generate page.
+ * It matters that states survive a reload: the CONTACTS are already in the
+ * database by then, so a user who reloads mid-build and starts over gets a
+ * second copy of everyone they already paid for.
  */
-export const BUILD_STATE_KEY = 'groupBuild';
+export const buildStateKey = (convId: string) => `groupBuild:${convId}`;
+/** Points at the convId of the most recent unfinished build ('' = none). */
+export const ACTIVE_BUILD_KEY = 'groupBuildActive';
+/** The pre-I1 singleton row — read once for migration, never written again. */
+export const LEGACY_BUILD_STATE_KEY = 'groupBuild';
 
 export function newBuildState(blueprint: GroupBlueprint, now: number): BuildState {
   const id = `g${now.toString(36)}`;
@@ -79,6 +99,29 @@ export function newBuildState(blueprint: GroupBlueprint, now: number): BuildStat
     failed: [],
     historyDone: false,
   };
+}
+
+/**
+ * A build state bound to an EXISTING group (一键重新配置).
+ *
+ * Blueprint members whose name matches a current member reuse that member's
+ * contact — their card is already paid for, so they are pre-marked `made` and
+ * the build only generates the genuinely new people. Existing members the
+ * blueprint doesn't mention stay in the room (step 3 unions rosters).
+ */
+export function rebuildState(
+  blueprint: GroupBlueprint,
+  convId: string,
+  existingByName: Record<string, string>,
+  now: number,
+): BuildState {
+  const state = newBuildState(blueprint, now);
+  state.convId = convId;
+  for (const m of blueprint.members) {
+    const contactId = existingByName[m.name];
+    if (contactId) state.made[m.key] = contactId;
+  }
+  return state;
 }
 
 /**
@@ -154,6 +197,11 @@ export async function buildGroup(state: BuildState, deps: BuildDeps): Promise<Bu
   // Written in a second pass on purpose: member 3's card cannot reference
   // member 9's contact id before member 9 has one, and a relations map keyed
   // by a blueprint key would silently resolve to nothing in the prompt layer.
+  //
+  // MERGED per edge, never replaced: a rebuild runs this pass over members
+  // who already have lives outside this group, and a wholesale `relations:`
+  // write would wipe every edge toward people the blueprint has never heard
+  // of — irreversible social amnesia that nothing would ever report.
   for (const m of blueprint.members) {
     const contactId = state.made[m.key];
     if (!contactId) continue;
@@ -161,32 +209,44 @@ export async function buildGroup(state: BuildState, deps: BuildDeps): Promise<Bu
     // Never write a card we could not read: a patch built from a guess would
     // overwrite a perfectly good generated persona with an empty one.
     if (!stored) continue;
-    const relations: Record<string, string> = {};
+    const edges: Record<string, string> = {};
     for (const [key, text] of Object.entries(relationsFor(blueprint, m.key))) {
       const id = state.made[key];
-      if (id) relations[id] = text;
+      if (id) edges[id] = text;
     }
-    if (Object.keys(relations).length === 0) continue;
-    await deps.putPersona({ ...stored, relations });
+    const merged = mergeRelationEdges(stored, edges);
+    if (merged !== stored) await deps.putPersona(merged);
   }
 
-  // 3) The conversation itself.
+  // 3) The conversation itself — created fresh, or merged into the existing
+  // room when this is a rebuild (union rosters, keep the user's pin/mute
+  // state, adopt the blueprint's title and announcement).
   const now = deps.now();
-  await deps.addConversation({
-    id: state.convId,
-    type: 'group',
-    title: blueprint.title,
-    avatarColor: avatarColor(0),
-    avatarText: blueprint.title.slice(0, 1),
-    memberIds: created,
-    isPinned: false,
-    isMuted: false,
-    unreadCount: 0,
-    mentionMe: false,
-    lastMsgPreview: '',
-    lastMsgAt: now,
-    announcement: blueprint.announcement,
-  });
+  const existing = await deps.getConversation?.(state.convId);
+  if (existing) {
+    await deps.addConversation({
+      ...existing,
+      title: blueprint.title || existing.title,
+      announcement: blueprint.announcement ?? existing.announcement,
+      memberIds: [...new Set([...(existing.memberIds ?? []), ...created])],
+    });
+  } else {
+    await deps.addConversation({
+      id: state.convId,
+      type: 'group',
+      title: blueprint.title,
+      avatarColor: avatarColor(0),
+      avatarText: blueprint.title.slice(0, 1),
+      memberIds: created,
+      isPinned: false,
+      isMuted: false,
+      unreadCount: 0,
+      mentionMe: false,
+      lastMsgPreview: '',
+      lastMsgAt: now,
+      announcement: blueprint.announcement,
+    });
+  }
 
   // 4) A short backlog, so the group does not open as an empty room.
   if (!state.historyDone && created.length > 0 && !deps.cancelled?.()) {
@@ -202,8 +262,11 @@ export async function buildGroup(state: BuildState, deps: BuildDeps): Promise<Bu
       .slice(0, 30);
     // Timestamps must never predate the conversation's own newest message —
     // the row is inserted NOW, and an older stamp inverts `rowid order == time
-    // order`, which is what cursor pagination is built on.
-    for (const l of stampHistory(usable, now, undefined)) {
+    // order`, which is what cursor pagination is built on. For a fresh group
+    // there is nothing to floor on; for a rebuild the floor is the newest real
+    // message, asked from the caller because only storage knows it.
+    const floorAt = await deps.latestMessageAt?.(state.convId);
+    for (const l of stampHistory(usable, now, floorAt)) {
       await deps.appendMessage({
         convId: state.convId,
         senderId: state.made[l.speaker],

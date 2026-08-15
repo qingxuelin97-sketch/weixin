@@ -45,6 +45,12 @@ export interface Repo {
   getContacts(): Promise<ContactVM[]>;
   getContact(id: string): Promise<ContactVM | undefined>;
   putContact(c: ContactVM): Promise<void>;
+  /**
+   * Delete a contact AND every trace of them the app would trip over later —
+   * the first (and only) contact-deletion path in the codebase. See
+   * `DELETE_CONTACT_CASCADE` for the per-store ledger and the guard test.
+   */
+  deleteContact(id: string): Promise<void>;
   getPersona(contactId: string): Promise<PersonaVM | undefined>;
   putPersona(p: PersonaVM): Promise<void>;
 
@@ -119,6 +125,38 @@ export interface Repo {
  */
 const DEFAULT_MOMENTS_PAGE = 60;
 
+/**
+ * The deleteContact ledger: EVERY object store, classified.
+ *
+ * 'cascade' — deleteContact removes (or patches away) this store's traces of
+ * the contact. 'exempt' — deliberately untouched, with the reason beside it.
+ * A guard test asserts this ledger covers exactly the stores mounted in
+ * idb.ts, so adding a store without deciding what deletion means for it turns
+ * the suite red (the same shape as the SCHEDULED_ACTION_KINDS ledger).
+ */
+export const DELETE_CONTACT_CASCADE: Record<string, 'cascade' | 'exempt'> = {
+  contacts: 'cascade',
+  personas: 'cascade',
+  conversations: 'cascade', // the 1:1 thread, hidden DMs, group roster patches
+  messages: 'cascade', // via deleteConversation of the dead threads
+  memory_facts: 'cascade', // rows whose subject is the contact
+  conv_summaries: 'cascade', // via deleteConversation
+  scheduled_actions: 'cascade', // rows whose payload names the contact or a dead thread
+  settings: 'cascade', // affect/drift/threads/stance/relarc + per-dead-conv keys
+  moments: 'cascade', // authored posts + their social rows
+  moment_likes: 'cascade', // likes BY the contact anywhere, likes ON their posts
+  moment_comments: 'cascade',
+  providers: 'exempt', // app-level API config, not per-contact
+  red_packets: 'exempt', // money is a LEDGER: deleting a person must not delete
+  rp_claims: 'exempt', //   the record of money that actually moved (整数分不蒸发)
+  transfers: 'exempt',
+  wallet_tx: 'exempt',
+  tts_cache: 'exempt', // content-addressed by text hash; harmless orphans, GC'd by size
+  media: 'exempt', // the user's own library — avatars are assigned, not owned
+  story_scripts: 'exempt', // scripts reference roles, not contact ids
+  story_saves: 'exempt',
+};
+
 export class IdbRepo implements Repo {
   async getContacts() {
     return idbGetAll<ContactVM>('contacts');
@@ -128,6 +166,109 @@ export class IdbRepo implements Repo {
   }
   async putContact(c: ContactVM) {
     await idbPut('contacts', c);
+  }
+
+  /**
+   * The cascade. Ordered so an interruption leaves the WORLD consistent and
+   * only the contact row itself possibly surviving (a re-run then finishes the
+   * job): references to the contact go first, the contact goes last.
+   */
+  async deleteContact(id: string) {
+    // 'self' is the user in every senderId; deleting it would be deleting the
+    // account, which no UI offers and no cascade could make sensible.
+    if (id === 'self' || id === 'user') throw new Error(`refusing to delete ${id}`);
+
+    // 1) Threads that die with the contact: their 1:1 chat, and every hidden
+    //    AI↔AI DM they are half of (`dm_a_b` rows are single+hidden with the
+    //    pair in memberIds).
+    const convs = await this.getConversations();
+    const dead = convs.filter(
+      (c) =>
+        c.type === 'single' &&
+        (c.peerId === id || (c.isHidden && (c.memberIds ?? []).includes(id))),
+    );
+    const deadIds = new Set(dead.map((c) => c.id));
+
+    // 2) Scheduled actions that name the contact or a dying thread. Payloads
+    //    are JSON strings; ids never contain quotes, so a quoted-substring
+    //    match is exact. Deleted rather than cancelled: a cancelled row still
+    //    references a contact that no longer exists.
+    const actions = await idbGetAll<{ id: string; payloadJson: string }>('scheduled_actions');
+    for (const a of actions) {
+      const hit =
+        a.payloadJson.includes(`"${id}"`) ||
+        [...deadIds].some((cid) => a.payloadJson.includes(`"${cid}"`));
+      if (hit) await idbDelete('scheduled_actions', a.id);
+    }
+
+    // 3) The dead threads themselves (messages + summaries + row).
+    for (const c of dead) await this.deleteConversation(c.id);
+
+    // 4) Group rosters: the contact leaves every group they were in.
+    for (const c of convs) {
+      if (c.type === 'group' && c.memberIds?.includes(id)) {
+        await this.putConversation({ ...c, memberIds: c.memberIds.filter((m) => m !== id) });
+      }
+    }
+
+    // 5) Memory about them (their own facts; group memories are the group's).
+    const facts = await idbGetAllByIndex<MemoryFactVM>('memory_facts', 'bySubject', id);
+    for (const f of facts) await idbDelete('memory_facts', f.id);
+
+    // 6) Every OTHER persona forgets the relation edge — a per-edge patch,
+    //    never a rebuilt relations map (CLAUDE.md: makePersona resets).
+    const contacts = await this.getContacts();
+    for (const c of contacts) {
+      if (c.id === id) continue;
+      const p = await this.getPersona(c.id);
+      if (p && id in p.relations) {
+        const rest = { ...p.relations };
+        delete rest[id];
+        await this.putPersona({ ...p, relations: rest });
+      }
+    }
+
+    // 7) Per-contact settings rows. Contact ids never contain ':', so the
+    //    directional keys are matched exactly from either side.
+    const settingRows = await idbGetAll<{ key: string }>('settings');
+    const isTheirs = (k: string) =>
+      k === `affect:${id}` ||
+      k === `drift:${id}` ||
+      k === `threads:${id}` ||
+      k.startsWith(`stance:${id}:`) ||
+      (k.startsWith('stance:') && k.endsWith(`:${id}`)) ||
+      k.startsWith(`relarc:${id}:`) ||
+      (k.startsWith('relarc:') && k.endsWith(`:${id}`)) ||
+      [...deadIds].some(
+        (cid) =>
+          k === `convstate:${cid}` ||
+          k === `topic:${cid}` ||
+          k === `groupCfg:${cid}` ||
+          k === `groupBuild:${cid}`,
+      );
+    for (const r of settingRows) {
+      if (isTheirs(r.key)) await idbDelete('settings', r.key);
+    }
+
+    // 8) Moments traces: their posts (with all social rows on them), and
+    //    their likes/comments on everyone else's posts.
+    const moments = await idbGetAll<MomentVM>('moments');
+    for (const m of moments) {
+      if (m.authorId !== id) continue;
+      for (const l of await this.getLikes(m.id)) await idbDelete('moment_likes', l.id);
+      for (const cm of await this.getComments(m.id)) await idbDelete('moment_comments', cm.id);
+      await idbDelete('moments', m.id);
+    }
+    for (const l of await idbGetAll<MomentLikeVM>('moment_likes')) {
+      if (l.contactId === id) await idbDelete('moment_likes', l.id);
+    }
+    for (const cm of await idbGetAll<MomentCommentVM>('moment_comments')) {
+      if (cm.authorId === id) await idbDelete('moment_comments', cm.id);
+    }
+
+    // 9) Finally the persona and the contact row itself.
+    await idbDelete('personas', id);
+    await idbDelete('contacts', id);
   }
   async getPersona(contactId: string) {
     return idbGet<PersonaVM>('personas', contactId);
