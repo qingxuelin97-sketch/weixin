@@ -154,6 +154,86 @@ describe('forwarding is free and legible', () => {
   });
 });
 
+describe('the 聚会 arc', () => {
+  it('planning is pure, seeded, and needs an actual group', async () => {
+    const { maybeGroupEvent, GROUP_EVENT_CHANCE_PER_WEEK, GROUP_EVENT_LLM_CALLS_PER_PHASE } =
+      await import('../../src/ai/group-events');
+    expect(GROUP_EVENT_LLM_CALLS_PER_PHASE).toBe(1);
+    expect(maybeGroupEvent('g', ['a', 'b'], T0)).toBeNull(); // two people is a chat, not an event
+    const one = maybeGroupEvent('g1', ['a', 'b', 'c', 'd'], T0);
+    expect(maybeGroupEvent('g1', ['a', 'b', 'c', 'd'], T0)).toEqual(one);
+    let hatched = 0;
+    for (let i = 0; i < 200; i++) if (maybeGroupEvent(`g${i}`, ['a', 'b', 'c'], T0)) hatched++;
+    expect(hatched).toBeGreaterThan(200 * GROUP_EVENT_CHANCE_PER_WEEK * 0.5);
+    expect(hatched).toBeLessThan(200 * GROUP_EVENT_CHANCE_PER_WEEK * 1.8);
+    // Purity: no clock, no dice.
+    const src = readFileSync(resolve(__dirname, '../../src/ai/group-events.ts'), 'utf8');
+    expect(src.includes('Date.now')).toBe(false);
+    expect(src.includes('Math.random')).toBe(false);
+  });
+
+  it('the RSVP round is ONE call that writes every line, names validated', async () => {
+    const { handleGroupEvent } = await import('../../src/ai/handlers');
+    const { RSVP_MAX } = await import('../../src/ai/group-events');
+    let llmCalls = 0;
+    const appended: Array<Omit<MessageVM, 'id'>> = [];
+    const deps = fakeDeps({
+      convs: [groupConv()],
+      appended,
+      complete: () => {
+        llmCalls++;
+        return JSON.stringify([
+          { name: 'ai_b', text: '我有空！几点？' },
+          { name: '不存在的人', text: '我也去' },
+          { name: 'ai_b', text: '重复的第二条' },
+        ]);
+      },
+    });
+    await handleGroupEvent(deps, {
+      convId: 'conv_g', eventId: 'gevt_conv_g_1', initiator: 'ai_a',
+      activity: 'hotpot', phase: 'rsvp', at: T0,
+    });
+    expect(llmCalls).toBe(1); // the cost gate, in vivo
+    // Invented names dropped, one line per person, sender resolved to a real id.
+    expect(appended).toHaveLength(1);
+    expect(appended[0].senderId).toBe('ai_b');
+    expect(appended[0].createdAt).toBeGreaterThan(T0);
+    expect(appended.length).toBeLessThanOrEqual(RSVP_MAX);
+  });
+
+  it('the chain advances propose→rsvp→aftermath and stops at the end or on a dead room', async () => {
+    const { chainGroupEvent } = await import('../../src/ai/handlers');
+    const { nextPhase } = await import('../../src/ai/group-events');
+    expect(nextPhase('propose')).toBe('rsvp');
+    expect(nextPhase('rsvp')).toBe('aftermath');
+    expect(nextPhase('aftermath')).toBeNull();
+    const enqueued: string[] = [];
+    const deps = fakeDeps({ convs: [groupConv()] });
+    deps.enqueue = async (o) => void enqueued.push(`${o.kind}:${o.id}`);
+    await chainGroupEvent(deps, {
+      convId: 'conv_g', eventId: 'e1', phase: 'propose', at: T0,
+    });
+    expect(enqueued).toEqual(['group_event:e1_rsvp']);
+    enqueued.length = 0;
+    await chainGroupEvent(deps, { convId: 'conv_g', eventId: 'e1', phase: 'aftermath', at: T0 });
+    expect(enqueued).toEqual([]); // terminal phase
+    await chainGroupEvent(deps, { convId: 'gone', eventId: 'e1', phase: 'propose', at: T0 });
+    expect(enqueued).toEqual([]); // deleted room stops the chain
+  });
+
+  it('an initiator who left the room cancels the phase', async () => {
+    const { handleGroupEvent } = await import('../../src/ai/handlers');
+    const g = groupConv();
+    g.memberIds = ['ai_b']; // initiator ai_a was removed
+    const appended: Array<Omit<MessageVM, 'id'>> = [];
+    const deps = fakeDeps({ convs: [g], appended, complete: () => '[]' });
+    await handleGroupEvent(deps, {
+      convId: 'conv_g', eventId: 'e1', initiator: 'ai_a', activity: 'hike', phase: 'rsvp', at: T0,
+    });
+    expect(appended).toEqual([]);
+  });
+});
+
 /* ------------------------------ fakes ------------------------------ */
 
 function groupConv(): ConversationVM {

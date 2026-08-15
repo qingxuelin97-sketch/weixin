@@ -362,6 +362,8 @@ export const SCHEDULED_ACTION_KINDS = [
   'joint_plan',
   /** An AI carries a line from a USER-VISIBLE conversation into a group (M-I3). */
   'agent_forward',
+  /** 聚会 arc: propose → rsvp → aftermath, three chained phases (M-I3). */
+  'group_event',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

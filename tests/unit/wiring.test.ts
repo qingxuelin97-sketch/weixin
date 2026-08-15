@@ -31,7 +31,7 @@ const runtime = read('src/app/useSchedulerRuntime.ts');
  * enqueued before the work that can fail, or one failure ends the chain
  * forever — there is nothing left to re-trigger it.
  */
-const SELF_CHAINING = ['heartbeat', 'agent_dm', 'moment_post', 'story_tick'] as const;
+const SELF_CHAINING = ['heartbeat', 'agent_dm', 'moment_post', 'story_tick', 'group_event'] as const;
 
 describe('self-chaining kinds are actually chained', () => {
   for (const kind of SELF_CHAINING) {

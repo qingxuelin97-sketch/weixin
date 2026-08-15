@@ -54,6 +54,8 @@ import {
   handleAiCall,
   handleJointPlan,
   handleAgentForward,
+  handleGroupEvent,
+  chainGroupEvent as chainGroupEventStep,
   chainHeartbeat as chainHeartbeatStep,
   chainAgentDm as chainAgentDmStep,
   chainMomentPost as chainMomentPostStep,
@@ -67,6 +69,7 @@ import { syncNotifications } from '../ai/notify-service';
 import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
 import { getGroupCfg, activityMultiplier } from '../ai/group-config';
+import { maybeGroupEvent } from '../ai/group-events';
 import { repo } from '../db/repo';
 import { useAppStore } from '../store/appStore';
 
@@ -303,6 +306,12 @@ export function useSchedulerRuntime(enabled: boolean): void {
       chain: (p) => chainMomentPostStep(deps, p),
       work: (p) => handleMomentPost(deps, p),
     });
+    // 聚会 arc (M-I3): propose → rsvp → aftermath. Chained so one flaky call
+    // costs one phase, not the whole event.
+    registerChainedHandler('group_event', {
+      chain: (p) => chainGroupEventStep(deps, p),
+      work: (p) => handleGroupEvent(deps, p),
+    });
 
     startScheduler();
     void foregroundPass();
@@ -462,6 +471,34 @@ async function runForegroundPass(): Promise<void> {
   } catch {
     // A failed backfill must never block startup — the app still works, it
     // just doesn't show a fabricated absence this time.
+  }
+
+  // 1.5) Group events (M-I3): each group rolls its seeded weekly dice. The
+  // plan is deterministic, so the actionExists guard is what makes asking on
+  // every foreground pass safe — the same event id upserts, and a COMPLETED
+  // event must not be re-queued (CLAUDE.md: enqueue upserts by id).
+  for (const g of groupsBase) {
+    try {
+      const ev = maybeGroupEvent(g.convId, g.memberIds, now);
+      if (!ev) continue;
+      if (await actionExists(`${ev.id}_propose`)) continue;
+      await enqueue({
+        kind: 'group_event',
+        fireAt: ev.proposeAt,
+        payload: {
+          convId: g.convId,
+          eventId: ev.id,
+          initiator: ev.initiator,
+          activity: ev.activity,
+          phase: 'propose',
+          at: ev.proposeAt,
+        },
+        now,
+        id: `${ev.id}_propose`,
+      });
+    } catch (e) {
+      logError('gevt.schedule', e);
+    }
   }
 
   // 2) Seed each persona's first heartbeat and Moments post. Without this

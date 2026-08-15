@@ -47,6 +47,18 @@ import {
   type JointKind,
 } from './social-plans';
 import { canForwardFrom, maybeForward, forwardLine } from './agent-forward';
+import {
+  nextPhase,
+  phaseDelayMs,
+  rsvpGapMs,
+  rsvpSystem,
+  parseRsvps,
+  aftermathSystem,
+  EVENT_ACTIVITIES,
+  RSVP_MAX,
+  type EventActivity,
+  type EventPhase,
+} from './group-events';
 
 /**
  * Everything the handlers are allowed to touch. Narrow on purpose: adding a
@@ -476,6 +488,149 @@ export async function handleJointPlan(
     isNsfw: false,
     createdAt: at + jointStaggerMs(dmId, at),
   });
+}
+
+/**
+ * Chain the group event's next phase BEFORE this phase's work runs — a flaky
+ * propose call must not kill the whole arc (the story_tick lesson). A deleted
+ * room, or a terminal phase, simply stops chaining.
+ */
+export async function chainGroupEvent(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const eventId = str(payload.eventId);
+  const next = nextPhase(str(payload.phase));
+  if (!next || !eventId || !d.conversationExists(convId)) return;
+  const at = (optNum(payload.at) ?? d.now()) + phaseDelayMs(next, eventId);
+  await d.enqueue({
+    kind: 'group_event',
+    fireAt: at,
+    payload: { ...payload, phase: next, at },
+    id: `${eventId}_${next}`,
+  });
+}
+
+/**
+ * One phase of the聚会 arc fires. Every phase costs at most ONE LLM call
+ * (GROUP_EVENT_LLM_CALLS_PER_PHASE) — the RSVP round in particular is a
+ * single dispatch that writes every member's line.
+ */
+export async function handleGroupEvent(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const eventId = str(payload.eventId);
+  const initiator = str(payload.initiator);
+  const activityRaw = str(payload.activity);
+  const phase = str(payload.phase) as EventPhase;
+  if (!(activityRaw in EVENT_ACTIVITIES)) return;
+  const activity = activityRaw as EventActivity;
+  const conv = d.conversationById(convId);
+  if (!conv || conv.type !== 'group' || conv.isHidden) return;
+  const memberIds = (conv.memberIds ?? []).filter((id) => d.personaFor(id));
+  if (!memberIds.includes(initiator)) return; // initiator left the room
+  const at = optNum(payload.at) ?? d.now();
+  const nameOf = (id: string) => {
+    const c = d.contactById(id);
+    return c?.remark ?? c?.name ?? id;
+  };
+
+  if (phase === 'propose') {
+    const speaker = {
+      contactId: initiator,
+      name: nameOf(initiator),
+      persona: d.personaFor(initiator),
+    };
+    const tier = maxTier(
+      await d.getGlobalTier(),
+      memberIds.map((id) => d.personaFor(id)),
+    );
+    // Rides the ordinary group proactive machinery — one call, persona voice.
+    await d.sendGroupProactiveMessage(
+      conv,
+      speaker,
+      memberIds.map((id) => ({ contactId: id, name: nameOf(id), persona: d.personaFor(id) })),
+      tier,
+      d.hooks,
+      d.contactById,
+      at,
+      `你想${EVENT_ACTIVITIES[activity]}，现在在群里发起提议，问大家谁有空、定哪天`,
+    );
+    return;
+  }
+
+  if (phase === 'rsvp') {
+    const answering = memberIds.filter((id) => id !== initiator).slice(0, RSVP_MAX);
+    if (answering.length === 0) return;
+    const names = answering.map(nameOf);
+    const tier = maxTier(
+      await d.getGlobalTier(),
+      memberIds.map((id) => d.personaFor(id)),
+    );
+    const router = await d.getRouter();
+    const raw = await router.complete(
+      { role: 'chat', nsfwTier: tier },
+      {
+        messages: [
+          { role: 'system', content: rsvpSystem(activity, names) },
+          { role: 'user', content: '写吧。' },
+        ],
+        json: true,
+        maxTokens: 400,
+      },
+      {},
+      `gevt:${eventId}`,
+    );
+    const lines = parseRsvps(extractJson(raw.text), new Set(names));
+    if (!lines) return;
+    const idByName = new Map(answering.map((id) => [nameOf(id), id]));
+    let t = at;
+    for (let i = 0; i < lines.length; i++) {
+      const senderId = idByName.get(lines[i].name);
+      if (!senderId) continue;
+      t += rsvpGapMs(eventId, i);
+      await d.hooks.appendMessage({
+        convId,
+        senderId,
+        type: 'text',
+        content: lines[i].text,
+        status: 'sent',
+        createdAt: t,
+      });
+    }
+    return;
+  }
+
+  if (phase === 'aftermath') {
+    const router = await d.getRouter();
+    const pInit = d.personaFor(initiator);
+    const tier = maxTier(await d.getGlobalTier(), [pInit]);
+    const raw = await router.complete(
+      { role: 'chat', nsfwTier: tier },
+      {
+        messages: [
+          { role: 'system', content: aftermathSystem(activity, nameOf(initiator)) },
+          { role: 'user', content: '写吧。' },
+        ],
+        maxTokens: 150,
+      },
+      {},
+      `gevt:${eventId}:after`,
+    );
+    const text = raw.text.trim().slice(0, 80);
+    if (!text) return;
+    await d.addMoment({
+      id: `m_${eventId}`,
+      authorId: initiator,
+      text,
+      imageRefs: [],
+      isNsfw: false,
+      createdAt: at,
+    });
+  }
 }
 
 /**
