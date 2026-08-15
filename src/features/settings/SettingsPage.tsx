@@ -128,6 +128,13 @@ export function SettingsPage() {
           </div>
           <div
             className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/worldbook')}
+          >
+            <span className="settings__label">世界书</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
             onClick={() => navigate('/settings/env')}
           >
             <span className="settings__label">环境自检与日志</span>

@@ -98,6 +98,53 @@ describe('matching', () => {
   });
 });
 
+describe('SillyTavern character_book mapping', () => {
+  it('imports the book that used to be silently dropped', async () => {
+    const { importStCard } = await import('../../src/ai/sillytavern');
+    const card = importStCard(
+      {
+        spec: 'chara_card_v2',
+        spec_version: '2.0',
+        data: {
+          name: '小雨',
+          description: '插画师',
+          character_book: {
+            entries: [
+              { keys: ['年糕'], content: '{{char}}的猫叫年糕', enabled: true, insertion_order: 10 },
+              { keys: [], content: '大家都在杭州', constant: true },
+              { keys: ['skip'], content: '', enabled: true }, // empty → skipped
+              { keys: ['off'], content: '停用的', enabled: false }, // disabled → skipped
+            ],
+          },
+        },
+      },
+      'ai_x',
+    );
+    expect(card).not.toBeNull();
+    expect(card!.worldbook).toHaveLength(2);
+    expect(card!.worldbook[0].content).toBe('小雨的猫叫年糕'); // macro expanded
+    expect(card!.worldbook[0].scope).toBe('persona');
+    expect(card!.worldbook[0].scopeId).toBe('ai_x');
+    expect(card!.worldbook[1].keywords).toEqual([]); // constant → keywordless
+    expect(card!.notes.some((n) => n.includes('世界书'))).toBe(true);
+  });
+
+  it('round-trips: export carries the book back out', async () => {
+    const { exportStCard } = await import('../../src/ai/sillytavern');
+    const { makePersona } = await import('../../src/data/persona-defaults');
+    const card = exportStCard('小雨', makePersona({ contactId: 'ai_x', core: 'c' }), {}, [
+      entry({ title: '猫', keywords: ['年糕'], content: '她的猫叫年糕' }),
+    ]);
+    const book = card.data.character_book as { entries: Array<Record<string, unknown>> };
+    expect(book.entries).toHaveLength(1);
+    expect(book.entries[0].keys).toEqual(['年糕']);
+    expect(book.entries[0].comment).toBe('猫');
+    // No entries → no empty book key polluting the card.
+    const bare = exportStCard('x', makePersona({ contactId: 'a', core: 'c' }));
+    expect('character_book' in bare.data).toBe(false);
+  });
+});
+
 describe('storage + wiring', () => {
   it('round-trips through the repo', async () => {
     const e = entry({ id: 'w_rt', title: '往返', content: '存得住' });

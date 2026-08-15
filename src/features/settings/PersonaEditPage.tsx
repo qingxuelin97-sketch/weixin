@@ -114,6 +114,22 @@ export function PersonaEditPage() {
       setP(card.persona);
       setCardNotes(card.notes);
       showToast(`已载入「${card.name}」，确认后再保存`);
+      // character_book (M-I4): the card's world entries, offered separately —
+      // they are additive rows, not form fields, so they save on their own.
+      if (card.worldbook.length) {
+        void showConfirm({
+          title: '导入世界书？',
+          body: `这张卡带了 ${card.worldbook.length} 条世界书条目（只对这个角色生效），要一并导入吗？`,
+          confirmText: '导入',
+        }).then(async (yes) => {
+          if (!yes) return;
+          const now = Date.now();
+          for (const e of card.worldbook) {
+            await repo.putWorldbookEntry({ ...e, createdAt: now }).catch(() => {});
+          }
+          showToast(`已导入 ${card.worldbook.length} 条世界书条目`);
+        });
+      }
       // 拟人化追问 (M-I2): imported cards are the ones most likely to read as
       // generated — offer the rewrite while the card is still under review.
       void showConfirm({
@@ -132,9 +148,13 @@ export function PersonaEditPage() {
   const exportCard = async () => {
     try {
       const name = contact?.remark ?? contact?.name ?? '角色';
+      // This persona's own worldbook entries travel with the card (M-I4).
+      const book = (await repo.getWorldbook()).filter(
+        (e) => e.scope === 'persona' && e.scopeId === contactId,
+      );
       await saveTextFile(
         `${name}.card.json`,
-        JSON.stringify(exportStCard(name, p), null, 2),
+        JSON.stringify(exportStCard(name, p, {}, book), null, 2),
         'application/json',
         '导出角色卡',
       );

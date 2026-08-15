@@ -26,6 +26,7 @@
  */
 import { makePersona } from '../data/persona-defaults';
 import type { PersonaVM } from '../data/types';
+import { clampEntry as clampWorldbookEntry, type WorldbookEntry } from './worldbook';
 
 export const ST_SPEC = 'chara_card_v2';
 
@@ -58,6 +59,13 @@ export interface ImportedCard {
   extensions: Record<string, unknown>;
   /** Non-fatal notes shown to the user ("这张卡有 3 条备用开场白，已保留"). */
   notes: string[];
+  /**
+   * `character_book` entries mapped to this app's worldbook shape (M-I4).
+   * Before this field the book was silently DROPPED on import — the single
+   * biggest loss in the mapping, since long cards keep their world here.
+   * Persona-scoped to the imported contact; saving them is the caller's move.
+   */
+  worldbook: WorldbookEntry[];
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -151,11 +159,79 @@ export function importStCard(raw: unknown, contactId: string): ImportedCard | nu
     fewShots: fewShots.length ? fewShots : (saved.fewShots ?? []),
   });
 
+  const worldbook = importCharacterBook(data, contactId, name);
+  if (worldbook.length) notes.push(`世界书：${worldbook.length} 条条目可导入`);
+
   return {
     name,
     persona,
     extensions: data.extensions ?? {},
     notes,
+    worldbook,
+  };
+}
+
+/**
+ * `character_book.entries` → worldbook rows (M-I4).
+ *
+ * The ST shape: { entries: [{ keys[], content, enabled, insertion_order,
+ * constant, ... }] }. `constant: true` maps to our keywordless "always on";
+ * everything is persona-scoped to the imported contact, clamped like any
+ * authored entry. Unknown/disabled/empty rows are skipped, never fatal.
+ */
+export function importCharacterBook(
+  data: StCardV2['data'],
+  contactId: string,
+  charName: string,
+): WorldbookEntry[] {
+  const book = data.character_book as
+    | { entries?: Array<Record<string, unknown>> }
+    | undefined;
+  if (!book || !Array.isArray(book.entries)) return [];
+  const out: WorldbookEntry[] = [];
+  for (let i = 0; i < book.entries.length && out.length < 50; i++) {
+    const e = book.entries[i];
+    if (!e || typeof e !== 'object') continue;
+    if (e.enabled === false) continue;
+    const content = expandMacros(str(e.content), charName);
+    if (!content) continue;
+    const keys = Array.isArray(e.keys) ? e.keys.map((k) => str(k)).filter(Boolean) : [];
+    out.push(
+      clampWorldbookEntry({
+        id: `wb_${contactId}_${i}`,
+        title: str(e.comment) || str(e.name) || keys[0] || `条目${i + 1}`,
+        keywords: e.constant === true ? [] : keys,
+        content,
+        scope: 'persona',
+        scopeId: contactId,
+        priority:
+          typeof e.insertion_order === 'number'
+            ? Math.min(100, Math.max(0, 100 - e.insertion_order))
+            : 50,
+        enabled: true,
+        createdAt: 0, // stamped by the caller at save time (no clocks here)
+      }),
+    );
+  }
+  return out;
+}
+
+/** Worldbook rows → `character_book` for export. Inverse of the import map. */
+export function exportCharacterBook(entries: WorldbookEntry[]): {
+  entries: Array<Record<string, unknown>>;
+} | undefined {
+  if (!entries.length) return undefined;
+  return {
+    entries: entries.map((e, i) => ({
+      keys: e.keywords,
+      content: e.content,
+      extensions: {},
+      enabled: e.enabled,
+      insertion_order: Math.min(100, Math.max(0, 100 - e.priority)),
+      constant: e.keywords.length === 0,
+      comment: e.title,
+      id: i,
+    })),
   };
 }
 
@@ -170,11 +246,14 @@ export function exportStCard(
   name: string,
   persona: PersonaVM,
   extensions: Record<string, unknown> = {},
+  worldbook: WorldbookEntry[] = [],
 ): StCardV2 {
+  const book = exportCharacterBook(worldbook);
   return {
     spec: ST_SPEC,
     spec_version: '2.0',
     data: {
+      ...(book ? { character_book: book } : {}),
       name,
       description: persona.core,
       personality: persona.speechStyle ?? '',
