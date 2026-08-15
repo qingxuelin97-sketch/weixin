@@ -74,6 +74,15 @@ export interface ChatProvider {
   generate(opts: GenerateOptions): AsyncIterable<Bubble>;
   /** List available model ids (may hit a cache). */
   listModels(): Promise<string[]>;
+  /**
+   * Web-only true SSE (M-I5), optional. `canStream()` gates it per platform —
+   * native buffers whole responses, so on a device the one-shot path is the
+   * correct transport, not a degraded one. Contract: yields whole bubbles;
+   * throws ONLY before the first yield (the router then falls back to the
+   * one-shot ladder); a later break ends the stream quietly.
+   */
+  canStream?(): boolean;
+  generateStream?(opts: GenerateOptions): AsyncIterable<Bubble>;
 }
 
 export type LlmErrorKind =

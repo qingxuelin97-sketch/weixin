@@ -229,6 +229,151 @@ export class OpenAiCompatibleProvider implements ChatProvider {
   }
 
   /**
+   * Web-only true SSE (M-I5): can this provider stream RIGHT NOW?
+   *
+   * Native says no: CapacitorHttp buffers whole responses and cannot be read
+   * incrementally (and, per CLAUDE.md, cannot even be aborted from JS) — on a
+   * device the one-shot path IS the correct transport. Browsers stream.
+   */
+  canStream(): boolean {
+    const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    if (cap?.isNativePlatform?.()) return false;
+    return typeof fetch === 'function' && typeof ReadableStream === 'function';
+  }
+
+  /**
+   * Progressive bubble generation over SSE.
+   *
+   * Yields per COMPLETE bubble (an NDJSON line), never per token: every
+   * downstream consumer — the anti-AI scrub, typing pacing, voice prefetch —
+   * reasons about whole bubbles, and half a sentence on screen is worse than
+   * a short wait. Reasoning models' <think> spans are dropped in-stream.
+   *
+   * Errors THROW only before the first yield (the router then falls back to
+   * the one-shot ladder). After a bubble is out, a broken stream ends the
+   * turn quietly — what is on screen cannot be recalled.
+   */
+  async *generateStream(opts: GenerateOptions): AsyncIterable<Bubble> {
+    const key = await this.cfg.getKey();
+    if (!key) throw new LlmError('auth', `no API key for provider ${this.id}`, 401, this.id);
+    const body = { ...this.buildBody(opts), stream: true };
+    const res = await fetch(this.endpoint(this.cfg.baseUrl, opts), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        ...this.cfg.extraHeaders,
+      },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
+    if (!res.ok || !res.body) {
+      throw this.httpStatusToError(res.status, `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuf = '';
+    let acc = '';
+    let inThink = false;
+    let emitted = 0;
+    const t0 = Date.now();
+    let fullText = '';
+
+    /** Consume completed lines in `acc`, yielding whole bubbles. */
+    const drainLines = function* (self: OpenAiCompatibleProvider): Generator<Bubble> {
+      let nl: number;
+      while ((nl = acc.indexOf('\n')) >= 0) {
+        const line = acc.slice(0, nl).trim();
+        acc = acc.slice(nl + 1);
+        if (!line) continue;
+        for (const b of parseBubbles(line)) yield b;
+      }
+      void self;
+    };
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = sseBuf.indexOf('\n')) >= 0) {
+          const frame = sseBuf.slice(0, idx).trim();
+          sseBuf = sseBuf.slice(idx + 1);
+          if (!frame.startsWith('data:')) continue;
+          const payload = frame.slice(5).trim();
+          if (payload === '[DONE]') continue;
+          let delta = '';
+          try {
+            const j = JSON.parse(payload) as {
+              choices?: Array<{ delta?: { content?: string | null } }>;
+            };
+            delta = j.choices?.[0]?.delta?.content ?? '';
+          } catch {
+            continue; // partial frame or keepalive — never fatal
+          }
+          if (!delta) continue;
+          // Reasoning spans stream inline on some models; drop them whole.
+          let rest = delta;
+          while (rest) {
+            if (inThink) {
+              const end = rest.indexOf('</think>');
+              if (end < 0) {
+                rest = '';
+              } else {
+                rest = rest.slice(end + 8);
+                inThink = false;
+              }
+            } else {
+              const start = rest.indexOf('<think>');
+              if (start < 0) {
+                acc += rest;
+                fullText += rest;
+                rest = '';
+              } else {
+                acc += rest.slice(0, start);
+                fullText += rest.slice(0, start);
+                rest = rest.slice(start + 7);
+                inThink = true;
+              }
+            }
+          }
+          for (const b of drainLines(this)) {
+            emitted++;
+            yield b;
+          }
+        }
+      }
+      // Flush whatever the final line held.
+      if (acc.trim()) {
+        for (const b of parseBubbles(acc.trim())) {
+          emitted++;
+          yield b;
+        }
+      }
+      recordLlmExchange({
+        providerId: this.id,
+        providerKind: this.kind,
+        model: opts.model,
+        latencyMs: Date.now() - t0,
+        request: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+        text: fullText,
+        finishReason: 'stream',
+      });
+    } catch (e) {
+      if (emitted === 0) throw e; // router falls back to the one-shot ladder
+      // Mid-stream break after output: end quietly; the shown bubbles stand.
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        /* already closed */
+      }
+    }
+  }
+
+  /**
    * Live catalog via the OpenAI-compatible GET /models. Gateways rotate their
    * catalogs (Zen especially), so stale hardcoded ids are the #1 cause of
    * "protocol looks broken" 400s — always prefer what the server says.
