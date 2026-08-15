@@ -15,8 +15,11 @@ fixed 浮层（30/50/60/70/80/90/100/1000）、硬件返回键完全没接（真
 | Switch | `src/components/Switch.tsx` | 受控组件；**类名与旧 span 字节相同**（golden 不动），补 `role="switch"` 与焦点 |
 | dismiss 栈 | `src/app/dismiss-stack.ts` | 模块级栈；浮层挂载时 `pushDismiss(close)`，卸载时反注册 |
 | 返回键 | `src/app/useBackButton.ts` | 顶层浮层 → 页面栈 pop → tab 根最小化（**永不 exitApp**，微信是最小化） |
-| 浮层皮肤 | `src/components/overlay.css` | 微信样式对话框/动作面板；z 只用 token |
-| z 层级 | `tokens.css` `--z-*` | shell 10 / msg-menu 30 / list-overlay 50 / picker 60 / forward 70 / viewer 80 / call 90 / rp-open 100 / dialog 120 / toast 1000 |
+| dismiss 桥 | `src/app/useDismissable.ts` | 声明式挂接：`useDismissable(open, close)`；close 走 ref，内联箭头不抖栈序 |
+| Sheet | `src/components/Sheet.tsx` | 受控底部容器（标题+可滚 body）；有实内容的面板用它，纯选项列表用 showActionSheet |
+| 长按 | `src/components/useLongPress.ts` | 唯一的 LONG_PRESS_MS；10px 容差半径 + fired 防误触 + 右键回退 |
+| 浮层皮肤 | `src/components/overlay.css` | 微信样式对话框/动作面板/sheet；z 只用 token |
+| z 层级 | `tokens.css` `--z-*` | shell 10 / msg-menu 30 / list-overlay 50 / picker 60 / sheet 70 / viewer 80 / call 90 / rp-open 100 / dialog 120 / toast 1000 |
 
 ## 设计决定
 
@@ -36,8 +39,14 @@ fixed 浮层（30/50/60/70/80/90/100/1000）、硬件返回键完全没接（真
 - 三个破坏性删除入口（会话列表/会话详情/素材库）都 import showConfirm。
 - App 壳挂了 DialogHost 与 useBackButton。
 - dismiss 栈：逆序弹出、反注册后不可弹、close 抛错不断链。
+- `LONG_PRESS_MS =` 全仓只允许出现在 `useLongPress.ts`。
+- Sheet 有真实消费者；`forward-mask` 手写浮层零残留。
+- 条件渲染的浮层（Sheet/ImageViewer/MediaPicker/msg-menu/会话列表两浮层/组合器面板）
+  全部登记 dismiss 栈。
 
 ## 已知边界
 
 - Sheet 拖拽关闭在 I8 补（本期 Sheet 只有动画开合）。
-- 长按菜单两份实现（chat-list / MessageBubble）在本期后段收敛为 LongPressMenu。
+- 长按**手势**已收敛进 useLongPress；长按**菜单**的视觉仍是两处各画各的
+  （chat-list 的 conv-menu / 聊天页的 msg-menu），菜单收敛视需要再议——两个列表
+  要的菜单确实不同。

@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Avatar } from '../../components/Avatar';
+import { useLongPress } from '../../components/useLongPress';
 import { stickerGlyph } from '../../data/stickers';
 import { fenToYuan } from '../../lib/money';
 import { playVoice } from '../../lib/voice';
@@ -25,35 +26,13 @@ interface Props {
   onRetry?: (msg: MessageVM) => void;
 }
 
-const LONG_PRESS_MS = 500;
-
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
 export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onLongPress, onReEdit, onRetry }: Props) {
-  // Long-press: pointer down starts a timer; any movement or release cancels it.
-  // touch-action stays default so scrolling still cancels naturally via pointerleave.
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelPress = () => {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-    pressTimer.current = null;
-  };
-  const pressHandlers = onLongPress
-    ? {
-        onPointerDown: (e: React.PointerEvent) => {
-          const { clientX, clientY } = e;
-          cancelPress();
-          pressTimer.current = setTimeout(() => onLongPress(msg, clientX, clientY), LONG_PRESS_MS);
-        },
-        onPointerUp: cancelPress,
-        onPointerLeave: cancelPress,
-        onPointerMove: cancelPress,
-        // Desktop right-click opens the same menu immediately.
-        onContextMenu: (e: React.MouseEvent) => {
-          e.preventDefault();
-          cancelPress();
-          onLongPress(msg, e.clientX, e.clientY);
-        },
-      }
-    : {};
+  // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
+  // movement and had no fired guard, so releasing a long press on an image
+  // ALSO opened the viewer. The hook fixes both.
+  const lp = useLongPress((x, y) => onLongPress?.(msg, x, y));
+  const pressHandlers = onLongPress ? lp.handlers : {};
 
   if (msg.type === 'system' || msg.isRecalled) {
     const text = msg.isRecalled
@@ -113,9 +92,15 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
           className="msg-row__body"
           onClick={
             msg.type === 'rp' || msg.type === 'transfer'
-              ? () => onMoneyTap?.(msg)
+              ? () => {
+                  if (lp.fired()) return; // release tap after a long press
+                  onMoneyTap?.(msg);
+                }
               : msg.type === 'image'
-                ? () => onImageTap?.(msg)
+                ? () => {
+                    if (lp.fired()) return;
+                    onImageTap?.(msg);
+                  }
                 : undefined
           }
         >

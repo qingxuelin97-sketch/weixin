@@ -5,6 +5,7 @@
  */
 import { useRef, useState } from 'react';
 import { resolveImageRef } from '../data/moments-images';
+import { useDismissable } from '../app/useDismissable';
 import './image-viewer.css';
 
 interface ImageViewerProps {
@@ -16,6 +17,8 @@ interface ImageViewerProps {
 export function ImageViewer({ refs, index, onClose }: ImageViewerProps) {
   const [i, setI] = useState(Math.min(Math.max(index, 0), refs.length - 1));
   const [zoomed, setZoomed] = useState(false);
+  // Mounted = open (callers render it conditionally), so back closes the viewer.
+  useDismissable(true, onClose);
   const touch = useRef<{ x: number; y: number } | null>(null);
   const lastTap = useRef(0);
 

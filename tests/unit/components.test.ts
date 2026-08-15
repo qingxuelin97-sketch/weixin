@@ -83,6 +83,36 @@ describe('nothing raw remains', () => {
     expect(app).toContain('<DialogHost />');
     expect(app).toContain('useBackButton');
   });
+
+  it('exactly one file defines the long-press threshold', () => {
+    // Two hand-rolled copies of this gesture is how the thresholds drift apart.
+    // The hook owns LONG_PRESS_MS; features consume useLongPress.
+    const owners = walk('src/features')
+      .concat(walk('src/components'))
+      .filter((f) => /LONG_PRESS_MS\s*=/.test(read(f)));
+    expect(owners).toEqual(['src/components/useLongPress.ts']);
+  });
+
+  it('the forward picker is a Sheet, not a hand-rolled mask', () => {
+    // Sheet must have a real consumer (写了没接线 = 没做), and the old
+    // mask/panel pair must be unreachable.
+    expect(read('src/features/chat/ChatPage.tsx')).toContain("components/Sheet");
+    expect(read('src/features/chat/chat.css')).not.toContain('forward-mask');
+  });
+
+  it('every conditional overlay registers with the dismiss stack', () => {
+    // Back must close the topmost overlay, which only works if each overlay
+    // actually registers. New overlays: copy this pattern, then add yourself.
+    for (const f of [
+      'src/components/Sheet.tsx',
+      'src/components/ImageViewer.tsx',
+      'src/components/MediaPicker.tsx',
+      'src/features/chat/ChatPage.tsx', // msg-menu + composer panels
+      'src/features/chat-list/ChatListPage.tsx', // ＋ dropdown + row menu
+    ]) {
+      expect(read(f).includes('useDismissable'), `${f} does not register with the dismiss stack`).toBe(true);
+    }
+  });
 });
 
 describe('the dismiss stack', () => {

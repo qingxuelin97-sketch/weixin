@@ -105,6 +105,35 @@
   background: var(--color-cell-bg-pressed);
 }
 
+/* ---- Generic feature sheet: titled bottom container, body scrolls. ----
+   Sits BELOW the dialog layer so a confirm opened from inside a sheet
+   (删除 → 确认) renders on top of it, not underneath. */
+.ovl--sheet {
+  z-index: var(--z-sheet);
+}
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--color-cell-bg);
+  border-radius: 12px 12px 0 0;
+  padding-bottom: var(--safe-bottom);
+  overflow: hidden;
+  animation: asheet-rise 220ms var(--ease-standard);
+}
+.sheet__title {
+  flex: none;
+  padding: 14px 0 8px;
+  text-align: center;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+}
+.sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* ---- WeChat action sheet: bottom list, fat gap, cancel below. ---- */
 .asheet {
   width: 100%;
@@ -158,6 +187,7 @@
 @media (prefers-reduced-motion: reduce) {
   .ovl,
   .dlg,
+  .sheet,
   .asheet {
     animation: none !important;
   }

@@ -171,7 +171,7 @@
   --z-msg-menu: 30;
   --z-list-overlay: 50; /* chat-list ＋ dropdown & row long-press */
   --z-picker: 60; /* media picker */
-  --z-forward: 70;
+  --z-sheet: 70; /* generic bottom sheet (forward picker, member picker…) */
   --z-viewer: 80; /* full-screen image viewer */
   --z-call: 90;
   --z-rp-open: 100;

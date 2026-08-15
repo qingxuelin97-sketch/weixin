@@ -627,28 +627,6 @@
   font-size: 18px;
   padding: 0 4px;
 }
-.forward-mask {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-forward);
-  background: var(--color-overlay);
-  display: flex;
-  align-items: flex-end;
-}
-.forward-panel {
-  width: 100%;
-  max-height: 60vh;
-  overflow-y: auto;
-  background: var(--color-cell-bg);
-  border-radius: 12px 12px 0 0;
-  padding-bottom: env(safe-area-inset-bottom);
-}
-.forward-panel__title {
-  text-align: center;
-  padding: 14px 0 8px;
-  font-weight: var(--fw-medium);
-  color: var(--color-text-primary);
-}
 
 /* Loading marker for older history (M-G2). Centred, small, grey — the same
    register as the time bars it sits above, so it reads as chrome not content. */

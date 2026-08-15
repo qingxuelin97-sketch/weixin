@@ -10,9 +10,9 @@ import type { ConversationVM } from '../../data/types';
 import './chat-list.css';
 import { useNow } from '../../lib/useNow';
 import { useSwipeRow } from '../../components/useSwipeRow';
+import { useLongPress } from '../../components/useLongPress';
+import { useDismissable } from '../../app/useDismissable';
 import { showConfirm } from '../../components/dialog';
-
-const LONG_PRESS_MS = 500;
 
 export function ChatListPage() {
   const all = useAppStore((s) => s.conversations);
@@ -26,6 +26,9 @@ export function ChatListPage() {
 
   const [plusOpen, setPlusOpen] = useState(false);
   const [menu, setMenu] = useState<{ conv: ConversationVM; y: number } | null>(null);
+  // Hardware back closes the ＋ dropdown / row menu before popping the page.
+  useDismissable(plusOpen, () => setPlusOpen(false));
+  useDismissable(!!menu, () => setMenu(null));
 
   const act = (fn: () => Promise<void>) => {
     setMenu(null);
@@ -177,13 +180,11 @@ function ConversationRow({
     imageRef: conv.memberIds?.[i] ? contactById(conv.memberIds[i])?.avatarRef : undefined,
   }));
 
-  // Long-press via pointer timer; movement/release cancels so scrolling stays natural.
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fired = useRef(false);
-  const cancelPress = () => {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-    pressTimer.current = null;
-  };
+  // Shared long-press physics (M-I0) — this copy used to cancel on ANY pointer
+  // movement, which made the press nearly impossible to land on a touchscreen.
+  const lp = useLongPress((_x, y) => onLongPress(y));
+  // A completed horizontal swipe must not ALSO open the chat on release.
+  const swipeDragged = useRef(false);
   // The gesture WeChat actually uses for these two actions (M-H3). The long
   // press stays: it carries 置顶 / 免打扰 too, and muscle memory is cheap to
   // honour.
@@ -223,39 +224,32 @@ function ConversationRow({
         // every native list does, and both are invisible until they are wrong.
         if (swipe.open) {
           swipe.close();
-        } else if (!fired.current) {
+        } else if (!lp.fired() && !swipeDragged.current) {
           onOpen();
         }
-        fired.current = false;
+        lp.consume();
+        swipeDragged.current = false;
       }}
       onPointerDown={(e) => {
-        fired.current = false;
+        swipeDragged.current = false;
         swipe.handlers.onPointerDown(e);
-        const y = e.clientY;
-        pressTimer.current = setTimeout(() => {
-          fired.current = true;
-          onLongPress(y);
-        }, LONG_PRESS_MS);
+        lp.handlers.onPointerDown(e);
       }}
       onPointerUp={() => {
-        cancelPress();
+        lp.handlers.onPointerUp();
         swipe.handlers.onPointerUp();
       }}
       onPointerMove={(e) => {
-        cancelPress();
+        lp.handlers.onPointerMove(e);
         swipe.handlers.onPointerMove(e);
-        if (swipe.dragging()) fired.current = true;
+        if (swipe.dragging()) swipeDragged.current = true;
       }}
-      onPointerLeave={cancelPress}
+      onPointerLeave={lp.handlers.onPointerLeave}
       onPointerCancel={(e) => {
-        cancelPress();
+        lp.handlers.onPointerUp();
         swipe.handlers.onPointerCancel(e);
       }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        fired.current = true;
-        onLongPress(e.clientY);
-      }}
+      onContextMenu={lp.handlers.onContextMenu}
       role="button"
     >
       <div className="conv-row__avatar">

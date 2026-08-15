@@ -11,6 +11,8 @@ import {
 import { Avatar } from '../../components/Avatar';
 import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
+import { Sheet } from '../../components/Sheet';
+import { useDismissable } from '../../app/useDismissable';
 import { registerMedia } from '../../data/media-registry';
 import { useMedia } from '../../components/useMedia';
 import { logError } from '../../lib/errlog';
@@ -121,6 +123,9 @@ export function ChatPage() {
     document.addEventListener('pointerdown', close, { capture: true });
     return () => document.removeEventListener('pointerdown', close, { capture: true });
   }, [menu]);
+  // Hardware back: close the topmost chat overlay before leaving the page.
+  useDismissable(!!menu, () => setMenu(null));
+  useDismissable(composer.mode === 'emoji' || composer.mode === 'plus', composer.closeAll);
 
   /**
    * Re-send a message whose delivery failed.
@@ -663,34 +668,31 @@ export function ChatPage() {
       )}
 
       {forwarding && (
-        <div className="forward-mask" onClick={() => setForwarding(null)}>
-          <div className="forward-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="forward-panel__title">发送给</div>
-            {allConversations
-              .filter((c) => !c.isHidden && c.id !== convId)
-              .map((c) => (
-                <div
-                  key={c.id}
-                  className="settings__row settings__row--divided"
-                  onClick={() => {
-                    const m = forwarding;
-                    setForwarding(null);
-                    void appendMessage({
-                      convId: c.id,
-                      senderId: 'self',
-                      type: m.type,
-                      content: m.content,
-                      ...(m.meta ? { meta: { ...m.meta } } : {}),
-                      status: 'sent',
-                      createdAt: Date.now(),
-                    }).then(() => showToast(`已转发给 ${c.title}`));
-                  }}
-                >
-                  <span className="settings__label">{c.title}</span>
-                </div>
-              ))}
-          </div>
-        </div>
+        <Sheet open onClose={() => setForwarding(null)} title="发送给">
+          {allConversations
+            .filter((c) => !c.isHidden && c.id !== convId)
+            .map((c) => (
+              <div
+                key={c.id}
+                className="settings__row settings__row--divided"
+                onClick={() => {
+                  const m = forwarding;
+                  setForwarding(null);
+                  void appendMessage({
+                    convId: c.id,
+                    senderId: 'self',
+                    type: m.type,
+                    content: m.content,
+                    ...(m.meta ? { meta: { ...m.meta } } : {}),
+                    status: 'sent',
+                    createdAt: Date.now(),
+                  }).then(() => showToast(`已转发给 ${c.title}`));
+                }}
+              >
+                <span className="settings__label">{c.title}</span>
+              </div>
+            ))}
+        </Sheet>
       )}
 
       <div
