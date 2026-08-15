@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AIWX (M-I10). Android-side render colors for the bubble overlay and the
+     widget — surfaces that render OUTSIDE the WebView, where src/styles/tokens.css
+     cannot reach. Values mirror the app tokens (device-sampled): badge red
+     #E75E58 = ‑-wx-red, green #07C160 = brand green. The constitution's
+     "colors only via tokens" rule governs src/ (enforced by
+     scripts/check-no-hardcoded-colors.mjs); native res/ is its Android mirror. -->
+<resources>
+    <color name="aiwx_surface">#FFFFFFFF</color>
+    <color name="aiwx_text_primary">#FF191919</color>
+    <color name="aiwx_text_secondary">#FF7F7F7F</color>
+    <color name="aiwx_badge_red">#FFE75E58</color>
+    <color name="aiwx_badge_text">#FFFFFFFF</color>
+    <color name="aiwx_brand_green">#FF07C160</color>
+    <color name="aiwx_bubble_scrim">#F2FFFFFF</color>
+</resources>

@@ -74,11 +74,11 @@ jobs:
       - name: Build web bundle
         run: pnpm build
 
-      # android/ 是 gitignore 的生成物，每次现生成。
+      # android/ 自 M-I10 起入库（内含手写 Kotlin 原生层），这里只 sync 不 add——
+      # `cap add` 会用裸模板覆盖掉全部手写文件。见 docs/android-regen.md。
       # CAP_SERVER_URL 在这里被 capacitor.config.ts 读到，写进 capacitor.config.json。
-      - name: Generate the native project
+      - name: Sync into the committed native project
         run: |
-          npx cap add android
           npx cap sync android
           echo "--- 生成的 capacitor.config.json ---"
           cat android/app/src/main/assets/capacitor.config.json

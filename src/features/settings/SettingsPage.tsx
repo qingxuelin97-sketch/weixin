@@ -157,6 +157,14 @@ export function SettingsPage() {
             <span className="settings__label">后台通知测试</span>
             <span className="settings__chevron">›</span>
           </div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/native')}
+          >
+            <span className="settings__label">原生增强</span>
+            <span className="settings__value">气泡 · 回复 · 来电 · 小组件</span>
+            <span className="settings__chevron">›</span>
+          </div>
           <div className="settings__row" onClick={() => navigate('/settings/backup')}>
             <span className="settings__label">备份与恢复</span>
             <span className="settings__value">{backupHint}</span>

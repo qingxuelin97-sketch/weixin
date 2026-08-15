@@ -29,7 +29,7 @@ jobs:
   emulator:
     name: run APK on emulator
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40 # +5 for the M-I10 native-surface assertions
     steps:
       - uses: actions/checkout@v4
 
@@ -53,10 +53,10 @@ jobs:
       - name: Build web bundle
         run: pnpm build
 
-      - name: Generate the native project
-        run: |
-          npx cap add android
-          npx cap sync android
+      # android/ is committed since M-I10 (hand-written Kotlin inside);
+      # `cap add` would clobber it with the template — sync only.
+      - name: Sync into the committed native project
+        run: npx cap sync android
 
       - name: Build debug APK
         run: cd android && ./gradlew --no-daemon assembleDebug
@@ -102,6 +102,65 @@ jobs:
             # surface them in the job log either way.
             grep -aE 'FATAL EXCEPTION|AndroidRuntime.*FATAL|E Capacitor' logcat.txt | head -20 || true
 
+            # ---- M-I10 native surface assertions --------------------------
+            # Driven through the debug-only SelfTestReceiver because adb cannot
+            # operate the system RemoteInput UI or place a widget on a launcher.
+            # Each check appends PASS/FAIL/WARN to native-asserts.txt; the
+            # "Native surfaces verdict" step turns FAILs into a red job.
+            # POSIX sh (dash) — no bashisms.
+            NA=native-asserts.txt
+            : > "$NA"
+            RECV=com.personal.weixinai/.aiwx.SelfTestReceiver
+
+            # ck <name> <severity-on-fail> <cmd…> — the `if "$@"` keeps the
+            # probe inside a checked context, so `set -e` never aborts on it.
+            ck() { _n=$1; _s=$2; shift 2; if "$@"; then echo "PASS $_n" >> "$NA"; else echo "$_s $_n" >> "$NA"; fi; }
+
+            # (1) Message notification with inline reply: posted for real?
+            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.NOTIFY || true
+            sleep 3
+            adb shell dumpsys notification > notif-dump.txt || true
+            ck notify-record-posted FAIL grep -q 'com.personal.weixinai' notif-dump.txt
+            ck notify-channel-messages FAIL grep -q 'aiwx_messages' notif-dump.txt
+            # Action titles are often redacted in dumpsys — informational only.
+            ck notify-remoteinput-visible WARN grep -qi 'remoteinput\|remote_input' notif-dump.txt
+
+            # (2) RemoteInput loop, minus the system keyboard: synthetic reply →
+            # SharedPreferences queue → background/foreground bounce → JS drain
+            # through the normal send path (logs AIWX-REPLYQ drained=…).
+            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.REPLY --es text ci-hello || true
+            sleep 2
+            adb shell input keyevent 3
+            sleep 5
+            adb shell am start -n com.personal.weixinai/.MainActivity
+            sleep 12
+
+            # (3) Full-screen call notification on its own channel.
+            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.CALL || true
+            sleep 3
+            adb shell dumpsys notification > notif-dump2.txt || true
+            ck call-channel-posted FAIL grep -q 'aiwx_calls' notif-dump2.txt
+
+            # (4) Floating bubble: grant the appop the way a user would in
+            # settings, then ask for a bubble and look for the overlay window.
+            adb shell appops set com.personal.weixinai SYSTEM_ALERT_WINDOW allow || true
+            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.BUBBLE || true
+            sleep 3
+            adb shell dumpsys window windows > window-dump.txt || true
+            ck bubble-window-listed WARN grep -q 'com.personal.weixinai' window-dump.txt
+
+            # (5) Widget provider renders without crashing (no launcher host in
+            # the emulator, so ids may be 0 — the provider logs either way).
+            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.WIDGET || true
+            sleep 2
+
+            adb logcat -d > logcat-native.txt
+            ck replyq-enqueued FAIL grep -aq 'AIWX-REPLYQ.*enqueued' logcat-native.txt
+            ck replyq-js-drained FAIL grep -aq 'AIWX-REPLYQ drained=' logcat-native.txt
+            ck bubble-shown FAIL grep -aq 'AIWX-BUBBLE.*shown' logcat-native.txt
+            ck widget-rendered FAIL grep -aq 'AIWX-WIDGET.*render' logcat-native.txt
+            cat "$NA"
+
       - name: Verdict
         run: |
           set -euo pipefail
@@ -130,6 +189,35 @@ jobs:
           echo "$JSON" | jq -e '.allReachable == true' > /dev/null \
             || { echo "::error::有端点两条通道都不通——这就是真机症状的复现点"; exit 1; }
 
+      # M-I10: turn the emulator's native-surface checks into a verdict.
+      # WHAT THE EMULATOR CANNOT PROVE (real-device checklist, specs/native-android.md):
+      #  - the OEM overlay-permission FLOW (appops here ≠ MIUI/ColorOS consent UI)
+      #  - full-screen intent behaviour on a LOCKED screen with vendor lockscreens
+      #  - typing into the real RemoteInput keyboard (synthetic enqueue here)
+      #  - widget on an actual launcher (no launcher host in the headless image)
+      #  - vendor battery-whitelist deep links (emulator has no OEM security apps)
+      - name: Native surfaces verdict (M-I10)
+        run: |
+          set -euo pipefail
+          if [ ! -s native-asserts.txt ]; then
+            echo "::error::原生断言没有产出结果文件——emulator script 可能在此前就失败了"
+            exit 1
+          fi
+          {
+            echo '### M-I10 原生面断言'
+            echo '```'
+            cat native-asserts.txt
+            echo '```'
+            echo '- WARN 项在无头模拟器上属预期（dumpsys 脱敏/无 launcher）；只有 FAIL 才红'
+            echo '- 真机才能验的项见 specs/native-android.md「真机验收清单」'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -q '^FAIL' native-asserts.txt; then
+            echo "::error::有原生断言失败："
+            grep '^FAIL' native-asserts.txt
+            exit 1
+          fi
+          echo "全部硬断言通过"
+
       - name: Upload device evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -137,6 +225,11 @@ jobs:
           name: device-evidence-${{ github.run_number }}
           path: |
             logcat.txt
+            logcat-native.txt
+            notif-dump.txt
+            notif-dump2.txt
+            window-dump.txt
+            native-asserts.txt
             screen.png
             selftest-line.txt
           retention-days: 14
