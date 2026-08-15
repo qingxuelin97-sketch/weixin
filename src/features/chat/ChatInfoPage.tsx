@@ -17,6 +17,8 @@ import { applyPersonaPatch } from '../../data/persona-patch';
 import { HumanizeDiffSheet } from '../settings/HumanizeDiffSheet';
 import { getRouter } from '../../llm/service';
 import { globalTier } from '../../lib/nsfw-tier';
+import { storyRunning } from '../../ai/story-service';
+import { runOf, type StorySaveRow } from '../../ai/story-gm';
 import { logError } from '../../lib/errlog';
 import type { PersonaVM } from '../../data/types';
 import { useGuard } from '../../app/useGuard';
@@ -50,11 +52,16 @@ export function ChatInfoPage() {
   const [batchBusy, setBatchBusy] = useState(false);
   /** Per-group knobs (M-I1); null until loaded, absent row = defaults. */
   const [cfg, setCfg] = useState<GroupCfg | null>(null);
+  /** A story playing in THIS group (M-I7): surfaces the run-page entry row. */
+  const [storyRun, setStoryRun] = useState<StorySaveRow | undefined>(undefined);
   const isGroupConv = conv?.type === 'group';
   useEffect(() => {
     if (!isGroupConv) return;
     let alive = true;
     void getGroupCfg(convId).then((c) => alive && setCfg(c));
+    void storyRunning(convId)
+      .then((s) => alive && setStoryRun(s))
+      .catch((e) => logError('chatinfo.story', e));
     return () => {
       alive = false;
     };
@@ -378,6 +385,22 @@ export function ChatInfoPage() {
               <span className="settings__label">常聊话题</span>
               <span className="settings__value">
                 {cfg.topics.length ? cfg.topics.join('、').slice(0, 12) : '未设置'}
+              </span>
+              <span className="settings__chevron">›</span>
+            </div>
+          </div>
+        )}
+
+        {isGroup && storyRun && (
+          <div className="settings__group">
+            <div
+              className="settings__row"
+              onClick={() => navigate(`/story/run/${storyRun.id}`)}
+            >
+              <span className="settings__label">剧情</span>
+              <span className="settings__value">
+                第 {runOf(storyRun)} 周目 · 第 {storyRun.seq} 幕
+                {storyRun.stalledAt ? ' · 已暂停' : ''}
               </span>
               <span className="settings__chevron">›</span>
             </div>

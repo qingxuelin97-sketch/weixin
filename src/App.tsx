@@ -31,7 +31,9 @@ import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
 import { WorldbookPage } from './features/settings/WorldbookPage';
 import { MergedViewPage } from './features/chat/MergedViewPage';
-import { StoryPage } from './features/settings/StoryPage';
+import { StoryPage } from './features/story/StoryPage';
+import { ScriptDetailPage } from './features/story/ScriptDetailPage';
+import { StoryRunPage } from './features/story/StoryRunPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
 import { StatusPage } from './features/contacts/StatusPage';
 import { YearReportPage } from './features/me/YearReportPage';
@@ -149,6 +151,8 @@ export function App() {
               <Route path="/settings/worldbook" element={<Push><WorldbookPage /></Push>} />
               <Route path="/merged/:convId/:msgId" element={<Push><MergedViewPage /></Push>} />
               <Route path="/story" element={<Push><StoryPage /></Push>} />
+              <Route path="/story/script/:scriptId" element={<Push><ScriptDetailPage /></Push>} />
+              <Route path="/story/run/:saveId" element={<Push><StoryRunPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
               <Route path="/status/:contactId" element={<Push><StatusPage /></Push>} />
               <Route path="/report" element={<Push><YearReportPage /></Push>} />

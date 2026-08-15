@@ -29,6 +29,7 @@ import { makePersona } from '../data/persona-defaults';
 import { recordRelEvent } from '../ai/relationship';
 import { cancelActionsForConversation } from '../ai/scheduler';
 import { abortConversation } from '../ai/engine';
+import { applyStoryStamp } from '../ai/story-stamp';
 import { logError } from '../lib/errlog';
 
 /** A like warms the (liker, author) edge — fire-and-forget, never blocks UI. */
@@ -88,6 +89,13 @@ interface AppState {
   openConversation: (convId: string, limit?: number) => Promise<void>;
   /** Prepend the page before the oldest held message; returns how many arrived. */
   loadOlderMessages: (convId: string, limit?: number) => Promise<number>;
+  /**
+   * Re-read a conversation's newest page from the Repo, REPLACING whatever the
+   * store holds (M-I7). The one caller is story rollback: it deletes rows
+   * underneath the store, and a stale in-memory tail would resurrect trimmed
+   * scenes on the next render. No-op for a thread that was never loaded.
+   */
+  reloadConversation: (convId: string, limit?: number) => Promise<void>;
   conversationById: (id: string) => ConversationVM | undefined;
   personaFor: (contactId: string) => PersonaVM | undefined;
   setTyping: (convId: string, on: boolean) => void;
@@ -284,6 +292,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     return older.length;
   },
+  reloadConversation: async (convId, limit = 60) => {
+    if (get().messages[convId] == null) return;
+    const rows = await repo.getMessages(convId, { limit });
+    set((s) => ({ messages: { ...s.messages, [convId]: rows } }));
+    // The tail may have changed shape (rollback trims scenes): the list row's
+    // preview must follow, or a deleted line keeps advertising the thread.
+    const s = get();
+    const last = rows.at(-1);
+    await s.patchConversation(convId, {
+      lastMsgPreview: last ? previewOf(last, senderNameOf(s.contacts, last.senderId)) : '',
+      ...(last ? { lastMsgAt: last.createdAt } : {}),
+    });
+  },
   conversationById: (id) => get().conversations.find((cc) => cc.id === id),
   personaFor: (contactId) => get().personas[contactId],
   setTyping: (convId, on) => set((s) => ({ typing: { ...s.typing, [convId]: on } })),
@@ -323,7 +344,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   appendMessage: async (msg) => {
-    const saved = await repo.addMessage(msg);
+    // Story mode (M-I7): while a beat is playing in this conversation, every
+    // appended row — narration, actor lines, the user's replies — is tagged
+    // with the run's (scriptId, seq). One choke point, so the group engine
+    // and every other append path stay story-blind.
+    const saved = await repo.addMessage(applyStoryStamp(msg));
     const s0 = get();
     const conv = s0.conversations.find((c) => c.id === msg.convId);
     set((s) => ({
