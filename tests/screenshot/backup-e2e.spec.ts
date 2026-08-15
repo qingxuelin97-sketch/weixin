@@ -127,10 +127,12 @@ test('a restore confirmation states what it is about to replace', async ({ page 
     mimeType: 'application/json',
     buffer: Buffer.from(backupJson),
   });
-  // The user confirms against real row counts, not a bare yes/no.
+  // The user confirms against real row counts, not a bare yes/no. Since M-I17
+  // the export summary ("已导出：…会话 N…") stays on the page behind the
+  // dialog, so the counts assertion must not be ambiguous across both.
   await expect(page.getByText(/该备份创建于/)).toBeVisible();
   await expect(page.getByText(/整库替换/)).toBeVisible();
-  await expect(page.getByText(/会话 \d+/)).toBeVisible();
+  await expect(page.getByText(/会话 \d+/).first()).toBeVisible();
 });
 
 test('a corrupt backup file is rejected with a readable reason', async ({ page }) => {

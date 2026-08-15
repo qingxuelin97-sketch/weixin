@@ -34,6 +34,26 @@ vi.mock('../../src/db/idb', () => {
     },
     idbClear: async (n: string) => s(n).clear(),
     openDB: async () => ({ version: 4 }),
+    // The mocked module is shared by src/db/repo.ts, driver.ts and sqlite.ts
+    // (backup v2 reads through the driver dispatch), so every named export
+    // those modules import must exist here — vitest hard-fails on missing ones.
+    idbDelete: async (n: string, k: unknown) => void s(n).delete(k),
+    idbBulkPut: async (n: string, rows: Record<string, unknown>[]) => {
+      for (const row of rows) s(n).set((row.key ?? row.id) as unknown, row);
+    },
+    idbAdd: async (n: string, row: Record<string, unknown>) => {
+      const id = s(n).size + 1;
+      s(n).set(id, { ...row, id });
+      return id;
+    },
+    idbBulkAdd: async () => {},
+    idbCount: async (n: string) => s(n).size,
+    idbQueryByIndex: async () => [],
+    idbGetAllByIndex: async () => [],
+    idbDeleteByIndex: async () => 0,
+    idbPageDesc: async () => [],
+    idbFirstByIndex: async () => undefined,
+    idbRangeByIndex: async () => [],
     __stores: stores,
   };
 });

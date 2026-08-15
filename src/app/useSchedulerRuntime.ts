@@ -41,6 +41,7 @@ import {
   scheduleNextMoment,
 } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
+import { chainAutoBackup, runAutoBackup, ensureAutoBackupScheduled } from '../ai/auto-backup';
 import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
 import { chainNextBeat, runStoryBeat, seedBuiltinScripts } from '../ai/story-service';
 import { judgePrompt, parseJudgement } from '../ai/story-gm';
@@ -329,6 +330,14 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerChainedHandler('group_event', {
       chain: (p) => chainGroupEventStep(deps, p),
       work: (p) => handleGroupEvent(deps, p),
+    });
+    // Periodic backups (M-I17): the successor is queued before the export, so
+    // one failed write costs one package, never the habit.
+    registerChainedHandler('auto_backup', {
+      chain: () => chainAutoBackup(Date.now()),
+      work: async () => {
+        await runAutoBackup(Date.now());
+      },
     });
 
     startScheduler();
@@ -682,6 +691,15 @@ async function runForegroundPass(): Promise<void> {
     await seedBuiltinScripts(now);
   } catch (e) {
     logError('story.seed', e);
+  }
+
+  // 3.45) Auto-backup chain (M-I17): the settings page starts it, but a
+  //       restore, a cancelled row or an old install must not silently end the
+  //       habit — re-seed whenever the setting says one should exist.
+  try {
+    await ensureAutoBackupScheduled(now);
+  } catch (e) {
+    logError('autoBackup.schedule', e);
   }
 
   // 3.5) Retire settled rows. The queue was append-only since M4: the store grew

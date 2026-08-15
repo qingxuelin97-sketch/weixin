@@ -136,6 +136,16 @@ export function openDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+/**
+ * Test hook: drop the cached connection so a test can swap in a fresh
+ * IDBFactory (fake-indexeddb) and get a truly empty database — `clear()`
+ * alone keeps autoincrement generators, which breaks driver-parity tests.
+ */
+export function _closeDbForTests(): void {
+  void dbPromise?.then((db) => db.close()).catch(() => {});
+  dbPromise = null;
+}
+
 function tx(db: IDBDatabase, store: string, mode: IDBTransactionMode): IDBObjectStore {
   return db.transaction(store, mode).objectStore(store);
 }

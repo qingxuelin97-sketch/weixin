@@ -1,9 +1,27 @@
 /**
- * Backup and restore (.aiwx).
+ * Backup and restore (.aiwx), v2.
  *
  * There is no server: if this device is lost, the conversations are gone. That
  * makes export the only durability story the app has, so it errs toward
  * completeness — every store, one JSON envelope, no silent omissions.
+ *
+ * v2 (M-I17) adds two things on top of the v1 full snapshot:
+ *
+ *   INCREMENTAL PACKAGES — the append-heavy stores (messages, moments, likes,
+ *   comments, 零钱明细, media) travel by per-store watermark: only rows ABOVE
+ *   the last backup's max id/createdAt are included. Everything else (the
+ *   small, mutable stores: contacts, personas, conversations, settings, …) is
+ *   snapshotted whole in every package, so an incremental restore replaces
+ *   them and upserts the rest. Restore order: the base full first, then its
+ *   increments oldest→newest. One wrinkle: a recall EDITS an old message row,
+ *   so incremental `messages` also carries every recalled row at or below the
+ *   watermark — recalls are rare and small, and without this a message
+ *   recalled after the full backup would resurrect un-recalled.
+ *
+ *   DRIVER-AWARE I/O — reads and writes go through src/db/driver.ts, which
+ *   routes each store to its live home (SQLite after the native migration,
+ *   IndexedDB otherwise/always on web). Reading IndexedDB directly on a
+ *   migrated device would export the stale pre-migration copy.
  *
  * TWO DELIBERATE EXCLUSIONS, both stated in the manifest so a restore can
  * explain what it can't bring back:
@@ -20,10 +38,14 @@
  * would interleave messages into a conversation that never happened. The prior
  * contents are snapshotted first so a mistaken restore is recoverable.
  */
-import { STORES, idbGetAll, idbPut, idbClear, openDB } from '../db/idb';
+import { STORES, idbGetAll, idbPut, openDB } from '../db/idb';
+import { readStoreRows, writeStoreRow, clearStore } from '../db/driver';
 
-export const BACKUP_VERSION = 1;
+/** v2: incremental packages + watermarks. v1 files (full only) still restore. */
+export const BACKUP_VERSION = 2;
 export const BACKUP_EXT = '.aiwx';
+
+export type BackupMode = 'full' | 'incremental';
 
 /** Stores excluded from every export. See the module comment for why. */
 const NEVER_EXPORT = new Set(['tts_cache']);
@@ -39,18 +61,50 @@ const NEVER_EXPORT_SETTING_KEYS = new Set([
   // The in-flight restore marker describes THIS device's restore, not the data.
   // Exporting it would make every later restore of that file look interrupted.
   'restoreInProgress',
+  // Driver/migration state is a fact about THIS device's storage engine, not
+  // about the data; carrying it would make a restored web install think it
+  // had migrated to SQLite.
+  'sqliteMigratedAt',
+  'sqliteMigrateProgress',
 ]);
 
 function isPortableSettingRow(row: unknown): boolean {
-  const k = (row as { key?: unknown })?.key;
-  return typeof k !== 'string' || !NEVER_EXPORT_SETTING_KEYS.has(k);
+  const r = row as { key?: unknown; value?: unknown } | null;
+  const k = r?.key;
+  if (typeof k === 'string' && NEVER_EXPORT_SETTING_KEYS.has(k)) return false;
+  // Belt to the keys' braces: ANY row holding a live CryptoKey is device-local
+  // by nature — it cannot serialize, so it must not pretend to travel.
+  if (typeof CryptoKey !== 'undefined' && r?.value instanceof CryptoKey) return false;
+  return true;
 }
+
+/**
+ * Append-only stores that travel by watermark in an incremental package.
+ * `messages` cursor is the autoincrement id (rowid 序==时间序); the others use
+ * their epoch-ms createdAt. Every OTHER exported store is snapshotted whole in
+ * every package — they are small and they mutate in place, which a watermark
+ * cannot see.
+ */
+export const WATERMARK_FIELDS: Record<string, 'id' | 'createdAt'> = {
+  messages: 'id',
+  moments: 'createdAt',
+  moment_likes: 'createdAt',
+  moment_comments: 'createdAt',
+  wallet_tx: 'createdAt',
+  media: 'createdAt',
+};
 
 export interface BackupManifest {
   version: number;
   /** IndexedDB schema version the export came from. */
   schemaVersion: number;
   createdAt: number;
+  /** v2: 'full' | 'incremental'. Absent (v1 files) means 'full'. */
+  mode?: BackupMode;
+  /** v2: per-store high-water marks AFTER this backup (next increment's base). */
+  watermarks?: Record<string, number>;
+  /** v2, incremental only: the watermarks this package was cut against. */
+  since?: Record<string, number>;
   /** Row count per store, so a restore can report what it's about to write. */
   counts: Record<string, number>;
   /** Stores deliberately left out, and why — surfaced in the restore UI. */
@@ -61,6 +115,10 @@ export interface BackupManifest {
 export interface BackupFile {
   manifest: BackupManifest;
   stores: Record<string, unknown[]>;
+}
+
+export function backupMode(file: BackupFile): BackupMode {
+  return file.manifest.mode ?? 'full';
 }
 
 /** Strip anything that must not leave the device. */
@@ -106,24 +164,73 @@ export function decodeMediaRow(row: unknown): unknown {
 }
 
 /**
+ * The rows of one watermark store that belong in an incremental package cut
+ * against `since`. Pure; exported for tests.
+ */
+export function incrementalRows(store: string, rows: unknown[], since: number): unknown[] {
+  const field = WATERMARK_FIELDS[store];
+  if (!field) return rows;
+  return rows.filter((r) => {
+    const rec = r as Record<string, unknown>;
+    const v = Number(rec[field] ?? 0);
+    if (v > since) return true;
+    // Recalls edit rows BELOW the watermark; carry them so the edit survives.
+    return store === 'messages' && rec.isRecalled === true;
+  });
+}
+
+/**
+ * Per-store high-water marks over full row sets. Marks never move backwards:
+ * a store that lost rows keeps its previous mark, so the next increment cannot
+ * silently re-include rows an older package already carried.
+ */
+export function computeWatermarks(
+  stores: Record<string, unknown[]>,
+  prev: Record<string, number> = {},
+): Record<string, number> {
+  const out: Record<string, number> = { ...prev };
+  for (const [store, field] of Object.entries(WATERMARK_FIELDS)) {
+    const rows = stores[store];
+    if (!rows) continue;
+    let max = out[store] ?? 0;
+    for (const r of rows) {
+      const v = Number((r as Record<string, unknown>)[field] ?? 0);
+      if (v > max) max = v;
+    }
+    out[store] = max;
+  }
+  return out;
+}
+
+/**
  * Read every exportable store into a single envelope.
  *
  * @param now injected timestamp so exports are reproducible in tests
- * @param opts includeMedia=false drops the媒体库 (biggest store by bytes) for a lean file
+ * @param opts includeMedia=false drops the媒体库 (biggest store by bytes) for a
+ *             lean file; mode='incremental' cuts watermark stores against
+ *             `since` (the previous backup's watermarks)
  */
 export async function exportBackup(
   now: number,
   appVersion?: string,
-  opts: { includeMedia?: boolean } = {},
+  opts: { includeMedia?: boolean; mode?: BackupMode; since?: Record<string, number> } = {},
 ): Promise<BackupFile> {
   const includeMedia = opts.includeMedia ?? true;
+  const mode = opts.mode ?? 'full';
+  const since = opts.since ?? {};
   const stores: Record<string, unknown[]> = {};
   const counts: Record<string, number> = {};
+  const fullSets: Record<string, unknown[]> = {};
 
   for (const def of STORES) {
     if (NEVER_EXPORT.has(def.name)) continue;
     if (def.name === 'media' && !includeMedia) continue;
-    let rows = sanitize(def.name, await idbGetAll(def.name));
+    const allRows = sanitize(def.name, await readStoreRows(def.name));
+    fullSets[def.name] = allRows;
+    let rows =
+      mode === 'incremental' && def.name in WATERMARK_FIELDS
+        ? incrementalRows(def.name, allRows, since[def.name] ?? 0)
+        : allRows;
     if (def.name === 'media') rows = await encodeMediaRows(rows);
     stores[def.name] = rows;
     counts[def.name] = rows.length;
@@ -135,6 +242,9 @@ export async function exportBackup(
       version: BACKUP_VERSION,
       schemaVersion: db.version,
       createdAt: now,
+      mode,
+      watermarks: computeWatermarks(fullSets, since),
+      ...(mode === 'incremental' ? { since } : {}),
       counts,
       omitted: {
         tts_cache: '语音缓存可按原文重新合成，不占备份体积',
@@ -183,12 +293,17 @@ export interface RestoreResult {
 }
 
 /**
- * Replace the database contents with the backup.
+ * Replace the database contents with a FULL backup.
  *
  * Snapshots current state first — a restore is destructive and the user may
- * have picked the wrong file.
+ * have picked the wrong file. Incremental packages are applied AFTER a full
+ * restore via `applyIncrementalBackup`; handing one to this function is a
+ * user-facing error, not a half-restore.
  */
 export async function restoreBackup(file: BackupFile, now: number): Promise<RestoreResult> {
+  if (backupMode(file) === 'incremental') {
+    throw new Error('这是一个增量备份，需要先恢复它所基于的全量备份，再叠加恢复增量');
+  }
   const snapshot = await exportBackup(now);
   const known = new Set(STORES.map((s) => s.name));
   const unknownStores = Object.keys(file.stores).filter((n) => !known.has(n));
@@ -197,6 +312,7 @@ export async function restoreBackup(file: BackupFile, now: number): Promise<Rest
   // THIS device's crypto master key survives every restore: the incoming file
   // never legitimately carries one (export strips it; old files carry a broken
   // `{}` husk), and clearing it would orphan every locally-encrypted API key.
+  // Read from IndexedDB directly — the key's home is IDB on every driver.
   const localMaster = await idbGetAll('settings').then((rows) =>
     rows.filter((r) => !isPortableSettingRow(r)),
   );
@@ -218,16 +334,20 @@ export async function restoreBackup(file: BackupFile, now: number): Promise<Rest
   // PHASE 2 — destructive. A crash between here and the flag's removal leaves a
   // half-written database that LOOKS fine; the marker is how the next launch
   // can tell, instead of the user discovering it one missing conversation later.
-  await idbPut('settings', { key: 'restoreInProgress', value: now });
+  await writeStoreRow('settings', { key: 'restoreInProgress', value: now });
   try {
     for (const { store, rows } of staged) {
-      await idbClear(store);
+      await clearStore(store);
       // The marker lives in `settings`, so clearing that store erases it. Put it
       // straight back or the crash window it exists to cover is uncovered.
-      if (store === 'settings') await idbPut('settings', { key: 'restoreInProgress', value: now });
-      for (const row of rows) await idbPut(store, row);
+      if (store === 'settings') {
+        await writeStoreRow('settings', { key: 'restoreInProgress', value: now });
+      }
+      for (const row of rows) await writeStoreRow(store, row);
       restored[store] = rows.length;
     }
+    // Straight back into IndexedDB, never the dispatcher: a CryptoKey cannot
+    // survive a TEXT column, and IDB is where the keystore reads it.
     for (const row of localMaster) await idbPut('settings', row);
   } catch (e) {
     // Roll back from the snapshot we took before touching anything. Best effort
@@ -238,13 +358,56 @@ export async function restoreBackup(file: BackupFile, now: number): Promise<Rest
       `恢复失败，已尽力回滚到恢复前的状态：${e instanceof Error ? e.message : String(e)}`,
     );
   }
-  await idbPut('settings', { key: 'restoreInProgress', value: 0 });
+  await writeStoreRow('settings', { key: 'restoreInProgress', value: 0 });
 
   // The restored file may be days old; without re-arming the barrier the next
   // foreground pass would "backfill" that whole gap with fabricated activity.
-  await idbPut('settings', { key: 'lastForegroundAt', value: now });
+  await writeStoreRow('settings', { key: 'lastForegroundAt', value: now });
 
   return { restored, unknownStores, snapshot };
+}
+
+/**
+ * Layer one incremental package on top of the current contents.
+ *
+ * Watermark stores UPSERT (rows keep their original keys, so a message lands
+ * back under its own id — rowid 序==时间序 holds because increments are applied
+ * oldest→newest and their rows are newer than everything already present).
+ * Snapshot stores REPLACE, same as a full restore — they were exported whole.
+ */
+export async function applyIncrementalBackup(
+  file: BackupFile,
+  now: number,
+): Promise<Record<string, number>> {
+  if (backupMode(file) !== 'incremental') {
+    throw new Error('这不是增量备份文件');
+  }
+  const applied: Record<string, number> = {};
+
+  const localMaster = await idbGetAll('settings').then((rows) =>
+    rows.filter((r) => !isPortableSettingRow(r)),
+  );
+
+  // Stage first (decode is the risky part), touch nothing until it all parsed.
+  const staged: Array<{ store: string; rows: unknown[]; upsert: boolean }> = [];
+  for (const def of STORES) {
+    let rows = file.stores[def.name];
+    if (!rows) continue;
+    if (def.name === 'settings') rows = rows.filter(isPortableSettingRow);
+    if (def.name === 'media') rows = rows.map(decodeMediaRow);
+    staged.push({ store: def.name, rows, upsert: def.name in WATERMARK_FIELDS });
+  }
+
+  for (const { store, rows, upsert } of staged) {
+    if (!upsert) {
+      await clearStore(store);
+    }
+    for (const row of rows) await writeStoreRow(store, row);
+    applied[store] = rows.length;
+  }
+  for (const row of localMaster) await idbPut('settings', row);
+  await writeStoreRow('settings', { key: 'lastForegroundAt', value: now });
+  return applied;
 }
 
 /** Put the pre-restore snapshot back. Used only on a failed restore. */
@@ -253,12 +416,12 @@ async function rollback(snapshot: BackupFile, localMaster: unknown[]): Promise<v
     let rows = snapshot.stores[def.name];
     if (!rows) continue;
     if (def.name === 'media') rows = rows.map(decodeMediaRow);
-    await idbClear(def.name);
-    for (const row of rows) await idbPut(def.name, row);
+    await clearStore(def.name);
+    for (const row of rows) await writeStoreRow(def.name, row);
   }
 
   for (const row of localMaster) await idbPut('settings', row);
-  await idbPut('settings', { key: 'restoreInProgress', value: 0 });
+  await writeStoreRow('settings', { key: 'restoreInProgress', value: 0 });
 }
 
 /**
@@ -267,14 +430,15 @@ async function rollback(snapshot: BackupFile, localMaster: unknown[]): Promise<v
  * rather than silently lived with.
  */
 export async function pendingRestoreAt(): Promise<number> {
-  const rows = await idbGetAll<{ key?: string; value?: unknown }>('settings');
+  const rows = (await readStoreRows('settings')) as Array<{ key?: string; value?: unknown }>;
   const row = rows.find((r) => r.key === 'restoreInProgress');
   return typeof row?.value === 'number' ? row.value : 0;
 }
 
-/** Suggested filename, e.g. `weixin-ai-20260808-1430.aiwx`. */
-export function backupFilename(now: number): string {
+/** Suggested filename, e.g. `weixin-ai-20260808-1430.aiwx` (`-inc` when 增量). */
+export function backupFilename(now: number, mode: BackupMode = 'full'): string {
   const d = new Date(now);
   const p = (n: number) => String(n).padStart(2, '0');
-  return `weixin-ai-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${BACKUP_EXT}`;
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  return `weixin-ai-${stamp}${mode === 'incremental' ? '-inc' : ''}${BACKUP_EXT}`;
 }

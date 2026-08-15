@@ -386,6 +386,8 @@ export const SCHEDULED_ACTION_KINDS = [
   'agent_invite',
   /** A close friend reposts one of the USER's moments, rarely (M-I15). */
   'moment_repost',
+  /** Periodic .aiwx backup (M-I17). Self-chaining; frequency set on 备份页. */
+  'auto_backup',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

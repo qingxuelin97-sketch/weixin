@@ -31,7 +31,15 @@ const runtime = read('src/app/useSchedulerRuntime.ts');
  * enqueued before the work that can fail, or one failure ends the chain
  * forever — there is nothing left to re-trigger it.
  */
-const SELF_CHAINING = ['heartbeat', 'agent_dm', 'moment_post', 'story_tick', 'group_event'] as const;
+const SELF_CHAINING = [
+  'heartbeat',
+  'agent_dm',
+  'moment_post',
+  'story_tick',
+  'group_event',
+  // M-I17: a failed export must cost one package, never the habit.
+  'auto_backup',
+] as const;
 
 describe('self-chaining kinds are actually chained', () => {
   for (const kind of SELF_CHAINING) {
@@ -232,6 +240,37 @@ describe('group pacing reaches the director', () => {
       /putSetting\(topicKey\([^)]*\), decision\.topicState/.test(ge),
       '话题不能再直接覆写字符串——那样它永远没有年龄，也就永远不会腻。',
     ).toBe(false);
+  });
+});
+
+describe('backup v2 and the SQLite driver are actually reachable', () => {
+  it('the foreground pass seeds the auto-backup chain', () => {
+    // The chain's first link is made here; without it the setting is a label
+    // over nothing — the exact written-but-never-wired shape again.
+    expect(runtime.includes('ensureAutoBackupScheduled(')).toBe(true);
+  });
+
+  it('the settings page can start, stop and consume the shelf', () => {
+    const page = read('src/features/settings/BackupPage.tsx');
+    expect(page.includes('setAutoBackupFreq(')).toBe(true);
+    expect(page.includes('resolveRestoreChain(')).toBe(true);
+    expect(page.includes('migrateToSqlite(')).toBe(true);
+    expect(page.includes('revertToIdb(')).toBe(true);
+  });
+
+  it('the driver is chosen before the store hydrates', () => {
+    // A driver picked after the first Repo read is a driver that never ran.
+    const store = read('src/store/appStore.ts');
+    expect(store.indexOf('initStorageDriver(')).toBeGreaterThan(-1);
+    expect(store.indexOf('await initStorageDriver()')).toBeLessThan(store.indexOf('repo.isEmpty'));
+  });
+
+  it('backup reads through the driver dispatch, not raw IndexedDB', () => {
+    // On a migrated device a raw idbGetAll would export the STALE
+    // pre-migration copy — silent, total data loss at restore time.
+    const backup = read('src/lib/backup.ts');
+    expect(backup.includes("from '../db/driver'")).toBe(true);
+    expect(backup.includes('readStoreRows(')).toBe(true);
   });
 });
 

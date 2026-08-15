@@ -177,6 +177,159 @@ export const DELETE_CONTACT_CASCADE: Record<string, 'cascade' | 'exempt'> = {
   favorites: 'cascade', // snapshots FROM the contact (or their dead threads) go too
 };
 
+/**
+ * Store-level primitives the contact-deletion cascade needs beyond the Repo
+ * interface itself. Each driver (IDB / SQLite) supplies its own, so the cascade
+ * LOGIC exists exactly once and cannot drift between drivers — the same reason
+ * `SCHEDULED_ACTION_KINDS` is one list.
+ *
+ * `scheduled_actions` primitives always hit IndexedDB in BOTH drivers: the
+ * scheduler (src/ai/scheduler.ts) talks to IDB directly, so that queue lives
+ * there regardless of which driver serves the Repo.
+ */
+export interface CascadeStoreOps {
+  allScheduledActions(): Promise<Array<{ id: string; payloadJson: string }>>;
+  deleteScheduledAction(id: string): Promise<void>;
+  allSettingKeys(): Promise<string[]>;
+  deleteSettingRow(key: string): Promise<void>;
+  allMoments(): Promise<MomentVM[]>;
+  allLikes(): Promise<MomentLikeVM[]>;
+  allComments(): Promise<MomentCommentVM[]>;
+  /** RAW rows — repo.getFavorites filters hidden convs, the cascade must not. */
+  allFavorites(): Promise<FavoriteVM[]>;
+  deletePersonaRow(contactId: string): Promise<void>;
+  deleteContactRow(id: string): Promise<void>;
+}
+
+/**
+ * The cascade. Ordered so an interruption leaves the WORLD consistent and
+ * only the contact row itself possibly surviving (a re-run then finishes the
+ * job): references to the contact go first, the contact goes last.
+ */
+export async function deleteContactCascade(
+  repo: Repo,
+  ops: CascadeStoreOps,
+  id: string,
+): Promise<void> {
+  // 'self' is the user in every senderId; deleting it would be deleting the
+  // account, which no UI offers and no cascade could make sensible.
+  if (id === 'self' || id === 'user') throw new Error(`refusing to delete ${id}`);
+
+  // 1) Threads that die with the contact: their 1:1 chat, and every hidden
+  //    AI↔AI DM they are half of (`dm_a_b` rows are single+hidden with the
+  //    pair in memberIds).
+  const convs = await repo.getConversations();
+  const dead = convs.filter(
+    (c) =>
+      c.type === 'single' &&
+      (c.peerId === id || (c.isHidden && (c.memberIds ?? []).includes(id))),
+  );
+  const deadIds = new Set(dead.map((c) => c.id));
+
+  // 2) Scheduled actions that name the contact or a dying thread. Payloads
+  //    are JSON strings; ids never contain quotes, so a quoted-substring
+  //    match is exact. Deleted rather than cancelled: a cancelled row still
+  //    references a contact that no longer exists.
+  const actions = await ops.allScheduledActions();
+  for (const a of actions) {
+    const hit =
+      a.payloadJson.includes(`"${id}"`) ||
+      [...deadIds].some((cid) => a.payloadJson.includes(`"${cid}"`));
+    if (hit) await ops.deleteScheduledAction(a.id);
+  }
+
+  // 3) The dead threads themselves (messages + summaries + row).
+  for (const c of dead) await repo.deleteConversation(c.id);
+
+  // 4) Group rosters: the contact leaves every group they were in.
+  for (const c of convs) {
+    if (c.type === 'group' && c.memberIds?.includes(id)) {
+      await repo.putConversation({ ...c, memberIds: c.memberIds.filter((m) => m !== id) });
+    }
+  }
+
+  // 5) Memory about them (their own facts; group memories are the group's).
+  for (const f of await repo.getMemory(id)) await repo.deleteMemory(f.id);
+
+  // 6) Every OTHER persona forgets the relation edge — a per-edge patch,
+  //    never a rebuilt relations map (CLAUDE.md: makePersona resets).
+  const contacts = await repo.getContacts();
+  for (const c of contacts) {
+    if (c.id === id) continue;
+    const p = await repo.getPersona(c.id);
+    if (p && id in p.relations) {
+      const rest = { ...p.relations };
+      delete rest[id];
+      await repo.putPersona({ ...p, relations: rest });
+    }
+  }
+
+  // 7) Per-contact settings rows. Contact ids never contain ':', so the
+  //    directional keys are matched exactly from either side.
+  const settingKeys = await ops.allSettingKeys();
+  const isTheirs = (k: string) =>
+    k === `affect:${id}` ||
+    k === `drift:${id}` ||
+    k === `threads:${id}` ||
+    k.startsWith(`stance:${id}:`) ||
+    (k.startsWith('stance:') && k.endsWith(`:${id}`)) ||
+    k.startsWith(`relarc:${id}:`) ||
+    (k.startsWith('relarc:') && k.endsWith(`:${id}`)) ||
+    [...deadIds].some(
+      (cid) =>
+        k === `convstate:${cid}` ||
+        k === `topic:${cid}` ||
+        k === `groupCfg:${cid}` ||
+        k === `groupBuild:${cid}`,
+    );
+  for (const k of settingKeys) {
+    if (isTheirs(k)) await ops.deleteSettingRow(k);
+  }
+
+  // 7.5) Worldbook: entries scoped to this persona, or to a dead thread.
+  for (const w of await repo.getWorldbook()) {
+    const gone =
+      (w.scope === 'persona' && w.scopeId === id) ||
+      (w.scope === 'conv' && w.scopeId != null && deadIds.has(w.scopeId));
+    if (gone) await repo.deleteWorldbookEntry(w.id);
+  }
+
+  // 7.7) Favorites (M-I13): snapshots authored by the contact, or captured
+  //      from a thread that dies with them. Kept snapshots would keep
+  //      rendering the deleted person's name and words forever — the opposite
+  //      of deletion.
+  for (const f of await ops.allFavorites()) {
+    if (f.senderId === id || deadIds.has(f.convId)) await repo.deleteFavorite(f.id);
+  }
+
+  // 8) Moments traces: their posts (with all social rows on them), and
+  //    their likes/comments on everyone else's posts.
+  const moments = await ops.allMoments();
+  for (const m of moments) {
+    if (m.authorId !== id) continue;
+    await repo.deleteMoment(m.id);
+  }
+  // Reposts by OTHERS that quote the dead contact keep their row but lose the
+  // snapshot (M-I15) — "every trace" includes quoted excerpts, and the card
+  // renders the WeChat idiom for it instead of a broken lookup.
+  for (const m of moments) {
+    if (m.authorId !== id && m.repostAuthorId === id) {
+      const { repostAuthorId: _drop, ...rest } = m;
+      await repo.putMoment({ ...rest, repostExcerpt: '原内容已删除' });
+    }
+  }
+  for (const l of await ops.allLikes()) {
+    if (l.contactId === id) await repo.deleteLike(l.id);
+  }
+  for (const cm of await ops.allComments()) {
+    if (cm.authorId === id) await repo.deleteComment(cm.id);
+  }
+
+  // 9) Finally the persona and the contact row itself.
+  await ops.deletePersonaRow(id);
+  await ops.deleteContactRow(id);
+}
+
 export class IdbRepo implements Repo {
   async getContacts() {
     return idbGetAll<ContactVM>('contacts');
@@ -188,131 +341,22 @@ export class IdbRepo implements Repo {
     await idbPut('contacts', c);
   }
 
-  /**
-   * The cascade. Ordered so an interruption leaves the WORLD consistent and
-   * only the contact row itself possibly surviving (a re-run then finishes the
-   * job): references to the contact go first, the contact goes last.
-   */
+  /** The one contact-deletion path — shared cascade over IDB primitives. */
   async deleteContact(id: string) {
-    // 'self' is the user in every senderId; deleting it would be deleting the
-    // account, which no UI offers and no cascade could make sensible.
-    if (id === 'self' || id === 'user') throw new Error(`refusing to delete ${id}`);
-
-    // 1) Threads that die with the contact: their 1:1 chat, and every hidden
-    //    AI↔AI DM they are half of (`dm_a_b` rows are single+hidden with the
-    //    pair in memberIds).
-    const convs = await this.getConversations();
-    const dead = convs.filter(
-      (c) =>
-        c.type === 'single' &&
-        (c.peerId === id || (c.isHidden && (c.memberIds ?? []).includes(id))),
-    );
-    const deadIds = new Set(dead.map((c) => c.id));
-
-    // 2) Scheduled actions that name the contact or a dying thread. Payloads
-    //    are JSON strings; ids never contain quotes, so a quoted-substring
-    //    match is exact. Deleted rather than cancelled: a cancelled row still
-    //    references a contact that no longer exists.
-    const actions = await idbGetAll<{ id: string; payloadJson: string }>('scheduled_actions');
-    for (const a of actions) {
-      const hit =
-        a.payloadJson.includes(`"${id}"`) ||
-        [...deadIds].some((cid) => a.payloadJson.includes(`"${cid}"`));
-      if (hit) await idbDelete('scheduled_actions', a.id);
-    }
-
-    // 3) The dead threads themselves (messages + summaries + row).
-    for (const c of dead) await this.deleteConversation(c.id);
-
-    // 4) Group rosters: the contact leaves every group they were in.
-    for (const c of convs) {
-      if (c.type === 'group' && c.memberIds?.includes(id)) {
-        await this.putConversation({ ...c, memberIds: c.memberIds.filter((m) => m !== id) });
-      }
-    }
-
-    // 5) Memory about them (their own facts; group memories are the group's).
-    const facts = await idbGetAllByIndex<MemoryFactVM>('memory_facts', 'bySubject', id);
-    for (const f of facts) await idbDelete('memory_facts', f.id);
-
-    // 6) Every OTHER persona forgets the relation edge — a per-edge patch,
-    //    never a rebuilt relations map (CLAUDE.md: makePersona resets).
-    const contacts = await this.getContacts();
-    for (const c of contacts) {
-      if (c.id === id) continue;
-      const p = await this.getPersona(c.id);
-      if (p && id in p.relations) {
-        const rest = { ...p.relations };
-        delete rest[id];
-        await this.putPersona({ ...p, relations: rest });
-      }
-    }
-
-    // 7) Per-contact settings rows. Contact ids never contain ':', so the
-    //    directional keys are matched exactly from either side.
-    const settingRows = await idbGetAll<{ key: string }>('settings');
-    const isTheirs = (k: string) =>
-      k === `affect:${id}` ||
-      k === `drift:${id}` ||
-      k === `threads:${id}` ||
-      k.startsWith(`stance:${id}:`) ||
-      (k.startsWith('stance:') && k.endsWith(`:${id}`)) ||
-      k.startsWith(`relarc:${id}:`) ||
-      (k.startsWith('relarc:') && k.endsWith(`:${id}`)) ||
-      [...deadIds].some(
-        (cid) =>
-          k === `convstate:${cid}` ||
-          k === `topic:${cid}` ||
-          k === `groupCfg:${cid}` ||
-          k === `groupBuild:${cid}`,
-      );
-    for (const r of settingRows) {
-      if (isTheirs(r.key)) await idbDelete('settings', r.key);
-    }
-
-    // 7.5) Worldbook: entries scoped to this persona, or to a dead thread.
-    for (const w of await this.getWorldbook()) {
-      const dead =
-        (w.scope === 'persona' && w.scopeId === id) ||
-        (w.scope === 'conv' && w.scopeId != null && deadIds.has(w.scopeId));
-      if (dead) await idbDelete('worldbook', w.id);
-    }
-
-    // 7.7) Favorites: snapshots authored by the contact, or captured from a
-    //      thread that dies with them. Kept snapshots would keep rendering the
-    //      deleted person's name and words forever — the opposite of deletion.
-    for (const f of await idbGetAll<FavoriteVM>('favorites')) {
-      if (f.senderId === id || deadIds.has(f.convId)) await idbDelete('favorites', f.id);
-    }
-
-    // 8) Moments traces: their posts (with all social rows on them), and
-    //    their likes/comments on everyone else's posts.
-    const moments = await idbGetAll<MomentVM>('moments');
-    for (const m of moments) {
-      if (m.authorId !== id) continue;
-      for (const l of await this.getLikes(m.id)) await idbDelete('moment_likes', l.id);
-      for (const cm of await this.getComments(m.id)) await idbDelete('moment_comments', cm.id);
-      await idbDelete('moments', m.id);
-    }
-    // Reposts by OTHERS that quote the dead contact keep their row but lose
-    // the snapshot (M-I15) — "every trace" includes quoted excerpts, and the
-    // card renders the WeChat idiom for it instead of a broken lookup.
-    for (const m of moments) {
-      if (m.authorId !== id && m.repostAuthorId === id) {
-        const { repostAuthorId: _drop, ...rest } = m;
-        await idbPut('moments', { ...rest, repostExcerpt: '原内容已删除' });
-      }
-    }
-    for (const l of await idbGetAll<MomentLikeVM>('moment_likes')) {
-      if (l.contactId === id) await idbDelete('moment_likes', l.id);
-    }
-    for (const cm of await idbGetAll<MomentCommentVM>('moment_comments')) {
-      if (cm.authorId === id) await idbDelete('moment_comments', cm.id);
-    }
-
-    // 9) Finally the persona and the contact row itself.
-    await idbDelete('personas', id);
-    await idbDelete('contacts', id);
+    await deleteContactCascade(this, {
+      allScheduledActions: () =>
+        idbGetAll<{ id: string; payloadJson: string }>('scheduled_actions'),
+      deleteScheduledAction: (aid) => idbDelete('scheduled_actions', aid),
+      allSettingKeys: async () =>
+        (await idbGetAll<{ key: string }>('settings')).map((r) => r.key),
+      deleteSettingRow: (k) => idbDelete('settings', k),
+      allMoments: () => idbGetAll<MomentVM>('moments'),
+      allLikes: () => idbGetAll<MomentLikeVM>('moment_likes'),
+      allComments: () => idbGetAll<MomentCommentVM>('moment_comments'),
+      allFavorites: () => idbGetAll<FavoriteVM>('favorites'),
+      deletePersonaRow: (cid) => idbDelete('personas', cid),
+      deleteContactRow: (cid) => idbDelete('contacts', cid),
+    }, id);
   }
   async getPersona(contactId: string) {
     return idbGet<PersonaVM>('personas', contactId);
@@ -625,5 +669,34 @@ async function idbQueryBySubject<T extends { subjectId?: string }>(
   return idbGetAllByIndex<T>(store, 'bySubject', subjectId);
 }
 
-/** The app's single Repo instance (web driver). */
-export const repo: Repo & { bulkSeed?: IdbRepo['bulkSeed'] } = new IdbRepo();
+type AppRepo = Repo & { bulkSeed?: IdbRepo['bulkSeed'] };
+
+/**
+ * The active driver behind `repo`. IndexedDB by default — src/db/driver.ts
+ * swaps in the SQLite driver at startup on native devices that completed the
+ * one-time migration (M-I17). Callers never see the swap: they import `repo`.
+ */
+let impl: AppRepo = new IdbRepo();
+
+/** Swap the driver. Called ONLY by src/db/driver.ts — never by features. */
+export function setRepoImpl(next: AppRepo): void {
+  impl = next;
+}
+
+/** Which driver is live right now (for the settings page status row). */
+export function currentRepoImpl(): AppRepo {
+  return impl;
+}
+
+/**
+ * The app's single Repo instance. A delegating proxy rather than a direct
+ * instance so the driver can be chosen asynchronously at startup (the flag
+ * lives in IndexedDB) without changing a single import site — the Repo
+ * interface existing precisely so drivers swap under it (CLAUDE.md §3).
+ */
+export const repo: AppRepo = new Proxy({} as AppRepo, {
+  get(_t, prop) {
+    const v = (impl as unknown as Record<PropertyKey, unknown>)[prop];
+    return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(impl) : v;
+  },
+});
