@@ -10,6 +10,7 @@ import type { ConversationVM } from '../../data/types';
 import './chat-list.css';
 import { useNow } from '../../lib/useNow';
 import { useSwipeRow } from '../../components/useSwipeRow';
+import { showConfirm } from '../../components/dialog';
 
 const LONG_PRESS_MS = 500;
 
@@ -29,6 +30,19 @@ export function ChatListPage() {
   const act = (fn: () => Promise<void>) => {
     setMenu(null);
     void fn().catch(() => showToast('操作失败'));
+  };
+
+  /** Deleting a thread destroys its history — the one list action that gets a confirm. */
+  const confirmDelete = (conv: ConversationVM) => {
+    setMenu(null);
+    void showConfirm({
+      title: '删除该聊天',
+      body: `与「${conv.title}」的聊天记录将被删除，且无法恢复。`,
+      confirmText: '删除',
+      danger: true,
+    }).then((ok) => {
+      if (ok) void deleteConversation(conv.id).catch(() => showToast('操作失败'));
+    });
   };
 
   return (
@@ -80,7 +94,7 @@ export function ChatListPage() {
                   ),
                 )
               }
-              onDelete={() => act(() => deleteConversation(conv.id))}
+              onDelete={() => confirmDelete(conv)}
             />
           )}
         />
@@ -123,7 +137,7 @@ export function ChatListPage() {
             <button
               role="menuitem"
               className="conv-menu__danger"
-              onClick={() => act(() => deleteConversation(menu.conv.id))}
+              onClick={() => confirmDelete(menu.conv)}
             >
               删除该聊天
             </button>

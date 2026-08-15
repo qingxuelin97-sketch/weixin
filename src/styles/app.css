@@ -51,7 +51,7 @@
   padding-top: var(--safe-top);
   background: var(--color-nav-bg);
   position: relative;
-  z-index: 10;
+  z-index: var(--z-shell);
 }
 .navbar__title {
   position: absolute;

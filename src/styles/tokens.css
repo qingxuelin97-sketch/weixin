@@ -166,6 +166,18 @@
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
+  /* ---- Overlay z scale (M-I0): pick a NAMED layer, never a number. ---- */
+  --z-shell: 10;
+  --z-msg-menu: 30;
+  --z-list-overlay: 50; /* chat-list ＋ dropdown & row long-press */
+  --z-picker: 60; /* media picker */
+  --z-forward: 70;
+  --z-viewer: 80; /* full-screen image viewer */
+  --z-call: 90;
+  --z-rp-open: 100;
+  --z-dialog: 120; /* modal/prompt/action-sheet — above every feature overlay */
+  --z-toast: 1000; /* always last: feedback must never be buried */
+
   /* ---- Motion ---- */
   --dur-fast: 120ms;
   --dur-page: 280ms; /* right-in-left-out push transition */

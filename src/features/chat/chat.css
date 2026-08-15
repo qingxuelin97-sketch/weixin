@@ -526,7 +526,7 @@
 /* Long-press context menu — WeChat's dark capsule. */
 .msg-menu {
   position: fixed;
-  z-index: 30;
+  z-index: var(--z-msg-menu);
   display: flex;
   border-radius: 6px;
   background: var(--color-menu-bg);
@@ -630,7 +630,7 @@
 .forward-mask {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: var(--z-forward);
   background: var(--color-overlay);
   display: flex;
   align-items: flex-end;

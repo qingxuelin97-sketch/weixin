@@ -55,7 +55,7 @@
    whatever the user was doing — that is what makes it a call and not a page. */
 .call-page--incoming {
   position: fixed;
-  z-index: var(--z-call, 90);
+  z-index: var(--z-call);
 }
 .call-page__row {
   display: flex;

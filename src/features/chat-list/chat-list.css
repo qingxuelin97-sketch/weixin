@@ -132,7 +132,7 @@
 .chatlist-overlay {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--z-list-overlay);
 }
 .plus-menu {
   position: absolute;

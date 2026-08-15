@@ -18,6 +18,7 @@ import {
   type BackupFile,
 } from '../../lib/backup';
 import './settings.css';
+import { Switch } from '../../components/Switch';
 
 /** Human labels for the store names shown in the manifest summary. */
 const STORE_LABEL: Record<string, string> = {
@@ -120,9 +121,7 @@ export function BackupPage() {
             onClick={() => setIncludeMedia((v) => !v)}
           >
             <span className="settings__label">备份包含素材图片</span>
-            <span className={`switch${includeMedia ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={includeMedia} onChange={() => setIncludeMedia((v) => !v)} />
           </div>
           <label className="settings__row">
             <span className="settings__label">从文件恢复</span>

@@ -95,7 +95,7 @@
 .rp-open {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-rp-open);
   background: var(--color-rp-open-bg);
   display: flex;
   flex-direction: column;

@@ -19,6 +19,7 @@ import { useComposerPanel } from './useComposerPanel';
 import { storyRunning } from '../../ai/story-service';
 import type { StorySaveRow } from '../../ai/story-gm';
 import { useAppStore } from '../../store/appStore';
+import { showPrompt } from '../../components/dialog';
 import { regenerateLastTurn } from '../../ai/engine';
 import { useGuard } from '../../app/useGuard';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
@@ -624,9 +625,13 @@ export function ChatPage() {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    const steer = window.prompt('想让她怎么改？（例：别这么客套 / 短一点）');
                     setMenu(null);
-                    if (steer?.trim()) guard('chat.steer', () => regenerate(steer.trim()));
+                    void showPrompt({
+                      title: '让她重说',
+                      placeholder: '例：别这么客套 / 短一点',
+                    }).then((steer) => {
+                      if (steer?.trim()) guard('chat.steer', () => regenerate(steer.trim()));
+                    });
                   }}
                 >
                   让她重说

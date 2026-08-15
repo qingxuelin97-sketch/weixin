@@ -5,6 +5,8 @@ import { TabScaffold } from './app/TabScaffold';
 import { PageStack } from './app/PageStack';
 import { Toast } from './components/Toast';
 import { IncomingCall } from './features/call/IncomingCall';
+import { DialogHost } from './components/dialog';
+import { useBackButton } from './app/useBackButton';
 import { ChatListPage } from './features/chat-list/ChatListPage';
 import { ContactsPage } from './features/contacts/ContactsPage';
 import { DiscoverPage } from './features/discover/DiscoverPage';
@@ -38,6 +40,12 @@ import { CallPage } from './features/call/CallPage';
 import { SearchPage } from './features/search/SearchPage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
+
+/** Mounts the Android hardware-back handler; needs the router context. */
+function BackButtonBridge() {
+  useBackButton();
+  return null;
+}
 
 /**
  * A pushed full-screen page.
@@ -88,6 +96,7 @@ export function App() {
   return (
     <HashRouter>
       <div className="app-shell">
+        <BackButtonBridge />
         <ErrorBoundary>
           {!hydrated ? (
             <div className="app-loading" />
@@ -139,6 +148,9 @@ export function App() {
           )}
         </ErrorBoundary>
         <Toast />
+        {/* Imperative dialogs (showConfirm/showPrompt/showActionSheet) render
+            here, above every feature overlay (M-I0). */}
+        <DialogHost />
         {/* Over everything, on any route: a call you have to navigate to is not
             a call. Renders nothing until an agent actually rings (M-H1). */}
         <IncomingCall />

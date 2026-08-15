@@ -12,6 +12,7 @@ import { repo } from '../../db/repo';
 import { visionEnabled, VISION_SETTING } from '../../ai/vision-context';
 import type { NsfwTierVM } from '../../data/types';
 import './settings.css';
+import { Switch } from '../../components/Switch';
 
 const NSFW_LABEL: Record<NsfwTierVM, string> = { off: '关闭', ambiguous: '暧昧', full: '全开' };
 
@@ -90,21 +91,15 @@ export function SettingsPage() {
           </div>
           <div className="settings__row settings__row--divided" onClick={toggleSound}>
             <span className="settings__label">新消息提示音</span>
-            <span className={`switch${sound ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={sound} onChange={toggleSound} />
           </div>
           <div className="settings__row settings__row--divided" onClick={toggleVibrate}>
             <span className="settings__label">新消息振动</span>
-            <span className={`switch${vibrate ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={vibrate} onChange={toggleVibrate} />
           </div>
           <div className="settings__row settings__row--divided" onClick={() => void toggleVision()}>
             <span className="settings__label">让 TA 看得见图片</span>
-            <span className={`switch${vision ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={vision} onChange={() => void toggleVision()} />
           </div>
           <p className="settings__hint">
             开启后你发的照片会随消息一起交给模型，TA 能真的看懂内容而不只是知道「你发了张图」。
@@ -115,9 +110,7 @@ export function SettingsPage() {
             onClick={() => void toggleNotify()}
           >
             <span className="settings__label">锁屏通知</span>
-            <span className={`switch${notifyOn ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={Boolean(notifyOn)} onChange={() => void toggleNotify()} />
           </div>
           <div
             className="settings__row settings__row--divided"

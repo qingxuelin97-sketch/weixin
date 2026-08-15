@@ -24,6 +24,7 @@ import { importStCard, exportStCard } from '../../ai/sillytavern';
 import { saveTextFile } from '../../lib/save-file';
 import { logError } from '../../lib/errlog';
 import './settings.css';
+import { Switch } from '../../components/Switch';
 
 function emptyPersona(contactId: string): PersonaVM {
   return makePersona({ contactId, core: '', speechStyle: '', proactivity: 0.5 });
@@ -472,9 +473,7 @@ export function PersonaEditPage() {
         <div className="settings__group">
           <div className="settings__row settings__row--divided" onClick={() => set('nsfwPermit', !p.nsfwPermit)}>
             <span className="settings__label">允许 NSFW（此智能体）</span>
-            <span className={`switch${p.nsfwPermit ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={p.nsfwPermit} onChange={() => set('nsfwPermit', !p.nsfwPermit)} />
           </div>
           {p.nsfwPermit && (
             <div className="field">

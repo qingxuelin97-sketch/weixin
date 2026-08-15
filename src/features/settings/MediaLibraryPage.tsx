@@ -7,6 +7,7 @@
 import { useRef, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
 import { repo } from '../../db/repo';
+import { showConfirm, showPrompt } from '../../components/dialog';
 import { useMedia } from '../../components/useMedia';
 import {
   listRegisteredMedia,
@@ -61,6 +62,13 @@ export function MediaLibraryPage() {
   };
 
   const remove = async (id: string) => {
+    const ok = await showConfirm({
+      title: '删除这张素材',
+      body: '引用它的头像与历史消息会退回占位图。',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     await repo.deleteMedia(id);
     unregisterMedia(id);
     bump((n) => n + 1);
@@ -68,7 +76,12 @@ export function MediaLibraryPage() {
 
   const editTags = async (id: string, current: string[]) => {
     if (kind !== 'photo') return;
-    const next = window.prompt('标签（逗号分隔，留空=全员可用）', current.join(', '));
+    const next = await showPrompt({
+      title: '素材标签',
+      body: '逗号分隔；留空 = 全员可用',
+      initial: current.join(', '),
+      allowEmpty: true,
+    });
     if (next == null) return;
     const item = await repo.getMediaItem(id);
     if (!item) return;

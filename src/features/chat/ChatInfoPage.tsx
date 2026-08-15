@@ -9,9 +9,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
+import { showConfirm, showPrompt } from '../../components/dialog';
 import { useGuard } from '../../app/useGuard';
 import '../settings/settings.css';
 import './chat.css';
+import { Switch } from '../../components/Switch';
 
 export function ChatInfoPage() {
   const guard = useGuard();
@@ -49,7 +51,7 @@ export function ChatInfoPage() {
   };
 
   const editGroupName = async () => {
-    const next = window.prompt('群聊名称', conv.title);
+    const next = await showPrompt({ title: '群聊名称', initial: conv.title, maxLength: 16 });
     if (next?.trim()) {
       await patchConversation(conv.id, { title: next.trim().slice(0, 16) });
       bump((n) => n + 1);
@@ -57,7 +59,12 @@ export function ChatInfoPage() {
   };
 
   const editAnnouncement = async () => {
-    const next = window.prompt('群公告', conv.announcement ?? '');
+    const next = await showPrompt({
+      title: '群公告',
+      initial: conv.announcement ?? '',
+      // Clearing the announcement is a legitimate edit, not a cancel.
+      allowEmpty: true,
+    });
     if (next != null) {
       await patchConversation(conv.id, { announcement: next.trim() || undefined });
       bump((n) => n + 1);
@@ -65,6 +72,15 @@ export function ChatInfoPage() {
   };
 
   const removeChat = async () => {
+    // The old row destroyed the whole thread on a single tap — the only
+    // destructive action in the app with no confirmation at all.
+    const ok = await showConfirm({
+      title: '删除该聊天',
+      body: '聊天记录将被删除，且无法恢复。',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     await deleteConversation(conv.id);
     showToast('已删除');
     navigate('/', { replace: true });
@@ -119,15 +135,11 @@ export function ChatInfoPage() {
           </div>
           <div className="settings__row settings__row--divided" onClick={() => guard('chatinfo.pin', () => toggle('isPinned'))}>
             <span className="settings__label">置顶聊天</span>
-            <span className={`switch${conv.isPinned ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={conv.isPinned} onChange={() => guard('chatinfo.pin', () => toggle('isPinned'))} />
           </div>
           <div className="settings__row" onClick={() => guard('chatinfo.mute', () => toggle('isMuted'))}>
             <span className="settings__label">消息免打扰</span>
-            <span className={`switch${conv.isMuted ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={conv.isMuted} onChange={() => guard('chatinfo.mute', () => toggle('isMuted'))} />
           </div>
         </div>
 
