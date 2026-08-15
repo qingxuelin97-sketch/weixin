@@ -121,6 +121,10 @@
   --color-call-hangup: var(--wx-red);
   --color-call-accept: var(--wx-green); /* answer an incoming call */
   --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */
+  /* Hold-to-talk (按住说话) full-screen recorder overlay (M-I9) */
+  --color-voice-scrim: rgba(26, 26, 26, 0.88); /* dark backdrop while recording */
+  --color-voice-text: rgba(255, 255, 255, 0.85); /* hints on the dark backdrop */
+  --color-voice-cancel: #fa5151; /* slide-up-to-cancel blob (device red) */
   --color-on-color-divider: rgba(255, 255, 255, 0.2); /* hairline on a colored surface */
   --color-on-color-fill: rgba(255, 255, 255, 0.25); /* translucent chip on a colored surface */
 
@@ -173,6 +177,7 @@
   --z-picker: 60; /* media picker */
   --z-sheet: 70; /* generic bottom sheet (forward picker, member picker…) */
   --z-viewer: 80; /* full-screen image viewer */
+  --z-voice-rec: 85; /* hold-to-talk recorder — above viewer, below an incoming call */
   --z-call: 90;
   --z-rp-open: 100;
   --z-dialog: 120; /* modal/prompt/action-sheet — above every feature overlay */

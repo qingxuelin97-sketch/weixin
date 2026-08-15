@@ -15,6 +15,7 @@ import { ProfilePage } from './features/me/ProfilePage';
 import { ChatPage } from './features/chat/ChatPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ApiConfigPage } from './features/settings/ApiConfigPage';
+import { AsrConfigPage } from './features/settings/AsrConfigPage';
 import { PersonaEditPage } from './features/settings/PersonaEditPage';
 import { RedPacketSendPage } from './features/money/RedPacketSendPage';
 import { RedPacketOpenPage } from './features/money/RedPacketOpenPage';
@@ -120,6 +121,7 @@ export function App() {
               <Route path="/profile" element={<Push><ProfilePage /></Push>} />
               <Route path="/settings" element={<Push><SettingsPage /></Push>} />
               <Route path="/settings/api" element={<Push><ApiConfigPage /></Push>} />
+              <Route path="/settings/asr" element={<Push><AsrConfigPage /></Push>} />
               <Route path="/settings/backup" element={<Push><BackupPage /></Push>} />
               <Route path="/settings/notify-test" element={<Push><NotifyTestPage /></Push>} />
               <Route path="/settings/env" element={<Push><EnvDiagPage /></Push>} />

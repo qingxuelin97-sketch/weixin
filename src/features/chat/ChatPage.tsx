@@ -4,10 +4,10 @@ import {
   IconBack,
   IconMore,
   IconVoiceCircle,
-  IconMicSmall,
   IconEmoji,
   IconPlus,
 } from '../../components/icons';
+import { VoiceInputButton } from './VoiceInput';
 import { Avatar } from '../../components/Avatar';
 import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
@@ -883,9 +883,7 @@ export function ChatPage() {
               }}
               placeholder=""
             />
-            <button className="composer__mic" aria-label="语音输入" onClick={() => showToast('语音输入暂未开放')}>
-              <IconMicSmall />
-            </button>
+            <VoiceInputButton onText={(t) => setDraft((d) => (d ? d + t : t))} />
           </div>
           <button className="composer__icon" aria-label="表情" onClick={composer.toggleEmoji}>
             <IconEmoji />
