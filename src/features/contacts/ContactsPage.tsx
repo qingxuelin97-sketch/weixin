@@ -69,8 +69,6 @@ function FnGlyph({ kind }: { kind: string }) {
   }
 }
 
-const INDEX_RAIL = ['↑', '☆', 'A', 'C', 'L', 'M', '#'];
-
 export function ContactsPage() {
   const navigate = useNavigate();
   const showToast = useAppStore((s) => s.showToast);
@@ -79,7 +77,21 @@ export function ContactsPage() {
   const allContacts = useAppStore((s) => s.contacts);
   const contacts = allContacts.filter((c) => c.type === 'ai');
   const groups = groupByInitial(contacts);
-  const starred = contacts.filter((c) => (c as { isStarred?: boolean }).isStarred);
+  const starred = contacts.filter((c) => c.isStarred);
+
+  // A-Z rail made REAL (M-I6): letters come from the actual sections, taps and
+  // finger drags land on them. It was seven hardcoded decorative glyphs.
+  const rail = ['↑', ...(starred.length ? ['☆'] : []), ...groups.map(([letter]) => letter)];
+  const jumpTo = (railKey: string) => {
+    const id =
+      railKey === '↑' ? 'contacts-top' : railKey === '☆' ? 'contacts-star' : `contacts-${railKey}`;
+    document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  };
+  const railFromPoint = (clientY: number, el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    const idx = Math.floor(((clientY - rect.top) / rect.height) * rail.length);
+    return rail[Math.min(Math.max(idx, 0), rail.length - 1)];
+  };
 
   return (
     <>
@@ -97,6 +109,7 @@ export function ContactsPage() {
         }
       />
       <div className="page-body contacts">
+        <div id="contacts-top" />
         <div className="contacts__functions">
           {FUNCTION_ENTRIES.map((f) => (
             <div
@@ -121,7 +134,7 @@ export function ContactsPage() {
           ))}
         </div>
         {starred.length > 0 && (
-          <div className="contacts__group">
+          <div className="contacts__group" id="contacts-star">
             <div className="contacts__index">星标朋友</div>
             {starred.map((cc) => (
               <ContactRow
@@ -136,7 +149,7 @@ export function ContactsPage() {
           </div>
         )}
         {groups.map(([letter, list]) => (
-          <div key={letter} className="contacts__group">
+          <div key={letter} className="contacts__group" id={`contacts-${letter}`}>
             <div className="contacts__index">{letter}</div>
             {list.map((cc) => (
               <ContactRow
@@ -152,8 +165,19 @@ export function ContactsPage() {
         ))}
         <div className="contacts__count">{contacts.length} 位联系人</div>
       </div>
-      <div className="contacts__az">
-        {INDEX_RAIL.map((l) => (
+      <div
+        className="contacts__az"
+        // Tap OR drag: pointermove tracks the finger so sliding down the rail
+        // sweeps through sections, like the device does.
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          jumpTo(railFromPoint(e.clientY, e.currentTarget));
+        }}
+        onPointerMove={(e) => {
+          if (e.buttons > 0) jumpTo(railFromPoint(e.clientY, e.currentTarget));
+        }}
+      >
+        {rail.map((l) => (
           <span key={l}>{l}</span>
         ))}
       </div>

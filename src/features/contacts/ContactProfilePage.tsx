@@ -8,6 +8,7 @@ import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import { showConfirm } from '../../components/dialog';
+import { Switch } from '../../components/Switch';
 import type { ConversationVM } from '../../data/types';
 import { useGuard } from '../../app/useGuard';
 import './contacts.css';
@@ -22,6 +23,14 @@ export function ContactProfilePage() {
   const addConversation = useAppStore((s) => s.addConversation);
   const deleteContact = useAppStore((s) => s.deleteContact);
   const showToast = useAppStore((s) => s.showToast);
+
+  // 星标 (M-I6): the schema carried isStarred since M1 with zero writers, so
+  // the 星标朋友 section could never appear. This is the writer.
+  const putContact = useAppStore((s) => s.putContact);
+  const toggleStar = async () => {
+    if (!contact) return;
+    await putContact({ ...contact, isStarred: !contact.isStarred });
+  };
 
   /** The one irreversible action on this card — spells out how much goes. */
   const removeContact = async () => {
@@ -110,6 +119,13 @@ export function ContactProfilePage() {
         </div>
 
         <div className="settings__group">
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => guard('contact.star', toggleStar)}
+          >
+            <span className="settings__label">星标朋友</span>
+            <Switch on={Boolean(contact.isStarred)} onChange={() => guard('contact.star', toggleStar)} />
+          </div>
           <div className="settings__row settings__row--divided" onClick={() => navigate(`/persona/${contactId}`)}>
             <span className="settings__label">编辑人设</span>
             <span className="settings__chevron">›</span>

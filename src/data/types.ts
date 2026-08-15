@@ -16,6 +16,8 @@ export interface ContactVM {
   signature?: string;
   wxid?: string;
   pinyinInitial?: string;
+  /** 星标朋友 (M-I6). Schema had the flag since M1; this is its first writer path. */
+  isStarred?: boolean;
 }
 
 /**

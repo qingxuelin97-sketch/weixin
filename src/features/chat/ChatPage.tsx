@@ -102,6 +102,8 @@ export function ChatPage() {
   // ONE 'merged' card whose meta carries the copied lines.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  /** 群 @ 选择器 (M-I6): open after the user types '@'. */
+  const [atPicker, setAtPicker] = useState(false);
   const [mergedForward, setMergedForward] = useState<{
     title: string;
     items: Array<{ name: string; body: string; at: number }>;
@@ -745,6 +747,29 @@ export function ChatPage() {
         </div>
       )}
 
+      {atPicker && conv.type === 'group' && (
+        <Sheet open onClose={() => setAtPicker(false)} title="提醒谁看">
+          {(conv.memberIds ?? [])
+            .map((id) => contactById(id))
+            .filter((c): c is NonNullable<typeof c> => Boolean(c))
+            .map((c) => (
+              <div
+                key={c.id}
+                className="settings__row settings__row--divided"
+                onClick={() => {
+                  const name = c.remark ?? c.name;
+                  // The '@' that summoned the picker is already in the draft.
+                  setDraft((d) => `${d}${name} `);
+                  setAtPicker(false);
+                  composer.inputRef.current?.focus();
+                }}
+              >
+                <span className="settings__label">{c.remark ?? c.name}</span>
+              </div>
+            ))}
+        </Sheet>
+      )}
+
       {(forwarding || mergedForward) && (
         <Sheet
           open
@@ -839,7 +864,16 @@ export function ChatPage() {
               className="composer__input"
               rows={1}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                // 群 @ 选择器 (M-I6): typing '@' in a group summons the member
+                // picker. Inserted as `@名字 ` — exactly what the director's
+                // findMentions matches, so a mention is a REAL summons.
+                if (isGroup && next.length > draft.length && next.endsWith('@')) {
+                  setAtPicker(true);
+                }
+                setDraft(next);
+              }}
               onFocus={composer.openKeyboard}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
