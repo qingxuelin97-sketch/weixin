@@ -118,6 +118,27 @@
   --color-on-color-divider: rgba(255, 255, 255, 0.2); /* hairline on a colored surface */
   --color-on-color-fill: rgba(255, 255, 255, 0.25); /* translucent chip on a colored surface */
 
+  /* Annual report (M-I14): deep-green night palette + gold accents, WeChat
+     年度报告 style. Raw values live ONLY here per constitution rule #1. */
+  --wx-report-deep: #10231a; /* backdrop base */
+  --wx-report-deep-2: #1c3a2a; /* backdrop gradient end */
+  --wx-report-card: #234534; /* stat card surface */
+  --wx-report-gold: #f7d774; /* headline numbers */
+  --wx-report-mint: #7fd6a4; /* secondary accent / bars */
+  --color-report-bg-a: var(--wx-report-deep);
+  --color-report-bg-b: var(--wx-report-deep-2);
+  --color-report-card: var(--wx-report-card);
+  --color-report-text: var(--wx-white);
+  --color-report-dim: rgba(255, 255, 255, 0.55);
+  --color-report-hairline: rgba(255, 255, 255, 0.14);
+  --color-report-accent: var(--wx-report-gold);
+  --color-report-bar: var(--wx-report-mint);
+
+  /* Status page (M-I14) meter colors */
+  --color-status-track: rgba(0, 0, 0, 0.07);
+  --color-status-pos: var(--wx-green);
+  --color-status-neg: var(--wx-rp-orange);
+
   /* Moments */
   --color-moments-bg: var(--wx-white);
   --color-moments-comment-bg: var(--wx-moments-comment-bg);

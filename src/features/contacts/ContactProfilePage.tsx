@@ -93,6 +93,12 @@ export function ContactProfilePage() {
         </div>
 
         <div className="settings__group">
+          {persona && (
+            <div className="settings__row settings__row--divided" onClick={() => navigate(`/status/${contactId}`)}>
+              <span className="settings__label">她的状态</span>
+              <span className="settings__chevron">›</span>
+            </div>
+          )}
           <div className="settings__row settings__row--divided" onClick={() => navigate(`/persona/${contactId}`)}>
             <span className="settings__label">编辑人设</span>
             <span className="settings__chevron">›</span>

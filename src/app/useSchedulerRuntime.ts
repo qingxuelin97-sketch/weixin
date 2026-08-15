@@ -29,6 +29,8 @@ import { tierFor, maxTier, globalTier } from '../lib/nsfw-tier';
 import { logError } from '../lib/errlog';
 import { moodOf, moodParams } from '../lib/mood';
 import { affectFor } from '../lib/affect';
+import { driftAt, driftParams } from '../ai/drift';
+import { agentEpoch } from '../ai/goals';
 import { shouldFollowUpAfterRecall, recallFollowUpLine } from '../lib/recall';
 import { runMomentPost, runMomentLike, runMomentComment, scheduleNextMoment } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
@@ -116,10 +118,13 @@ export function useSchedulerRuntime(enabled: boolean): void {
         const edge = await getEdge('self', persona.contactId, now);
         // Pacing now answers to how she FEELS, not only to the day's dice: the
         // affect pulse rides the same proactMul the mood already used (M-E3).
+        // Personality drift (M-I14) rides the SAME slot — a completed goal
+        // makes her measurably more forthcoming for a few days, then it fades.
         const { params } = await affectFor(persona.contactId, now);
+        const drift = driftParams(driftAt(persona.contactId, now, agentEpoch(persona.contactId)));
         await scheduleHeartbeat(persona, convId, now, lastMsgAt, {
           affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
-          proactMul: params.proactMul,
+          proactMul: params.proactMul * drift.proactMul,
           notBefore: state.cooldownUntil || undefined,
         });
       },
@@ -362,9 +367,10 @@ async function runForegroundPass(): Promise<void> {
     if (!(await hasPendingFor('heartbeat', persona.contactId))) {
       const edge = await getEdge('self', persona.contactId, now);
       const state = await getAgentState(persona.contactId);
+      const drift = driftParams(driftAt(persona.contactId, now, agentEpoch(persona.contactId)));
       await scheduleHeartbeat(persona, conv.id, now, conv.lastMsgAt, {
         affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
-        proactMul: moodParams(moodOf(persona.contactId, now).key).proactMul,
+        proactMul: moodParams(moodOf(persona.contactId, now).key).proactMul * drift.proactMul,
         notBefore: state.cooldownUntil || undefined,
       });
     }

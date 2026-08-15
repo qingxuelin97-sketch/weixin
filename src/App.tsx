@@ -26,6 +26,8 @@ import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
 import { StoryPage } from './features/settings/StoryPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
+import { StatusPage } from './features/contacts/StatusPage';
+import { YearReportPage } from './features/me/YearReportPage';
 import { NewContactPage } from './features/contacts/NewContactPage';
 import { GroupCreatePage } from './features/contacts/GroupCreatePage';
 import { ChatInfoPage } from './features/chat/ChatInfoPage';
@@ -113,6 +115,8 @@ export function App() {
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
               <Route path="/story" element={<Push><StoryPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
+              <Route path="/status/:contactId" element={<Push><StatusPage /></Push>} />
+              <Route path="/report" element={<Push><YearReportPage /></Push>} />
               <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />
               <Route path="/group-new" element={<Push><GroupCreatePage /></Push>} />
               <Route path="/chat/:convId/info" element={<Push><ChatInfoPage /></Push>} />

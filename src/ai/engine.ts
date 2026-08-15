@@ -28,6 +28,13 @@ import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective } from './lifeline';
+import {
+  agentEpoch,
+  goalStateAt,
+  goalDirective,
+  latestTerminalEvent,
+  goalShareDirective,
+} from './goals';
 import { refreshConvState, convStateDirective } from './conv-state';
 import {
   detectThreads,
@@ -72,10 +79,10 @@ const RECENT_WINDOW = 30; // messages of context sent to the model
  * is derived from the id, giving each agent a stable but distinct phase.
  */
 function personaEpoch(persona: PersonaVM, peer: ContactVM): number {
-  const seeded = seededRng(`epoch:${persona.contactId}:${peer.id}`)();
-  // Anchored to a fixed date, offset by up to 60 days — deterministic forever,
-  // and never dependent on when the app happened to be installed.
-  return 1_735_689_600_000 + Math.floor(seeded * 60 * 86_400_000);
+  // Delegates to goals.agentEpoch with the SAME seed string this function has
+  // used since M-E3 — lifeline and goals must share one anchor, and changing
+  // the seed would rewrite every agent's history.
+  return agentEpoch(persona.contactId, peer.id);
 }
 
 /** Threads already followed up on. One question per thread, ever. */
@@ -90,6 +97,24 @@ async function markThreadUsed(contactId: string, threadId: string): Promise<void
   // Bounded: only the newest 200 matter, and an unbounded settings row would
   // grow forever in a store that is read on every proactive message.
   await repo.putSetting(`threads:${contactId}`, [...used].slice(-200));
+}
+
+/**
+ * Goal endings already announced (M-I14). A completed goal is told about ONCE,
+ * ever — the ledger lives here (the layer that owns storage) because goals.ts
+ * is a pure module and must stay one.
+ */
+async function goalEventTold(contactId: string, eventId: string): Promise<boolean> {
+  const rows = (await repo.getSetting<string[]>(`goal_told:${contactId}`)) ?? [];
+  return Array.isArray(rows) && rows.includes(eventId);
+}
+
+async function markGoalEventTold(contactId: string, eventId: string): Promise<void> {
+  const rows = (await repo.getSetting<string[]>(`goal_told:${contactId}`)) ?? [];
+  const next = Array.isArray(rows) ? rows : [];
+  if (!next.includes(eventId)) next.push(eventId);
+  // A lifetime of goals is a few dozen endings; 50 is years of margin.
+  await repo.putSetting(`goal_told:${contactId}`, next.slice(-50));
 }
 
 /** Persona row → the prompt layer's view. Shared with the Moments engine. */
@@ -286,6 +311,12 @@ async function generateAndPlayInner(
   const arcs = lifelineAt(persona, hooks.now(), personaEpoch(persona, peer));
   const arcLine = lifelineDirective(arcs);
   if (arcLine) system += `\n\n${arcLine}`;
+  // The long arc on top of the weekly texture (M-I14): what she is working
+  // toward. One line, appended after the lifeline for the same reason the
+  // lifeline is appended after the scene — the prefix stays cacheable.
+  const goal = goalStateAt(peer.id, hooks.now(), personaEpoch(persona, peer));
+  const goalLine = goalDirective(goal, hooks.now());
+  if (goalLine) system += `\n\n${goalLine}`;
   // What this conversation is still in the middle of (M-E6). Channel 1: this
   // refresh runs on EVERY turn, so an unanswered question is actionable during
   // the same conversation rather than minutes after you have left it.
@@ -514,32 +545,42 @@ export async function sendProactiveMessage(
         '你上一条消息对方一直没回。轻轻问一下（"在忙？"这类），一句就好——' +
         '不要连环追问，不要表现出不满，问完就等。';
     } else {
-      const facts = await repo.getMemory(peer.id);
-      const moments = await repo.getMoments({ limit: 10 });
-      const own = moments.find(
-        (m) =>
-          m.authorId === peer.id &&
-          m.text &&
-          (at ?? hooks.now()) - m.createdAt < 24 * 3_600_000,
-      );
-      // Picking a loose thread back up outranks any generic opener: "上次你说
-      // 要去看牙，去了吗" is the single most human thing a friend does, and
-      // this app could not do it at all before M-E3.
-      const recent = await repo.getMessages(convId, { limit: 40 });
-      const used = await usedThreadIds(peer.id);
-      const thread = pickThread(
-        [...detectThreads(recent, convId), ...threadsFromFacts(facts, peer.id)],
-        recent,
-        at ?? hooks.now(),
-        { used, seed: `${convId}:${lastMsg?.id ?? 0}` },
-      );
-      if (thread) {
-        material = threadDirective(thread, at ?? hooks.now());
-        // Marked BEFORE the generation: a thread asked about once is closed
-        // forever, and a failed generation must not make her ask again.
-        await markThreadUsed(peer.id, thread.id);
+      // A goal that just ended (M-I14) outranks everything: "我考过了！" is the
+      // single strongest reason a friend reaches out first. Once-ever, and the
+      // ledger is written BEFORE generation so a failed attempt cannot make
+      // her announce the same ending twice.
+      const goalEvent = latestTerminalEvent(peer.id, at ?? hooks.now(), personaEpoch(persona, peer));
+      if (goalEvent && !(await goalEventTold(peer.id, goalEvent.id))) {
+        await markGoalEventTold(peer.id, goalEvent.id);
+        material = goalShareDirective(goalEvent);
       } else {
-        material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+        const facts = await repo.getMemory(peer.id);
+        const moments = await repo.getMoments({ limit: 10 });
+        const own = moments.find(
+          (m) =>
+            m.authorId === peer.id &&
+            m.text &&
+            (at ?? hooks.now()) - m.createdAt < 24 * 3_600_000,
+        );
+        // Picking a loose thread back up outranks any generic opener: "上次你说
+        // 要去看牙，去了吗" is the single most human thing a friend does, and
+        // this app could not do it at all before M-E3.
+        const recent = await repo.getMessages(convId, { limit: 40 });
+        const used = await usedThreadIds(peer.id);
+        const thread = pickThread(
+          [...detectThreads(recent, convId), ...threadsFromFacts(facts, peer.id)],
+          recent,
+          at ?? hooks.now(),
+          { used, seed: `${convId}:${lastMsg?.id ?? 0}` },
+        );
+        if (thread) {
+          material = threadDirective(thread, at ?? hooks.now());
+          // Marked BEFORE the generation: a thread asked about once is closed
+          // forever, and a failed generation must not make her ask again.
+          await markThreadUsed(peer.id, thread.id);
+        } else {
+          material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+        }
       }
     }
   } catch (e) {
