@@ -49,3 +49,4 @@ npm-debug.log*
 
 # --- User-supplied notification sound (personal, not redistributed) ---
 public/sounds/message.*
+.claude/
