@@ -126,6 +126,12 @@ export function ContactProfilePage() {
             <span className="settings__label">星标朋友</span>
             <Switch on={Boolean(contact.isStarred)} onChange={() => guard('contact.star', toggleStar)} />
           </div>
+          {persona && (
+            <div className="settings__row settings__row--divided" onClick={() => navigate(`/status/${contactId}`)}>
+              <span className="settings__label">她的状态</span>
+              <span className="settings__chevron">›</span>
+            </div>
+          )}
           <div className="settings__row settings__row--divided" onClick={() => navigate(`/persona/${contactId}`)}>
             <span className="settings__label">编辑人设</span>
             <span className="settings__chevron">›</span>

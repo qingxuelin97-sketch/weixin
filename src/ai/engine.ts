@@ -38,6 +38,13 @@ import { voiceDirective } from './voice-send';
 import { refreshConvState, convStateDirective } from './conv-state';
 import { worldLinesFor } from './worldbook';
 import {
+  agentEpoch,
+  goalStateAt,
+  goalDirective,
+  latestTerminalEvent,
+  goalShareDirective,
+} from './goals';
+import {
   detectThreads,
   threadsFromFacts,
   pickThread,
@@ -88,6 +95,20 @@ export function abortConversation(convId: string): void {
 }
 
 const RECENT_WINDOW = 30; // messages of context sent to the model
+
+/** Goal endings already announced — once-ever, ledger written BEFORE generation. */
+async function goalEventTold(contactId: string, eventId: string): Promise<boolean> {
+  const rows = (await repo.getSetting<string[]>(`goal_told:${contactId}`)) ?? [];
+  return Array.isArray(rows) && rows.includes(eventId);
+}
+
+async function markGoalEventTold(contactId: string, eventId: string): Promise<void> {
+  const rows = (await repo.getSetting<string[]>(`goal_told:${contactId}`)) ?? [];
+  const next = Array.isArray(rows) ? rows : [];
+  if (!next.includes(eventId)) next.push(eventId);
+  // A lifetime of goals is a few dozen endings; 50 is years of margin.
+  await repo.putSetting(`goal_told:${contactId}`, next.slice(-50));
+}
 
 /** Threads already followed up on. One question per thread, ever. */
 async function usedThreadIds(contactId: string): Promise<Set<string>> {
@@ -379,6 +400,14 @@ async function generateAndPlayInner(
   const arcs = lifelineAt(persona, hooks.now(), personaEpoch(persona.contactId));
   const arcLine = lifelineDirective(arcs);
   if (arcLine) system += `\n\n${arcLine}`;
+  // The long arc on top of the weekly texture (M-I14): what she is working
+  // toward. One line, appended after the lifeline for the same reason the
+  // lifeline is appended after the scene — the prefix stays cacheable.
+  const goalLine = goalDirective(
+    goalStateAt(peer.id, hooks.now(), agentEpoch(peer.id)),
+    hooks.now(),
+  );
+  if (goalLine) system += `\n\n${goalLine}`;
   // What this conversation is still in the middle of (M-E6). Channel 1: this
   // refresh runs on EVERY turn, so an unanswered question is actionable during
   // the same conversation rather than minutes after you have left it.
@@ -713,6 +742,17 @@ export async function sendProactiveMessage(
         '你上一条消息对方一直没回。轻轻问一下（"在忙？"这类），一句就好——' +
         '不要连环追问，不要表现出不满，问完就等。';
     } else {
+      // A goal that just ended (M-I14) outranks everything: "我考过了！" is the
+      // single strongest reason a friend reaches out first. Once-ever, and the
+      // ledger is written BEFORE generation so a failed attempt cannot make
+      // her announce the same ending twice.
+      const goalEvent = latestTerminalEvent(peer.id, at ?? hooks.now(), agentEpoch(peer.id));
+      if (goalEvent && !(await goalEventTold(peer.id, goalEvent.id))) {
+        await markGoalEventTold(peer.id, goalEvent.id);
+        material = goalShareDirective(goalEvent);
+      }
+    }
+    if (!material && !opts.nudge) {
       const facts = await repo.getMemory(peer.id);
       const moments = await repo.getMoments({ limit: 10 });
       const own = moments.find(

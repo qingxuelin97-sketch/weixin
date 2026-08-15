@@ -33,6 +33,8 @@ import { WorldbookPage } from './features/settings/WorldbookPage';
 import { MergedViewPage } from './features/chat/MergedViewPage';
 import { StoryPage } from './features/settings/StoryPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
+import { StatusPage } from './features/contacts/StatusPage';
+import { YearReportPage } from './features/me/YearReportPage';
 import { NewContactPage } from './features/contacts/NewContactPage';
 import { PersonaGeneratePage } from './features/contacts/PersonaGeneratePage';
 import { GroupCreatePage } from './features/contacts/GroupCreatePage';
@@ -132,6 +134,8 @@ export function App() {
               <Route path="/merged/:convId/:msgId" element={<Push><MergedViewPage /></Push>} />
               <Route path="/story" element={<Push><StoryPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
+              <Route path="/status/:contactId" element={<Push><StatusPage /></Push>} />
+              <Route path="/report" element={<Push><YearReportPage /></Push>} />
               <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />
               <Route path="/contact-new/ai" element={<Push><PersonaGeneratePage /></Push>} />
               <Route path="/group-new" element={<Push><GroupCreatePage /></Push>} />

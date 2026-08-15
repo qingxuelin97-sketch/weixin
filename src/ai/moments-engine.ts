@@ -21,6 +21,7 @@ import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
 import { pickImages } from '../data/moments-images';
 import { isActiveAt } from './heartbeat';
+import { agentEpoch, goalStateAt, goalMomentMaterial } from './goals';
 import { getAllEdges, pairKey, effectiveAffinity } from './relationship';
 import { repo } from '../db/repo';
 
@@ -217,6 +218,12 @@ export async function generateMomentPost(
       ? aboutYouDirective(shared.fact)
       : '';
 
+  // Goal-arc material (M-I14): a fresh milestone or a completed goal sometimes
+  // becomes the post. Seeded gate inside — the feed must not turn into a
+  // progress log, so this is empty most of the time.
+  const goal = goalStateAt(peer.id, now, agentEpoch(peer.id));
+  const goalBg = goalMomentMaterial(goal, now, `${peer.id}:${now}`);
+
   try {
     const router = await getRouter();
     const res = await router.complete(
@@ -232,7 +239,8 @@ export async function generateMomentPost(
               '1) 第一人称，像真人随手发的，不是作文；' +
               '2) 40 字以内，可以只有一句话，允许口语和不完整句；' +
               '3) 不要话题标签、不要 emoji 堆砌、不要"分享一下"这类开场白；' +
-              '4) 只输出正文，不要引号、不要解释。',
+              '4) 只输出正文，不要引号、不要解释。' +
+              (goalBg ? `\n背景（不要照抄原句）：${goalBg}` : ''),
           },
         ],
       },
