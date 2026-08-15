@@ -140,7 +140,11 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
       const ms = num(meta.durationMs);
       const incoming = meta.direction === 'in';
       if (ms == null) return incoming ? '[对方打来语音通话，未接通]' : '[发起了语音通话，未接通]';
-      return `[语音通话 ${humanDuration(ms)}]`;
+      // 通话纪要 (M-I16): the call turns themselves never become messages, so
+      // this one line is all a later turn can know about what was said on the
+      // phone — "电话里说好了周五见" has to survive here to be referenceable.
+      const summary = str(meta.summary);
+      return `[语音通话 ${humanDuration(ms)}${summary ? `，${summary}` : ''}]`;
     }
 
     case 'system':

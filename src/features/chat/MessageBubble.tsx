@@ -30,10 +30,15 @@ interface Props {
   onReEdit?: (msg: MessageVM) => void;
   /** Re-send a message whose delivery failed. */
   onRetry?: (msg: MessageVM) => void;
+  /**
+   * 「已读」 marker on one's own message (M-I16, opt-in via the readReceipts
+   * setting — WeChat itself has no read receipts, so this defaults off).
+   */
+  readMark?: boolean;
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onContactTap, onLongPress, onReEdit, onRetry }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onContactTap, onLongPress, onReEdit, onRetry, readMark }: Props) {
   // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
   // movement and had no fired guard, so releasing a long press on an image
   // ALSO opened the viewer. The hook fixes both.
@@ -125,6 +130,7 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
         {msg.meta?.quote != null && (
           <div className="msg-quote">{String(msg.meta.quote)}</div>
         )}
+        {isSelf && readMark && <span className="msg-read">已读</span>}
       </div>
       {isSelf && (
         <div className="msg-row__avatar">

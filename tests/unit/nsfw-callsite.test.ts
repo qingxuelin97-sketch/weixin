@@ -285,6 +285,81 @@ describe('call site 3 — runAgentDm (hidden, and therefore trace-free)', () => 
 
 /* ------------------------------------------------------------------ */
 
+describe('call site 4 — call script (M-I16 通话台词)', () => {
+  const callPeer = {
+    id: 'ai_call',
+    type: 'ai',
+    name: '小雨',
+    avatarColor: '#000000',
+    avatarText: '雨',
+  } as const;
+
+  it('full-tier call lines land on the permissive channel and carry the transcript', async () => {
+    const { CallSession } = await import('../../src/ai/call-script');
+    const { router, landings } = recordingRouter('{"type":"text","content":"喂"}');
+    const sess = new CallSession({
+      convId: 'c_call_full',
+      peer: callPeer,
+      persona: makePersona({ contactId: 'ai_call', core: 'c', nsfwPermit: true }),
+      globalTier: 'full',
+      direction: 'out',
+      recent: [msg(1, 'self', EXPLICIT)],
+      now: () => 1_754_600_200_000,
+      onLine: () => {},
+      router,
+      pace: () => 0,
+    });
+    await sess.start();
+    expect(landings.length).toBeGreaterThan(0);
+    for (const l of landings) {
+      expect(l.tier).toBe('full');
+      expect(DOMESTIC_KINDS).not.toContain(l.providerKind);
+    }
+    expect(landings[0].providerId).toBe('prov_zen');
+    // The chat context really rides along — this is not a vacuous pass.
+    expect(landings[0].sent).toContain(EXPLICIT);
+  });
+
+  it('an off-tier call still uses the cheap default provider (no over-correction)', async () => {
+    const { CallSession } = await import('../../src/ai/call-script');
+    const { router, landings } = recordingRouter('{"type":"text","content":"喂"}');
+    const sess = new CallSession({
+      convId: 'c_call_off',
+      peer: callPeer,
+      persona: makePersona({ contactId: 'ai_call', core: 'c', nsfwPermit: false }),
+      globalTier: 'full', // permit off pins the tier to off regardless
+      direction: 'in',
+      recent: [msg(1, 'self', '今天下雨了')],
+      now: () => 1_754_600_200_000,
+      onLine: () => {},
+      router,
+      pace: () => 0,
+    });
+    await sess.start();
+    expect(landings[0].tier).toBe('off');
+    expect(landings[0].providerId).toBe('prov_deepseek');
+  });
+
+  it('the call summary rides the same tier discipline', async () => {
+    const { summarizeCall } = await import('../../src/ai/call-script');
+    const { router, landings } = recordingRouter('说好周五见');
+    await summarizeCall({
+      convId: 'c_call_full',
+      peerName: '小雨',
+      tier: 'full',
+      turns: [{ speaker: 'peer', text: EXPLICIT, at: 1_754_600_200_000 }],
+      durationMs: 60_000,
+      router,
+    });
+    expect(landings).toHaveLength(1);
+    expect(landings[0].tier).toBe('full');
+    expect(DOMESTIC_KINDS).not.toContain(landings[0].providerKind);
+    expect(landings[0].sent).toContain(EXPLICIT);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
 describe('tier derivation is centralised (call sites cannot invent one)', () => {
   const permit = makePersona({ contactId: 'p', core: 'c', nsfwPermit: true });
   const noPermit = makePersona({ contactId: 'n', core: 'c', nsfwPermit: false });

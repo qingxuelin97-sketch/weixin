@@ -1,0 +1,417 @@
+/**
+ * 通话 v2（M-I16）：接通之后她真的说话。
+ *
+ * M5 的通话壳只有计时器——"接通"与"挂断"之间是纯剧场。本模块补上中间那段：
+ * 接通后生成开场台词，你按住说话（或打字）之后她逐句应答；台词逐句走 TTS
+ * 播放，没有 TTS（或全开档禁声）时优雅降级为字幕模式。
+ *
+ * 硬约束（与单聊引擎一字不差地同源）：
+ *   - tier 一律由 `effectiveTier(globalTier, persona.nsfwPermit)` 推导，调用点
+ *     不得自造（specs/nsfw.md 的调用点禁令）；台词生成走 `getRouter()`，全开档
+ *     由路由器锁死宽松通道，国内官方端点连降级兜底都不是。
+ *   - **全开档禁用 TTS**：露骨文本永不出境到 MiniMax（`callTtsAllowed`），
+ *     台词退为字幕。与 engine.voiceMeta 的 `ttsSkipped:'nsfw'` 同一条铁律。
+ *   - 可打断：挂断/插话 = AbortController，未播队列直接丢弃（引擎的可打断设计）。
+ *   - 通话轮次**不落聊天消息**（微信通话内容不进聊天记录）；挂断只落一条
+ *     type:'call' 纪要（meta 带时长 + summary），承诺进 conv-state 的待办通道。
+ *   - 时间由 `now()` 注入；本模块不读挂钟、不掷非种子随机（铁律 4）。
+ */
+import type { PersonaVM, ContactVM, MessageVM, NsfwTierVM } from '../data/types';
+import type { Bubble } from '../llm/types';
+import type { LlmRouter, NsfwTier, GenerateContext } from '../llm/router';
+import { assembleSystemPrompt } from './prompt';
+import { toPersonaView, effectiveTier, preferredRoute } from './engine';
+import { selectFactsForInjection } from './memory';
+import { renderTurns, humanDuration } from './render-msg';
+import { getConvState, putConvState } from './conv-state';
+import { getRouter } from '../llm/service';
+import { isTtsAvailable, DEFAULT_VOICE } from '../llm/tts';
+import { ensureVoiceAudio, playVoice, stopVoice } from '../lib/voice';
+import { repo } from '../db/repo';
+import { logError } from '../lib/errlog';
+
+/* ==================================================================== */
+/* 台词与场景                                                            */
+/* ==================================================================== */
+
+export interface CallTurn {
+  speaker: 'self' | 'peer';
+  text: string;
+  at: number;
+}
+
+/** 铁律 6 的通话面：全开档台词绝不送 MiniMax TTS，退为字幕。 */
+export function callTtsAllowed(tier: NsfwTier): boolean {
+  return tier !== 'full';
+}
+
+/** 通话上下文取最近这么多条聊天消息（打电话的人记得刚聊过什么）。 */
+const CALL_CONTEXT_WINDOW = 12;
+
+/**
+ * 场景补充块。追加在 `assembleSystemPrompt` 之后——六层顺序是宪法，新内容
+ * 只往末尾加（与 engine 的 extraDirective 同一纪律），场景层由此注明
+ * 「正在语音通话中」。
+ */
+const CALL_SCENE = `# 当前场景补充
+你们正在语音通话中（不是打字聊天）：
+- 你说的话是"嘴上说出来"的口语：短句、有语气词，一次 1~3 句就够。
+- 只输出 {"type":"text","content":"..."} 气泡；不发表情包、不发图片、不写动作描写。
+- 像真的在打电话：接话要快，别念稿子，别总结对话。`;
+
+/** direction='in' 表示是她拨给你的（incoming）。 */
+export function openerDirective(direction: 'in' | 'out'): string {
+  return direction === 'in'
+    ? '这通语音电话是你主动拨给对方的，对方刚接起来。你先开口，自然说清为什么打来（或者就是想听听声音），别客套。'
+    : '对方刚拨通了你的语音电话，你接起来了。你先开口（"喂""怎么啦"这类），顺着你们最近聊的内容自然往下说。';
+}
+
+const REPLY_DIRECTIVE = '对方刚在电话里说了最后那句话，直接接话回应，口语短句，别重复对方的话。';
+
+/**
+ * 组装通话的 system prompt：persona + 关系 + NSFW 边界 + 记忆 + 场景，
+ * 全部复用 `assembleSystemPrompt`（层序不动），场景补充块殿后。
+ */
+export async function buildCallSystem(opts: {
+  peer: ContactVM;
+  persona: PersonaVM;
+  tier: NsfwTier;
+  recent: MessageVM[];
+  now: number;
+}): Promise<string> {
+  const { peer, persona, tier, recent, now } = opts;
+  let facts: Awaited<ReturnType<typeof repo.getMemory>> = [];
+  try {
+    facts = await repo.getMemory(peer.id);
+  } catch {
+    /* 没有记忆也要能接电话 */
+  }
+  const query = recent
+    .slice(-4)
+    .map((m) => m.content ?? '')
+    .join(' ')
+    .slice(0, 200);
+  const memory = selectFactsForInjection(facts, now, { surface: 'single', tier, query });
+  // 关系层只带"用户是谁"——通话是两个人的事，社交图谱的其余部分留给聊天。
+  const userRel = persona.relations?.user?.trim();
+  const system = assembleSystemPrompt({
+    persona: toPersonaView(persona, peer.remark ?? peer.name),
+    relations: userRel ? { user: userRel } : undefined,
+    nsfwTier: tier,
+    memory: memory.pinned.length || memory.topK.length ? memory : undefined,
+    scene: { kind: 'single', now: new Date(now) },
+  });
+  return `${system}\n\n${CALL_SCENE}`;
+}
+
+/* ==================================================================== */
+/* 通话会话                                                              */
+/* ==================================================================== */
+
+/** TTS 后端可注入（测试替身），默认接 voice.ts 的缓存+播放。 */
+export interface CallTtsBackend {
+  available: () => Promise<boolean>;
+  ensure: (
+    text: string,
+    voiceId?: string,
+    emotion?: string,
+  ) => Promise<{ key: string; durationMs: number } | null>;
+  play: (key: string, onEnded?: () => void) => Promise<boolean>;
+  stop: () => void;
+}
+
+const DEFAULT_TTS: CallTtsBackend = {
+  available: isTtsAvailable,
+  ensure: ensureVoiceAudio,
+  play: playVoice,
+  stop: stopVoice,
+};
+
+export interface CallSessionOpts {
+  convId: string;
+  peer: ContactVM;
+  persona: PersonaVM;
+  globalTier: NsfwTierVM;
+  /** 'in' = 她拨给你（incoming）；'out' = 你拨给她。 */
+  direction: 'in' | 'out';
+  /** 接通前的聊天上下文（近 N 条，调用方从 repo 取）。 */
+  recent: MessageVM[];
+  /** 注入的时钟——本模块自己不读挂钟。 */
+  now: () => number;
+  /** 每产生一句台词/一句你的话，推给 UI 上字幕。 */
+  onLine: (turn: CallTurn) => void;
+  /** 她"正在说话"的指示（字幕气泡/波形用）。 */
+  onSpeaking?: (speaking: boolean) => void;
+  /** voiceOn 定档时回调（start() 内、开场台词生成前）。 */
+  onReady?: (voiceOn: boolean) => void;
+  /** 测试注入；缺省走 getRouter()。 */
+  router?: LlmRouter;
+  tts?: CallTtsBackend;
+  /** 字幕模式下每句的停留时长（测试传 () => 0 免等待）。 */
+  pace?: (text: string) => number;
+}
+
+/**
+ * 一通电话的对话状态机。台词只存在于内存（微信通话内容不进聊天记录），
+ * 挂断后由调用方用 `summarizeCall` + `recordCallOutcome` 落纪要。
+ */
+export class CallSession {
+  readonly turns: CallTurn[] = [];
+  readonly tier: NsfwTier;
+  /** start() 之后有效：false = 字幕模式（无 TTS key 或全开档禁声）。 */
+  voiceOn = false;
+
+  private ctrl: AbortController | null = null;
+  private ended = false;
+  private system = '';
+
+  constructor(private o: CallSessionOpts) {
+    // tier 在此推导一次，之后所有 LLM 调用都用它——调用点不得自造。
+    this.tier = effectiveTier(o.globalTier, o.persona.nsfwPermit);
+  }
+
+  /** 接通：定档 voiceOn → 组装 system → 她先开口。 */
+  async start(): Promise<void> {
+    if (this.ended) return;
+    const tts = this.o.tts ?? DEFAULT_TTS;
+    this.voiceOn = callTtsAllowed(this.tier) && (await tts.available().catch(() => false));
+    this.o.onReady?.(this.voiceOn);
+    this.system = await buildCallSystem({
+      peer: this.o.peer,
+      persona: this.o.persona,
+      tier: this.tier,
+      recent: this.o.recent,
+      now: this.o.now(),
+    });
+    await this.respond(openerDirective(this.o.direction));
+  }
+
+  /** 你说了一句（ASR 转写或打字）：入上下文，她接话。打断她没说完的队列。 */
+  async userSaid(text: string): Promise<void> {
+    const t = text.trim();
+    if (!t || this.ended) return;
+    const turn: CallTurn = { speaker: 'self', text: t, at: this.o.now() };
+    this.turns.push(turn);
+    this.o.onLine(turn);
+    await this.respond(REPLY_DIRECTIVE);
+  }
+
+  /** 挂断：一切在飞的生成与播放立即停。幂等。 */
+  end(): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.ctrl?.abort();
+    (this.o.tts ?? DEFAULT_TTS).stop();
+    this.o.onSpeaking?.(false);
+  }
+
+  /** 生成一轮她的话并逐句播出。新一轮开始即打断上一轮（引擎的可打断设计）。 */
+  private async respond(directive: string): Promise<void> {
+    this.ctrl?.abort();
+    const ctrl = new AbortController();
+    this.ctrl = ctrl;
+    try {
+      const lines = await this.generate(directive, ctrl.signal);
+      for (const line of lines) {
+        if (ctrl.signal.aborted || this.ended) return;
+        const turn: CallTurn = { speaker: 'peer', text: line, at: this.o.now() };
+        this.turns.push(turn);
+        this.o.onLine(turn);
+        this.o.onSpeaking?.(true);
+        await this.speak(line, ctrl.signal);
+        this.o.onSpeaking?.(false);
+      }
+    } catch (e) {
+      this.o.onSpeaking?.(false);
+      if (ctrl.signal.aborted || this.ended) return;
+      logError('call.respond', e);
+      // 路由器整条降级链都没走通——人设化兜底，绝不让原始报错上字幕。
+      const turn: CallTurn = { speaker: 'peer', text: this.fallbackLine(), at: this.o.now() };
+      this.turns.push(turn);
+      this.o.onLine(turn);
+    }
+  }
+
+  private fallbackLine(): string {
+    const pet = this.o.persona.catchphrases?.[0];
+    return pet ? `${pet}…喂？信号好像不太好` : '喂？信号好像不太好，你说话我这边听不清';
+  }
+
+  /** 一次台词生成：system(+directive) + 聊天近况 + 通话轮次 → 文本行。 */
+  private async generate(directive: string, signal: AbortSignal): Promise<string[]> {
+    const router = this.o.router ?? (await getRouter());
+    const messages = [
+      { role: 'system' as const, content: `${this.system}\n\n# 本次开口\n${directive}` },
+      ...renderTurns(this.o.recent.slice(-CALL_CONTEXT_WINDOW), 'self', { includeVoiceText: true }),
+      ...this.turns.map((t) => ({
+        role: t.speaker === 'self' ? ('user' as const) : ('assistant' as const),
+        content: t.text,
+      })),
+    ];
+    const ctx: GenerateContext = {
+      personaRefusal: () => [{ type: 'text', content: this.fallbackLine() } satisfies Bubble],
+      prefixPrefill: this.tier !== 'off' ? '嗯' : undefined,
+    };
+    const bubbles: Bubble[] = [];
+    for await (const b of router.generate(
+      { role: 'chat', nsfwTier: this.tier, ...preferredRoute(this.o.persona.modelChat) },
+      { messages, signal },
+      ctx,
+      `call:${this.o.convId}`,
+    )) {
+      bubbles.push(b);
+    }
+    return bubbles
+      .filter((b) => b.type === 'text' || b.type === 'voice')
+      .map((b) => b.content.trim())
+      .filter(Boolean)
+      .slice(0, 4);
+  }
+
+  /**
+   * 播一句：有声走 TTS（合成+缓存+播放，播完为止，可被挂断打断）；
+   * 字幕模式按句长停留。
+   */
+  private async speak(line: string, signal: AbortSignal): Promise<void> {
+    const tts = this.o.tts ?? DEFAULT_TTS;
+    if (this.voiceOn) {
+      const audio = await tts.ensure(line, this.o.persona.ttsVoice ?? DEFAULT_VOICE).catch(() => null);
+      if (signal.aborted) return;
+      if (audio) {
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const settle = () => {
+            if (settled) return;
+            settled = true;
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+          };
+          const onAbort = () => {
+            tts.stop();
+            settle();
+          };
+          signal.addEventListener('abort', onAbort, { once: true });
+          void tts
+            .play(audio.key, settle)
+            .then((ok) => {
+              if (!ok) settle();
+            })
+            .catch(settle);
+        });
+        return;
+      }
+      // 合成失败：这一句静默退为字幕停留，通话不中断。
+    }
+    const ms = this.o.pace ? this.o.pace(line) : Math.min(Math.max(800, line.length * 180), 4000);
+    await sleep(ms, signal);
+  }
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted || ms <= 0) return resolve();
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+/* ==================================================================== */
+/* 挂断后的纪要                                                          */
+/* ==================================================================== */
+
+/**
+ * 承诺样式的台词（"周五见""我给你带"）。比 conv-state 的 PROMISE_RE 多认
+ * "说好/约好/周X"——电话里定下的事大多是时间地点。
+ */
+const CALL_PROMISE_RE =
+  /(我(?:会|来|去|给你|帮你)|等我|回头|说好|约好|(?:明|后)天|周[一二三四五六日天末]|下次|到时候?)/;
+
+export function extractCallPromises(turns: CallTurn[]): string[] {
+  const out: string[] = [];
+  for (const t of turns) {
+    const text = t.text.trim();
+    if (text.length < 4) continue;
+    const clipped = text.slice(0, 30);
+    if (CALL_PROMISE_RE.test(text) && !out.includes(clipped)) out.push(clipped);
+  }
+  return out.slice(0, 2);
+}
+
+/** 规则式纪要兜底——LLM 不可用时挂断也要有交代。纯函数。 */
+export function ruleSummary(turns: CallTurn[], durationMs: number): string {
+  const promised = extractCallPromises(turns);
+  if (promised.length) return `电话里说好：${promised[0]}`;
+  const last = [...turns].reverse().find((t) => t.text.trim().length >= 4);
+  if (last) return `电话里聊到：${last.text.trim().slice(0, 24)}`;
+  return `通了 ${humanDuration(durationMs)} 电话`;
+}
+
+const SUMMARY_SYSTEM =
+  '把下面这通微信语音通话压缩成一句话纪要（30 字以内），优先记下双方的约定/承诺/待办' +
+  '（时间、地点、答应做的事）；没有约定就概括聊了什么。只输出纪要本身，不要引号不要前缀。';
+
+/**
+ * 通话纪要：一次 LLM 调用（role=memory，tier 沿用通话推导值——通话原文携带
+ * 会话内容，铁律 6 同样覆盖），失败落回规则式摘要。
+ */
+export async function summarizeCall(opts: {
+  convId: string;
+  peerName: string;
+  tier: NsfwTier;
+  turns: CallTurn[];
+  durationMs: number;
+  router?: LlmRouter;
+}): Promise<string> {
+  const { turns, durationMs } = opts;
+  if (turns.length === 0) return '';
+  try {
+    const router = opts.router ?? (await getRouter());
+    const transcript = turns
+      .map((t) => `${t.speaker === 'self' ? '我' : opts.peerName}: ${t.text}`)
+      .join('\n')
+      .slice(0, 3000);
+    const r = await router.complete(
+      { role: 'memory', nsfwTier: opts.tier },
+      {
+        messages: [
+          { role: 'system', content: SUMMARY_SYSTEM },
+          { role: 'user', content: transcript },
+        ],
+      },
+      {},
+      `call:${opts.convId}`,
+    );
+    const line = r.text.trim().split('\n')[0]?.trim();
+    if (line) return line.slice(0, 40);
+  } catch (e) {
+    logError('call.summarize', e);
+  }
+  return ruleSummary(turns, durationMs);
+}
+
+/**
+ * 纪要落 conv-state 的承诺/待办通道：「电话里说好了周五见」从此可被后续
+ * 聊天引用（convStateDirective 的"之前说过"行）。承诺优先；一条没有时
+ * 用纪要本身垫上。上限与 conv-state 的 MAX_PROMISES 对齐（2）。
+ */
+export async function recordCallOutcome(
+  convId: string,
+  summary: string,
+  promises: string[],
+  now: number,
+): Promise<void> {
+  const entries = (promises.length ? promises : summary ? [summary] : []).map((s) =>
+    s.trim().slice(0, 30),
+  );
+  if (entries.length === 0) return;
+  const prev = await getConvState(convId);
+  const merged = [...entries, ...prev.promises.filter((p) => !entries.includes(p))].slice(0, 2);
+  await putConvState(convId, { ...prev, promises: merged, updatedAt: now });
+}

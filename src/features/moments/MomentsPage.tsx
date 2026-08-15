@@ -14,6 +14,7 @@ import { Avatar } from '../../components/Avatar';
 import { IconBack } from '../../components/icons';
 import { MomentCard } from './MomentCard';
 import { showConfirm } from '../../components/dialog';
+import { recentlyActive } from '../../ai/presence';
 import { useNow } from '../../lib/useNow';
 import type { MomentCommentVM } from '../../data/types';
 import './moments.css';
@@ -32,6 +33,7 @@ export function MomentsPage() {
 
   const moments = useAppStore((s) => s.moments);
   const contacts = useAppStore((s) => s.contacts);
+  const personaFor = useAppStore((s) => s.personaFor);
   const loadMoments = useAppStore((s) => s.loadMoments);
   const likesFor = useAppStore((s) => s.likesFor);
   const commentsFor = useAppStore((s) => s.commentsFor);
@@ -150,6 +152,11 @@ export function MomentsPage() {
                   <MomentCard
                     moment={m}
                     author={m.authorId === 'self' ? self : byId.get(m.authorId)}
+                    // 「刚刚活跃」绿点 (M-I16): pure projection of activeHours +
+                    // a seeded half-hour roll — no timer, no stored state.
+                    activeDot={
+                      m.authorId !== 'self' && recentlyActive(personaFor(m.authorId), m.authorId, now)
+                    }
                     likes={likes}
                     comments={commentsFor(m.id)}
                     nameOf={nameOf}

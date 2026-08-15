@@ -145,6 +145,13 @@
 .msg-row--self .msg-row__body {
   justify-content: flex-end;
 }
+/* 已读回执 (M-I16, opt-in): tiny gray mark under one's own newest read bubble. */
+.msg-read {
+  margin-top: 3px;
+  font-size: var(--fs-badge);
+  color: var(--color-text-timestamp);
+}
+
 /* Quoted-reply block below a bubble: gray rounded, "昵称：内容". */
 .msg-quote {
   margin-top: 5px;

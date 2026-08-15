@@ -64,6 +64,20 @@ export function SettingsPage() {
     await repo.putSetting(VISION_SETTING, next);
   };
 
+  // 已读回执 (M-I16): WeChat has none, so it ships OFF as an opt-in拟真项.
+  const [readReceipts, setReadReceipts] = useState(false);
+  useEffect(() => {
+    void repo
+      .getSetting<boolean>('readReceipts')
+      .then((v) => setReadReceipts(Boolean(v)))
+      .catch(() => {});
+  }, []);
+  const toggleReadReceipts = () => {
+    const next = !readReceipts;
+    setReadReceipts(next);
+    void repo.putSetting('readReceipts', next);
+  };
+
   const toggleVibrate = () => {
     const next = !vibrate;
     setVibrate(next);
@@ -114,6 +128,14 @@ export function SettingsPage() {
           <p className="settings__hint">
             开启后你发的照片会随消息一起交给模型，TA 能真的看懂内容而不只是知道「你发了张图」。
             需要所选模型支持看图；每张图的费用大约相当于一千字，所以只带最近几条里的图。
+          </p>
+          <div className="settings__row settings__row--divided" onClick={toggleReadReceipts}>
+            <span className="settings__label">已读回执</span>
+            <Switch on={readReceipts} onChange={toggleReadReceipts} />
+          </div>
+          <p className="settings__hint">
+            微信本体没有已读回执——这是本应用的可选拟真项：开启后，你发出的最后一条消息在
+            TA 看过（开始回复）后会标一个小小的「已读」。默认关闭。
           </p>
           <div
             className="settings__row settings__row--divided"
