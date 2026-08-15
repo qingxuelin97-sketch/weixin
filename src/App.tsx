@@ -32,8 +32,11 @@ import { ChatInfoPage } from './features/chat/ChatInfoPage';
 import { GroupListPage, NewFriendsPage, SimpleListPage } from './features/contacts/ContactListPages';
 import { CallPage } from './features/call/CallPage';
 import { SearchPage } from './features/search/SearchPage';
+import { NativePage } from './features/settings/NativePage';
+import { BatteryGuidePage } from './features/settings/BatteryGuidePage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
+import { useDeepLinks } from './app/useDeepLinks';
 
 /**
  * Full-screen pushed pages slide in from the right (finally consuming the
@@ -47,6 +50,16 @@ function Push({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
+}
+
+/**
+ * aiwx:// deep links (M-I10): bubble taps, notification taps, the call
+ * full-screen intent and the widget all land here. Needs useNavigate, so it
+ * must live INSIDE the HashRouter — hence a null component, not a hook in App.
+ */
+function DeepLinkBridge() {
+  useDeepLinks();
+  return null;
 }
 
 /**
@@ -85,6 +98,7 @@ export function App() {
 
   return (
     <HashRouter>
+      <DeepLinkBridge />
       <div className="app-shell">
         <ErrorBoundary>
           {!hydrated ? (
@@ -109,6 +123,8 @@ export function App() {
               <Route path="/settings/notify-test" element={<Push><NotifyTestPage /></Push>} />
               <Route path="/settings/env" element={<Push><EnvDiagPage /></Push>} />
               <Route path="/settings/media" element={<Push><MediaLibraryPage /></Push>} />
+              <Route path="/settings/native" element={<Push><NativePage /></Push>} />
+              <Route path="/settings/battery" element={<Push><BatteryGuidePage /></Push>} />
               <Route path="/persona/:contactId" element={<Push><PersonaEditPage /></Push>} />
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
               <Route path="/story" element={<Push><StoryPage /></Push>} />

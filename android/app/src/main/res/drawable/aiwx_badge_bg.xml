@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unread badge: WeChat red pill (device-sampled #E75E58). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/aiwx_badge_red" />
+    <corners android:radius="9dp" />
+</shape>

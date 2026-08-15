@@ -56,6 +56,9 @@ import { seededRng } from '../lib/money';
 import { playMessageSound, resumeAudio } from '../lib/sound';
 import { requestPermission } from '../lib/notify';
 import { syncNotifications } from '../ai/notify-service';
+import { drainNativeReplies } from '../native/reply-drain';
+import { syncWidget } from '../native/widget-sync';
+import { startBackgroundNotify } from '../native/background-notify';
 import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
 import { repo } from '../db/repo';
@@ -204,6 +207,10 @@ export function useSchedulerRuntime(enabled: boolean): void {
     startScheduler();
     void foregroundPass();
 
+    // M-I10: while backgrounded-but-alive, freshly generated messages surface
+    // natively (RemoteInput notification / bubble / occasional incoming call).
+    const stopBackgroundNotify = startBackgroundNotify();
+
     // First-run notification ask (H1: requestPermission existed since M4 with
     // zero callers — Android 13+ notifications were fully inert). Delayed a few
     // seconds so the dialog doesn't collide with the launch moment; one-shot
@@ -220,6 +227,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
 
     return () => {
       clearTimeout(askTimer);
+      stopBackgroundNotify();
       stopScheduler();
     };
   }, [enabled]);
@@ -227,7 +235,12 @@ export function useSchedulerRuntime(enabled: boolean): void {
   // Every return to the foreground repeats the pass. Before M5 this ran only
   // once at hydrate, so on a phone — where background→foreground is the normal
   // path and the WebView never remounts — backfill effectively never fired.
-  useForegroundLifecycle(enabled, { onForeground: foregroundPass });
+  // Backgrounding pushes the widget's last look at the world (M-I10) — this is
+  // the freshest state the launcher can ever get before the process freezes.
+  useForegroundLifecycle(enabled, {
+    onForeground: foregroundPass,
+    onBackground: () => void syncWidget(),
+  });
 }
 
 /**
@@ -332,6 +345,12 @@ async function runForegroundPass(): Promise<void> {
   //    and a suspended context swallows chimes without erroring (bug #6).
   resumeAudio();
 
+  // 0.5) M-I10: drain notification-shade replies (RemoteInput → SharedPreferences
+  //      queue) through the NORMAL send paths, BEFORE backfill — the user's own
+  //      words are the strongest signal the world below should build on.
+  //      drainNativeReplies never throws and is a no-op on web.
+  await drainNativeReplies();
+
   // 1) Backfill what "happened" while away. First, so the fabricated past is
   //    queued before any future scheduling looks at it.
   const singles = s.conversations.flatMap<SimContact>((c) => {
@@ -422,6 +441,10 @@ async function runForegroundPass(): Promise<void> {
   } catch {
     /* notifications are a bonus; never let them break the foreground path */
   }
+
+  // 5) M-I10: refresh the home-screen widget from the now-current world.
+  //    (Also pushed on backgrounding; never throws, no-op on web.)
+  await syncWidget();
 }
 
 

@@ -46,6 +46,9 @@ src/
   lib/          通用纯函数：money(钱+种子随机) / wallet(红包/账本规则) / time(时间戳)
                 / sound(提示音) / voice(TTS 缓存+播放) / keystore(密钥加密存储)
                 / notify(预调度通知+内容分级) / backup(.aiwx 导出恢复) / search(全局搜索)
+  native/       原生桥 JS 侧（M-I10）：bridge(AiwxNative 插件包装，超时真拒绝)
+                / deep-link(aiwx:// allowlist) / reply-drain(通知回复队列→正常发送路径)
+                / background-notify(后台消息→通知/气泡/来电) / widget-sync / battery
   data/         UI 视图模型类型 + 种子数据（占位色豁免颜色检查）
   store/        zustand 状态（由 Repo 水合 + 写穿，选择器签名稳定）
   components/   通用 UI：Avatar / NavBar / SubNav / icons(手写 SVG，零 PNG)
@@ -53,8 +56,10 @@ src/
   app/          导航骨架 TabScaffold + ErrorBoundary
 ```
 
-**依赖方向**：`features → components/store/lib/ai/llm/data`，`ai → llm/lib`，
-`llm → lib`。禁止反向依赖（如 lib 不得 import features）。
+**依赖方向**：`features → components/store/lib/ai/llm/native/data`，`native → store/ai/llm/lib/db/data`，
+`ai → llm/lib`，`llm → lib`。禁止反向依赖（如 lib 不得 import features）。
+`android/` 自 M-I10 起入库（手写 Kotlin 原生层）；CI 只 `cap sync` 不 `cap add`，
+再生成策略见 `docs/android-regen.md`。
 
 ## 2. 关键接口契约（改动需同步 specs 并慎重）
 
@@ -138,7 +143,7 @@ src/
 改动某 feature 前，读 `specs/<feature>.md`（验收清单 + 设计要点 + 已知坑）。新增 feature
 先写 spec 再写码。现有：design-tokens / data-schema / llm-provider / composer / nsfw /
 chat-engine / group-director / money / moments / backfill / build-distribution /
-story-gm（V3 预埋设计）。
+story-gm（V3 预埋设计）/ native-android（M-I10 重原生）。
 
 ## 5. 工程护栏
 
