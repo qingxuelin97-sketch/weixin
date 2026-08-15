@@ -88,3 +88,16 @@
 `tests/screenshot/backup-e2e.spec.ts` 走真实 UI + 真实 IndexedDB：
 导出 → 清库（并断言真的空了）→ 恢复 → **逐行全等**（含消息自增 id，rowid 序必须保住）。
 另有一条断言：种进一个带 `apiKey` 的 provider 行，导出后该字段必须不存在、而 `keyAlias` 仍在。
+
+## M-I5 · 离线社交回填扩展
+
+- **赞评离线可发生**：`SimInput.recentMoments`（离线前已存在的最新几条帖，
+  由前台 pass 读入——simulate 保持纯函数）。预算 `LIMITS.socialReactions`（含
+  赞与评，赞零 LLM 成本）；作者绝不自赞；反应时间恒晚于帖子时间；48h 以上
+  的旧帖不再吸引反应。
+- **AI↔AI 私信离线可发生**：每次离线至多 `LIMITS.offlineDms`（=1）场，配对取
+  自共同群、种子化；<3h 的短离线不排（私聊需要时间差才可信）。事件**不带**
+  群 convId——会话发生在隐藏私信线程，带了会误入群「≤2条/15分钟」限速账本
+  （测试逮住过一次）。私信完成后的孵化（八卦外溢/joint_plan/agent_forward）
+  经同一个 handler 自动发生。
+- 物化 payload 与在线 handler 同形：赞评带 momentId，私信带 {a,b,groupId,fireAt}。

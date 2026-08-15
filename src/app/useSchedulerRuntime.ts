@@ -469,8 +469,13 @@ async function runForegroundPass(): Promise<void> {
       activity: activityMultiplier(await getGroupCfg(g.convId)),
     })),
   );
+  // Posts that predate the absence, for belated 赞评 (M-I5). Newest few only.
+  const recentMoments = await repo
+    .getMoments({ limit: 8 })
+    .then((ms) => ms.map((m) => ({ id: m.id, authorId: m.authorId, createdAt: m.createdAt })))
+    .catch(() => []);
   try {
-    await runBackfill(now, { singles, groups });
+    await runBackfill(now, { singles, groups, recentMoments });
   } catch {
     // A failed backfill must never block startup — the app still works, it
     // just doesn't show a fabricated absence this time.

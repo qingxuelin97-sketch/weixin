@@ -42,8 +42,12 @@ export const LIMITS = {
   groupMessagesPerHour: 6,
   /** Total posts across everyone. */
   moments: 6,
+  /** 赞+评 on pre-absence posts, total per stretch (M-I5). Likes cost 0 LLM. */
+  socialReactions: 4,
+  /** Offline AI↔AI DM sessions per stretch (M-I5). One: DMs are expensive. */
+  offlineDms: 1,
   /** Hard ceiling on LLM calls the drain will make. */
-  llmCalls: 8,
+  llmCalls: 10,
 } as const;
 
 export interface SimContact {
@@ -71,13 +75,23 @@ export interface SimGroup {
 export interface SimInput {
   singles: SimContact[];
   groups: SimGroup[];
+  /**
+   * User-visible moments that existed BEFORE the absence (M-I5) — the posts
+   * offline friends may belatedly like or comment on. Newest few only; the
+   * caller reads them, simulate stays pure.
+   */
+  recentMoments?: Array<{ id: string; authorId: string; createdAt: number }>;
 }
 
 export interface SimEvent {
-  kind: 'heartbeat' | 'moment_post' | 'group_msg';
+  kind: 'heartbeat' | 'moment_post' | 'group_msg' | 'moment_like' | 'moment_comment' | 'agent_dm';
   contactId: string;
   convId?: string;
   at: number;
+  /** For moment_like / moment_comment: which post drew the reaction. */
+  momentId?: string;
+  /** For agent_dm: the session's pair and shared room. */
+  dm?: { a: string; b: string; groupId: string };
 }
 
 /**
@@ -179,6 +193,67 @@ export function simulate(t0: number, t1: number, input: SimInput, seed: string):
   for (const g of input.groups) {
     if (g.memberIds.length === 0) continue;
     events.push(...planGroupChatter(g, from, to, hours, seed));
+  }
+
+  // --- 赞评 on posts that predate the absence (M-I5). Coming back to a like
+  // stamped 3am on last night's post is the cheapest possible proof the world
+  // kept moving; likes cost zero LLM calls, comments cost one each. ---
+  const reactBudget = Math.min(LIMITS.socialReactions, Math.round(hours / 3) + 1);
+  let reacted = 0;
+  for (const m of input.recentMoments ?? []) {
+    if (reacted >= reactBudget) break;
+    if (from - m.createdAt > 48 * HOUR) continue; // stale posts stop drawing
+    for (const cand of candidates) {
+      if (reacted >= reactBudget) break;
+      if (cand.contactId === m.authorId) continue; // never self-react
+      const r = seededRng(`react:${seed}:${from}:${m.id}:${cand.contactId}`);
+      if (r() >= cand.persona.likeRate * 0.5) continue;
+      const at = pickTimes(
+        // A reaction can never predate its post; likes have no rowid concern,
+        // but a like "before" the post reads as time travel all the same.
+        Math.max(from, m.createdAt + MINUTE),
+        to,
+        1,
+        cand.persona,
+        `rt:${seed}:${m.id}:${cand.contactId}`,
+      )[0];
+      if (at == null) continue;
+      reacted++;
+      const isComment = r() < cand.persona.commentRate;
+      events.push({
+        kind: isComment ? 'moment_comment' : 'moment_like',
+        contactId: cand.contactId,
+        momentId: m.id,
+        at,
+      });
+    }
+  }
+
+  // --- One AI↔AI DM session per absence (M-I5): the private social life the
+  // agents already have live keeps running while the user is away — and its
+  // spill/joint-plan/forward hatching all rides in through the same handler.
+  if (hours >= 3) {
+    let dms = 0;
+    for (const g of input.groups) {
+      if (dms >= LIMITS.offlineDms) break;
+      if (g.memberIds.length < 2) continue;
+      const r = seededRng(`odm:${seed}:${from}:${g.convId}`);
+      if (r() >= 0.35) continue;
+      const a = g.memberIds[Math.floor(r() * g.memberIds.length)];
+      const rest = g.memberIds.filter((id) => id !== a);
+      const b = rest[Math.floor(r() * rest.length)];
+      if (!b) continue;
+      dms++;
+      // Deliberately NO convId: the session happens in the hidden DM thread,
+      // not in the group — and a convId here would wrongly count against the
+      // group's ≤2-per-15min message bar.
+      events.push({
+        kind: 'agent_dm',
+        contactId: a,
+        at: Math.round(from + r() * Math.max(1, to - from)),
+        dm: { a, b, groupId: g.convId },
+      });
+    }
   }
 
   // Chronological: the drain inserts in this order, keeping rowid == time order.
