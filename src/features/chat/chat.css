@@ -656,3 +656,102 @@
 .msg-failed:active {
   filter: brightness(0.92);
 }
+
+/* ---- 合并转发 (M-I6): card in the thread + record viewer page. ---- */
+.merged-card {
+  min-width: 180px;
+  max-width: 230px;
+}
+.merged-card__title {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+.merged-card__line {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.merged-card__footer {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.merged-view {
+  background: var(--color-cell-bg);
+}
+.merged-view__empty {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+.merged-view__item {
+  padding: 10px 16px;
+}
+.merged-view__head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.merged-view__name {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.merged-view__time {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.merged-view__body {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  line-height: var(--lh-body);
+  word-break: break-word;
+}
+
+/* ---- 多选模式 (M-I6). ---- */
+.msg-selectable {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+}
+.msg-selectable > .msg-row {
+  flex: 1;
+  min-width: 0;
+}
+.msg-select-dot {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: var(--hairline-width) solid var(--color-text-secondary);
+  background: var(--color-cell-bg);
+}
+.msg-select-dot--on {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+}
+.select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px calc(10px + var(--safe-bottom));
+  background: var(--color-panel-bg, var(--color-cell-bg));
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.select-bar__action {
+  color: var(--color-link);
+  font-size: var(--fs-cell-title);
+}
+.select-bar__action:disabled {
+  opacity: 0.4;
+}
+.select-bar__cancel {
+  color: var(--color-text-secondary);
+  font-size: var(--fs-cell-title);
+}

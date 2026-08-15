@@ -29,6 +29,7 @@ import { EnvDiagPage } from './features/settings/EnvDiagPage';
 import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
 import { WorldbookPage } from './features/settings/WorldbookPage';
+import { MergedViewPage } from './features/chat/MergedViewPage';
 import { StoryPage } from './features/settings/StoryPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
 import { NewContactPage } from './features/contacts/NewContactPage';
@@ -126,6 +127,7 @@ export function App() {
               <Route path="/persona/:contactId" element={<Push><PersonaEditPage /></Push>} />
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
               <Route path="/settings/worldbook" element={<Push><WorldbookPage /></Push>} />
+              <Route path="/merged/:convId/:msgId" element={<Push><MergedViewPage /></Push>} />
               <Route path="/story" element={<Push><StoryPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
               <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />

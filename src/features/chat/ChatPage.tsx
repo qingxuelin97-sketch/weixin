@@ -32,6 +32,7 @@ import { sendGroupMessage, replyToLatestInGroup } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
 import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
+import { renderMessageBody } from '../../ai/render-msg';
 import { canRecall } from '../../lib/recall';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
 import './chat.css';
@@ -96,6 +97,50 @@ export function ChatPage() {
   const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
   const [quote, setQuote] = useState<{ msgId: number; text: string } | null>(null);
   const [forwarding, setForwarding] = useState<MessageVM | null>(null);
+  // 多选 + 合并转发 (M-I6): selection is a message-id set; the bottom action
+  // bar replaces the composer while active, and forwarding N messages builds
+  // ONE 'merged' card whose meta carries the copied lines.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [mergedForward, setMergedForward] = useState<{
+    title: string;
+    items: Array<{ name: string; body: string; at: number }>;
+  } | null>(null);
+  const toggleSelect = (id: number) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const exitSelect = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+  useDismissable(selecting, exitSelect);
+  const beginMergedForward = () => {
+    const nameFor = (senderId: string) =>
+      senderId === 'self'
+        ? '我'
+        : (contactById(senderId)?.remark ?? contactById(senderId)?.name ?? senderId);
+    const items = messages
+      .filter((m) => selected.has(m.id) && !m.isRecalled)
+      .sort((a, b) => a.id - b.id)
+      .map((m) => ({
+        name: nameFor(m.senderId),
+        body: renderMessageBody(m, { maxChars: 120 }),
+        at: m.createdAt,
+      }));
+    if (items.length === 0) {
+      showToast('先选几条消息');
+      return;
+    }
+    setMergedForward({
+      title:
+        conv?.type === 'group' ? `群聊「${conv.title}」的聊天记录` : `与${conv?.title}的聊天记录`,
+      items,
+    });
+  };
   const allConversations = useAppStore((s) => s.conversations);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
   const albumInputRef = useRef<HTMLInputElement>(null);
@@ -540,25 +585,48 @@ export function ChatPage() {
                 {chatTimestamp(row.ts, NOW)}
               </div>
             ) : (
-              <MessageBubble
+              <div
                 key={row.msg.id}
-                msg={row.msg}
-                sender={contactById(row.msg.senderId)}
-                isSelf={row.msg.senderId === 'self'}
-                showNickname={isGroup}
-                onMoneyTap={onMoneyTap}
-                onImageTap={onImageTap}
-                onLongPress={(m, x, y) => {
-                  // Only open when there is at least one action — an empty
-                  // capsule reads as breakage.
-                  const hasCopy = m.type === 'text' && Boolean(m.content);
-                  const canRegen =
-                    m.senderId !== 'self' && !isGroup && messages.at(-1)?.id === m.id;
-                  if (hasCopy || canRecall(m, Date.now()) || canRegen) setMenu({ msg: m, x, y });
-                }}
-                onReEdit={(m) => setDraft(m.content ?? '')}
-                onRetry={(m) => guard('chat.retry', () => retrySend(m))}
-              />
+                className={selecting ? 'msg-selectable' : undefined}
+                onClickCapture={
+                  selecting
+                    ? (e) => {
+                        // Selection swallows every inner tap — a checkbox mode
+                        // that still opens red packets is a trap.
+                        e.stopPropagation();
+                        if (row.msg.type !== 'system' && !row.msg.isRecalled)
+                          toggleSelect(row.msg.id);
+                      }
+                    : undefined
+                }
+              >
+                {selecting && row.msg.type !== 'system' && !row.msg.isRecalled && (
+                  <span
+                    className={`msg-select-dot${selected.has(row.msg.id) ? ' msg-select-dot--on' : ''}`}
+                    aria-hidden
+                  />
+                )}
+                <MessageBubble
+                  msg={row.msg}
+                  sender={contactById(row.msg.senderId)}
+                  isSelf={row.msg.senderId === 'self'}
+                  showNickname={isGroup}
+                  onMoneyTap={onMoneyTap}
+                  onImageTap={onImageTap}
+                  onMergedTap={(m) => navigate(`/merged/${convId}/${m.id}`)}
+                  onLongPress={(m, x, y) => {
+                    if (selecting) return;
+                    // Only open when there is at least one action — an empty
+                    // capsule reads as breakage.
+                    const hasCopy = m.type === 'text' && Boolean(m.content);
+                    const canRegen =
+                      m.senderId !== 'self' && !isGroup && messages.at(-1)?.id === m.id;
+                    if (hasCopy || canRecall(m, Date.now()) || canRegen) setMenu({ msg: m, x, y });
+                  }}
+                  onReEdit={(m) => setDraft(m.content ?? '')}
+                  onRetry={(m) => guard('chat.retry', () => retrySend(m))}
+                />
+              </div>
             ),
           )}
           {isTyping && !isGroup && (
@@ -657,6 +725,16 @@ export function ChatPage() {
           <button
             role="menuitem"
             onClick={() => {
+              setSelecting(true);
+              setSelected(new Set([menu.msg.id]));
+              setMenu(null);
+            }}
+          >
+            多选
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
               const m = menu.msg;
               setMenu(null);
               void deleteMessage(convId, m.id).catch(() => showToast('删除失败'));
@@ -667,8 +745,15 @@ export function ChatPage() {
         </div>
       )}
 
-      {forwarding && (
-        <Sheet open onClose={() => setForwarding(null)} title="发送给">
+      {(forwarding || mergedForward) && (
+        <Sheet
+          open
+          onClose={() => {
+            setForwarding(null);
+            setMergedForward(null);
+          }}
+          title="发送给"
+        >
           {allConversations
             .filter((c) => !c.isHidden && c.id !== convId)
             .map((c) => (
@@ -677,7 +762,25 @@ export function ChatPage() {
                 className="settings__row settings__row--divided"
                 onClick={() => {
                   const m = forwarding;
+                  const merged = mergedForward;
                   setForwarding(null);
+                  setMergedForward(null);
+                  if (merged) {
+                    void appendMessage({
+                      convId: c.id,
+                      senderId: 'self',
+                      type: 'merged',
+                      content: merged.title,
+                      meta: { title: merged.title, items: merged.items },
+                      status: 'sent',
+                      createdAt: Date.now(),
+                    }).then(() => {
+                      showToast(`已转发给 ${c.title}`);
+                      exitSelect();
+                    });
+                    return;
+                  }
+                  if (!m) return;
                   void appendMessage({
                     convId: c.id,
                     senderId: 'self',
@@ -695,9 +798,27 @@ export function ChatPage() {
         </Sheet>
       )}
 
+      {selecting && (
+        <div className="select-bar" onClick={(e) => e.stopPropagation()}>
+          <button
+            className="select-bar__action"
+            disabled={selected.size === 0}
+            onClick={beginMergedForward}
+          >
+            合并转发（{selected.size}）
+          </button>
+          <button className="select-bar__cancel" onClick={exitSelect}>
+            取消
+          </button>
+        </div>
+      )}
+
       <div
         className="composer"
-        style={{ paddingBottom: composer.mode === 'none' ? 'var(--safe-bottom)' : 0 }}
+        style={{
+          paddingBottom: composer.mode === 'none' ? 'var(--safe-bottom)' : 0,
+          ...(selecting ? { display: 'none' } : {}),
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {quote && (

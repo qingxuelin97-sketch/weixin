@@ -18,6 +18,8 @@ interface Props {
   onMoneyTap?: (msg: MessageVM) => void;
   /** Tapping an image bubble — the page opens the full-screen viewer. */
   onImageTap?: (msg: MessageVM) => void;
+  /** Tapping a 合并转发 card — the page opens the record viewer (M-I6). */
+  onMergedTap?: (msg: MessageVM) => void;
   /** Long-press (or right-click) on the row — opens the recall/copy menu. */
   onLongPress?: (msg: MessageVM, x: number, y: number) => void;
   /** 重新编辑 on a recalled text message: refill the composer with the original. */
@@ -27,7 +29,7 @@ interface Props {
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onLongPress, onReEdit, onRetry }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onLongPress, onReEdit, onRetry }: Props) {
   // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
   // movement and had no fired guard, so releasing a long press on an image
   // ALSO opened the viewer. The hook fixes both.
@@ -101,7 +103,12 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
                     if (lp.fired()) return;
                     onImageTap?.(msg);
                   }
-                : undefined
+                : msg.type === 'merged'
+                  ? () => {
+                      if (lp.fired()) return;
+                      onMergedTap?.(msg);
+                    }
+                  : undefined
           }
         >
           <BubbleContent msg={msg} isSelf={isSelf} />
@@ -273,6 +280,26 @@ function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
             />
           </svg>
           <span>{label}</span>
+        </div>
+      );
+    }
+
+    case 'merged': {
+      // 合并转发 card (M-I6): identity + up to three preview lines, tap-through
+      // to the full record page (the page reads the same meta).
+      const items = Array.isArray(msg.meta?.items)
+        ? (msg.meta!.items as Array<{ name?: string; body?: string }>)
+        : [];
+      const title = (msg.meta?.title as string) || '聊天记录';
+      return (
+        <div className={`bubble bubble--${side} merged-card`}>
+          <div className="merged-card__title">{title}</div>
+          {items.slice(0, 3).map((it, i) => (
+            <div key={i} className="merged-card__line">
+              {it.name}: {String(it.body ?? '').slice(0, 24)}
+            </div>
+          ))}
+          <div className="merged-card__footer">聊天记录 · 共 {items.length} 条</div>
         </div>
       );
     }

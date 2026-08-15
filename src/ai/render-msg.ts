@@ -145,6 +145,22 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
       // System lines are stage directions, not speech.
       return str(m.content) ? `（${m.content}）` : '';
 
+    case 'merged': {
+      // The model sees the card's identity and its first lines — enough to
+      // react to ("你转给我的那段聊天记录"), never the raw object.
+      const items = Array.isArray(meta.items) ? (meta.items as Array<Record<string, unknown>>) : [];
+      const title = str(meta.title) || '聊天记录';
+      const preview = items
+        .slice(0, 2)
+        .map((raw) => {
+          const it = (raw ?? {}) as Record<string, unknown>;
+          return `${str(it.name) ?? ''}: ${(str(it.body) ?? '').slice(0, 20)}`;
+        })
+        .filter((s) => s !== ': ')
+        .join('；');
+      return `[转发了「${title}」共 ${items.length} 条${preview ? `，开头是：${preview}` : ''}]`;
+    }
+
     default:
       return m.content ?? '';
   }

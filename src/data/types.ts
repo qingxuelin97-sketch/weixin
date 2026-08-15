@@ -33,7 +33,17 @@ export interface MediaItemVM {
   createdAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'voice' | 'sticker' | 'rp' | 'transfer' | 'call' | 'system';
+export type MessageType =
+  | 'text'
+  | 'image'
+  | 'voice'
+  | 'sticker'
+  | 'rp'
+  | 'transfer'
+  | 'call'
+  | 'system'
+  /** 合并转发 card (M-I6). meta: { title, items: Array<{ name, body, at }> } */
+  | 'merged';
 
 export interface MessageVM {
   id: number;

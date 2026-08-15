@@ -130,7 +130,8 @@ export const messages = sqliteTable(
       .references(() => conversations.id, { onDelete: 'cascade' }),
     senderId: text('sender_id').notNull(), // contactId; 'self' for the user
     type: text('type', {
-      enum: ['text', 'image', 'voice', 'sticker', 'rp', 'transfer', 'call', 'system'],
+      // 'merged' (M-I6): a 合并转发 card — meta carries the copied lines.
+      enum: ['text', 'image', 'voice', 'sticker', 'rp', 'transfer', 'call', 'system', 'merged'],
     }).notNull(),
     content: text('content'), // text body / caption / transcript
     metaJson: text('meta_json'), // type-specific: {w,h,thumbRef} | {duration,voiceId} | ...
