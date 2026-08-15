@@ -7,6 +7,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
+import { showConfirm } from '../../components/dialog';
 import type { ConversationVM } from '../../data/types';
 import { useGuard } from '../../app/useGuard';
 import './contacts.css';
@@ -19,6 +20,22 @@ export function ContactProfilePage() {
   const persona = useAppStore((s) => s.personaFor(contactId));
   const conversations = useAppStore((s) => s.conversations);
   const addConversation = useAppStore((s) => s.addConversation);
+  const deleteContact = useAppStore((s) => s.deleteContact);
+  const showToast = useAppStore((s) => s.showToast);
+
+  /** The one irreversible action on this card — spells out how much goes. */
+  const removeContact = async () => {
+    const ok = await showConfirm({
+      title: '删除联系人',
+      body: '将同时删除与 TA 的聊天记录、朋友圈动态和相关记忆，且无法恢复。',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
+    await deleteContact(contactId);
+    showToast('已删除');
+    navigate('/contacts', { replace: true });
+  };
 
   if (!contact) {
     return (
@@ -102,6 +119,12 @@ export function ContactProfilePage() {
             <span className="settings__chevron">›</span>
           </div>
         </div>
+
+        {contact.type === 'ai' && (
+          <button className="btn-ghost" onClick={() => guard('contact.delete', removeContact)}>
+            删除联系人
+          </button>
+        )}
       </div>
     </>
   );

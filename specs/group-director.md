@@ -32,3 +32,25 @@
 ## 已知坑
 - `prefilter` 的种子含时间戳，同一轮内确定性、跨轮次不同——这是有意的（否则每轮同一人发言）。
 - 群聊目前不注入 `relations`（`assembleSystemPrompt` 支持但未接），成员间关系感待 M4 补。
+
+## M-I1 · 一键群聊配置
+
+- **每群旋钮**：settings KV `groupCfg:<convId>`（activity 0-3 / spice 0-3 / topics ≤5）。
+  缺行 = 默认 = 旋钮出现前的行为。读点三处：群引擎每轮拼一次 `groupCfgDirective`
+  （spice 语气行 + 话题行，附加在 scene 层之后）；前台回填把 `activityMultiplier`
+  挂到 `SimGroup.activity`（simulate 是纯函数，不读存储）；activity 只放大**预算**，
+  间隔不动——「15 分钟 ≤2 条」的完成标准在任何档位都成立（测试锁定）。
+- **重配置既有群**：`rebuildState(blueprint, convId, existingByName)` 绑定既有
+  convId；名字匹配的现有成员直接沿用（不重复付费），关系二遍**逐边合并**（群外
+  关系边不丢），名册取并集（蓝图没提到的现有成员留下），补历史时间戳以会话最新
+  真实消息为下限。build state 每群一行 `groupBuild:<convId>` + ACTIVE 指针；
+  旧单例行首次进入生成页时迁移。
+- **成员管理**：ChatInfoPage 的「＋」改为从现有 AI 联系人拉人（原来错跳新建群）；
+  「－」进入移出模式（移出=离开本群，联系人保留）；「一键重新配置本群」入口带
+  `?rebuild=<convId>` 进生成页；7 个模板（`group-templates.ts`）填 brief/规模/
+  旋钮，建成后旋钮落到 `groupCfg`。
+- **deleteContact 级联**（资料卡「删除联系人」）：顺序 = 中止在飞 → 调度队列 →
+  隐藏私信双向 → 1:1 会话 → 群名册 → 记忆 → 他人卡逐边遗忘（绝不重建 relations
+  整表）→ settings 定向键 → 朋友圈痕迹 → 人设+联系人。钱相关 store 明确豁免
+  （账本不蒸发）。`DELETE_CONTACT_CASCADE` 台账穷举全部 store，加 store 不分类
+  即转红（tests/unit/i1-group-config.test.ts）。

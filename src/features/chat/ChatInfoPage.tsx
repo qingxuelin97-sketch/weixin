@@ -4,16 +4,20 @@
  * editable group name and announcement. Every control is real — toggles write
  * through patchConversation, delete really deletes.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
-import { showConfirm, showPrompt } from '../../components/dialog';
+import { showConfirm, showPrompt, showActionSheet } from '../../components/dialog';
+import { getGroupCfg, putGroupCfg, type GroupCfg } from '../../ai/group-config';
 import { useGuard } from '../../app/useGuard';
 import '../settings/settings.css';
 import './chat.css';
 import { Switch } from '../../components/Switch';
+
+const ACTIVITY_LABELS = ['冷清', '偏静', '正常', '热闹'] as const;
+const SPICE_LABELS = ['和气', '正常', '敢拌嘴', '火药味'] as const;
 
 export function ChatInfoPage() {
   const guard = useGuard();
@@ -21,10 +25,24 @@ export function ChatInfoPage() {
   const navigate = useNavigate();
   const conv = useAppStore((s) => s.conversationById(convId));
   const contactById = useAppStore((s) => s.contactById);
+  const contacts = useAppStore((s) => s.contacts);
   const patchConversation = useAppStore((s) => s.patchConversation);
   const deleteConversation = useAppStore((s) => s.deleteConversation);
   const showToast = useAppStore((s) => s.showToast);
   const [, bump] = useState(0);
+  /** Tapping a member removes them instead of opening their card. */
+  const [removeMode, setRemoveMode] = useState(false);
+  /** Per-group knobs (M-I1); null until loaded, absent row = defaults. */
+  const [cfg, setCfg] = useState<GroupCfg | null>(null);
+  const isGroupConv = conv?.type === 'group';
+  useEffect(() => {
+    if (!isGroupConv) return;
+    let alive = true;
+    void getGroupCfg(convId).then((c) => alive && setCfg(c));
+    return () => {
+      alive = false;
+    };
+  }, [convId, isGroupConv]);
 
   if (!conv) {
     return (
@@ -71,6 +89,58 @@ export function ChatInfoPage() {
     }
   };
 
+  /** 加人: pick from AI contacts not already in the room. Fixes the old "＋"
+      that jumped to CREATE-a-group from inside an existing group. */
+  const addMember = async () => {
+    const candidates = contacts.filter(
+      (c) => c.type === 'ai' && !memberIds.includes(c.id),
+    );
+    if (candidates.length === 0) {
+      showToast('没有可以拉进来的联系人了');
+      return;
+    }
+    const idx = await showActionSheet({
+      title: '添加成员',
+      actions: candidates.map((c) => c.remark ?? c.name),
+    });
+    if (idx == null) return;
+    const chosen = candidates[idx];
+    await patchConversation(conv.id, { memberIds: [...memberIds, chosen.id] });
+    showToast(`已添加 ${chosen.remark ?? chosen.name}`);
+    bump((n) => n + 1);
+  };
+
+  /** 移出群聊 — the member leaves THIS room; the contact itself survives. */
+  const removeMember = async (id: string, name: string) => {
+    const ok = await showConfirm({
+      title: '移出群聊',
+      body: `将「${name}」移出本群？TA 的联系人和聊天记录都还在。`,
+      confirmText: '移出',
+      danger: true,
+    });
+    if (!ok) return;
+    await patchConversation(conv.id, { memberIds: memberIds.filter((m) => m !== id) });
+    showToast('已移出');
+    bump((n) => n + 1);
+  };
+
+  const saveCfg = async (next: GroupCfg) => {
+    setCfg(next);
+    await putGroupCfg(convId, next);
+  };
+
+  const editTopics = async () => {
+    if (!cfg) return;
+    const next = await showPrompt({
+      title: '这个群平时聊什么',
+      initial: cfg.topics.join('、'),
+      placeholder: '用、隔开，最多 5 个',
+      allowEmpty: true,
+    });
+    if (next == null) return;
+    await saveCfg({ ...cfg, topics: next.split(/[、,，\s]+/).filter(Boolean).slice(0, 5) });
+  };
+
   const removeChat = async () => {
     // The old row destroyed the whole thread on a single tap — the only
     // destructive action in the app with no confirmation at all.
@@ -96,17 +166,33 @@ export function ChatInfoPage() {
               <div
                 key={m.id}
                 className="chatinfo-member"
-                onClick={() => navigate(`/contact/${m.id}`)}
+                onClick={() =>
+                  removeMode
+                    ? void removeMember(m.id, m.remark ?? m.name)
+                    : navigate(`/contact/${m.id}`)
+                }
                 role="button"
               >
                 <Avatar color={m.avatarColor} text={m.avatarText} imageRef={m.avatarRef} size={52} />
-                <span className="chatinfo-member__name">{m.remark ?? m.name}</span>
+                <span className="chatinfo-member__name">
+                  {removeMode ? `－${m.remark ?? m.name}` : (m.remark ?? m.name)}
+                </span>
               </div>
             ))}
-            <div className="chatinfo-member" onClick={() => navigate('/group-new')} role="button">
+            <div className="chatinfo-member" onClick={() => guard('chatinfo.add', addMember)} role="button">
               <div className="chatinfo-member__add">＋</div>
               <span className="chatinfo-member__name">&nbsp;</span>
             </div>
+            {isGroup && members.length > 1 && (
+              <div
+                className="chatinfo-member"
+                onClick={() => setRemoveMode((v) => !v)}
+                role="button"
+              >
+                <div className="chatinfo-member__add">{removeMode ? '完成' : '－'}</div>
+                <span className="chatinfo-member__name">&nbsp;</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -120,6 +206,59 @@ export function ChatInfoPage() {
             <div className="settings__row" onClick={() => guard('chatinfo.announce', editAnnouncement)}>
               <span className="settings__label">群公告</span>
               <span className="settings__value">{conv.announcement ? conv.announcement.slice(0, 10) : '未设置'}</span>
+              <span className="settings__chevron">›</span>
+            </div>
+          </div>
+        )}
+
+        {isGroup && cfg && (
+          <div className="settings__group">
+            <div className="settings__group-title">群聊风格</div>
+            <div className="field field--divided">
+              <span className="field__label">活跃度</span>
+              <div className="segmented" style={{ margin: 0 }}>
+                {ACTIVITY_LABELS.map((label, i) => (
+                  <button
+                    key={label}
+                    className={`segmented__item${cfg.activity === i ? ' segmented__item--active' : ''}`}
+                    onClick={() => void saveCfg({ ...cfg, activity: i as GroupCfg['activity'] })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="field field--divided">
+              <span className="field__label">火药味</span>
+              <div className="segmented" style={{ margin: 0 }}>
+                {SPICE_LABELS.map((label, i) => (
+                  <button
+                    key={label}
+                    className={`segmented__item${cfg.spice === i ? ' segmented__item--active' : ''}`}
+                    onClick={() => void saveCfg({ ...cfg, spice: i as GroupCfg['spice'] })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="settings__row" onClick={() => void editTopics()}>
+              <span className="settings__label">常聊话题</span>
+              <span className="settings__value">
+                {cfg.topics.length ? cfg.topics.join('、').slice(0, 12) : '未设置'}
+              </span>
+              <span className="settings__chevron">›</span>
+            </div>
+          </div>
+        )}
+
+        {isGroup && (
+          <div className="settings__group">
+            <div
+              className="settings__row"
+              onClick={() => navigate(`/group-generate?rebuild=${encodeURIComponent(conv.id)}`)}
+            >
+              <span className="settings__label">一键重新配置本群</span>
               <span className="settings__chevron">›</span>
             </div>
           </div>

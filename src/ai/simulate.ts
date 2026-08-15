@@ -59,6 +59,13 @@ export interface SimGroup {
   /** Member contact ids that have personas. */
   memberIds: string[];
   lastMsgAt?: number;
+  /**
+   * Activity multiplier from the group's knobs (M-I1), default 1. Scales the
+   * message BUDGET only — never the spacing, so the "≤2 events per 15 min"
+   * bar holds at every level. Passed in by the caller because simulate() is a
+   * pure function that must not read storage.
+   */
+  activity?: number;
 }
 
 export interface SimInput {
@@ -201,12 +208,16 @@ function planGroupChatter(
   if (lo >= to) return [];
 
   const rng = seededRng(`grp:${seed}:${g.convId}:${from}`);
-  const budget = Math.min(
+  const rawBudget = Math.min(
     groupMessageBudget(lo, to, g.memberIds.length),
     // …and still at most one per hour of absence: a big room is more talkative
     // per hour, not a wall of text the moment you open the app.
     Math.max(1, Math.round(hours * Math.min(2, Math.sqrt(g.memberIds.length / 4)))),
   );
+  // The activity knob (M-I1) scales the BUDGET only. Spacing below is what
+  // enforces the ≤2-per-15min bar and is deliberately untouched; and a quiet
+  // room still says at least one thing per absence — quiet is not dead.
+  const budget = Math.max(1, Math.round(rawBudget * Math.min(2, Math.max(0.1, g.activity ?? 1))));
   const maxBySpacing = Math.floor((to - lo) / MIN_GROUP_GAP_MS) + 1;
   const count = Math.min(budget, maxBySpacing);
   if (count <= 0) return [];

@@ -12,7 +12,7 @@
  *     already made is kept (`buildGroup` resumes from the same state).
  */
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { getRouter } from '../../llm/service';
@@ -23,12 +23,15 @@ import { generateBlueprint, MIN_MEMBERS, MAX_MEMBERS, type GroupBlueprint } from
 import {
   buildGroup,
   newBuildState,
+  rebuildState,
   isBuildComplete,
   buildStateKey,
   ACTIVE_BUILD_KEY,
   LEGACY_BUILD_STATE_KEY,
   type BuildState,
 } from '../../ai/group-build';
+import { putGroupCfg } from '../../ai/group-config';
+import { GROUP_TEMPLATES, type GroupTemplate } from '../../ai/group-templates';
 import { repo } from '../../db/repo';
 import { generatePersona } from '../../ai/persona-generate';
 import { listRegisteredMedia } from '../../data/media-registry';
@@ -44,8 +47,18 @@ export function GroupGeneratePage() {
   const putPersona = useAppStore((s) => s.putPersona);
   const personaFor = useAppStore((s) => s.personaFor);
   const addConversation = useAppStore((s) => s.addConversation);
+  const patchConversation = useAppStore((s) => s.patchConversation);
   const appendMessage = useAppStore((s) => s.appendMessage);
   const showToast = useAppStore((s) => s.showToast);
+
+  // 一键重新配置 (M-I1): ?rebuild=<convId> binds the whole flow to an EXISTING
+  // group — same blueprint chain, but matched members are reused, the roster
+  // is unioned, and the seeded history is floored at the room's newest message.
+  const [params] = useSearchParams();
+  const rebuildConvId = params.get('rebuild') ?? '';
+  const rebuildConv = useAppStore((s) =>
+    rebuildConvId ? s.conversationById(rebuildConvId) : undefined,
+  );
 
   const [brief, setBrief] = useState('');
   const [size, setSize] = useState(8);
@@ -55,6 +68,15 @@ export function GroupGeneratePage() {
   const [bp, setBp] = useState<GroupBlueprint | null>(null);
   const stateRef = useRef<BuildState | null>(null);
   const cancelRef = useRef(false);
+  /** Template picked before generating — its knobs land on the built group. */
+  const tplRef = useRef<GroupTemplate | null>(null);
+
+  // Rebuild mode opens sized to the room it is reconfiguring.
+  useEffect(() => {
+    if (rebuildConv?.memberIds?.length) {
+      setSize(Math.min(Math.max(rebuildConv.memberIds.length, MIN_MEMBERS), MAX_MEMBERS));
+    }
+  }, [rebuildConv]);
 
   // An unfinished build from a previous visit. The contacts it already made
   // are in the database; without this the user would generate — and pay for —
@@ -76,11 +98,14 @@ export function GroupGeneratePage() {
         }
       }
       if (!saved?.blueprint?.members?.length || isBuildComplete(saved)) return;
+      // A parked NEW-group build must not hijack a rebuild flow (and vice
+      // versa) — resume only the state that targets this page's conversation.
+      if (rebuildConvId && saved.convId !== rebuildConvId) return;
       stateRef.current = saved;
       setBp(saved.blueprint);
       setSize(saved.blueprint.members.length);
     })().catch(() => {});
-  }, []);
+  }, [rebuildConvId]);
 
   const complete = async (
     key: string,
@@ -115,7 +140,19 @@ export function GroupGeneratePage() {
         return;
       }
       setBp(out.value);
-      const fresh = newBuildState(out.value, Date.now());
+      let fresh: BuildState;
+      if (rebuildConvId && rebuildConv) {
+        // Bind blueprint members to the room's current roster by name: a
+        // matched member reuses their paid-for card; only new people cost.
+        const existingByName: Record<string, string> = {};
+        for (const id of rebuildConv.memberIds ?? []) {
+          const c = useAppStore.getState().contactById(id);
+          if (c) existingByName[c.remark ?? c.name] = id;
+        }
+        fresh = rebuildState(out.value, rebuildConvId, existingByName, Date.now());
+      } else {
+        fresh = newBuildState(out.value, Date.now());
+      }
       stateRef.current = fresh;
       await repo.putSetting(ACTIVE_BUILD_KEY, fresh.convId).catch(() => {});
     } catch (e) {
@@ -180,8 +217,22 @@ export function GroupGeneratePage() {
         putContact,
         putPersona,
         getPersona: personaFor,
-        addConversation,
+        // On a rebuild the row already exists in the store list — patch it so
+        // the in-memory entry updates too (addConversation dedupes and would
+        // leave the stale title on screen).
+        addConversation: async (c) => {
+          if (rebuildConvId && useAppStore.getState().conversationById(c.id)) {
+            await patchConversation(c.id, c);
+          } else {
+            await addConversation(c);
+          }
+        },
         appendMessage,
+        getConversation: (id) => repo.getConversation(id),
+        // Newest real message = the floor for fabricated backlog (rowid order
+        // == time order). getMessages returns chronological, limit 1 = newest.
+        latestMessageAt: async (id) =>
+          (await repo.getMessages(id, { limit: 1 }))[0]?.createdAt,
         // Checkpoint after every member, so a reload does not turn 7 paid-for
         // cards into 7 duplicate contacts on the next attempt.
         saveState: async (s) => {
@@ -203,6 +254,15 @@ export function GroupGeneratePage() {
           .putSetting(buildStateKey(state.convId), { ...state, historyDone: true })
           .catch(() => {});
         await repo.putSetting(ACTIVE_BUILD_KEY, '').catch(() => {});
+        // A picked template carries knobs — they belong to the built room.
+        const tpl = tplRef.current;
+        if (tpl) {
+          await putGroupCfg(out.convId, {
+            activity: tpl.activity,
+            spice: tpl.spice,
+            topics: tpl.topics,
+          }).catch(() => {});
+        }
         navigate(`/chat/${out.convId}`, { replace: true });
       }
     } catch (e) {
@@ -216,8 +276,39 @@ export function GroupGeneratePage() {
 
   return (
     <>
-      <SubNav title="AI 代写群聊" />
+      <SubNav title={rebuildConvId ? '重新配置群聊' : 'AI 代写群聊'} />
       <div className="page-body settings">
+        {rebuildConvId && (
+          <div className="settings__group">
+            <div className="field">
+              <span className="field__hint">
+                正在重新配置「{rebuildConv?.title ?? rebuildConvId}」——名字对得上的现有成员
+                直接沿用（不重复付费），新名字才会生成新人；现有聊天记录不动。
+              </span>
+            </div>
+          </div>
+        )}
+
+        {!rebuildConvId && (
+          <div className="settings__group">
+            <div className="settings__group-title">一键模板（可改再生成）</div>
+            {GROUP_TEMPLATES.map((t) => (
+              <div
+                key={t.id}
+                className="settings__row settings__row--divided"
+                onClick={() => {
+                  tplRef.current = t;
+                  setBrief(t.brief);
+                  setSize(t.size);
+                }}
+              >
+                <span className="settings__label">{t.name}</span>
+                <span className="settings__value">{t.tagline}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="settings__group">
           <div className="settings__group-title">这是个什么群</div>
           <div className="field field--divided">

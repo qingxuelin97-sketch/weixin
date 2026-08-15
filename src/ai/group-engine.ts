@@ -11,6 +11,7 @@ import type { MessageVM, PersonaVM, ContactVM, NsfwTierVM, ConversationVM } from
 import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
 import { assembleSystemPrompt, promptStats, relationsForPrompt } from './prompt';
+import { getGroupCfg, spiceLine, topicsLine } from './group-config';
 import { affectFor, affectLine } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { refreshConvState, convStateDirective } from './conv-state';
@@ -184,6 +185,8 @@ export async function sendGroupMessage(
       await refreshConvState(convId, recent, now),
       now,
     );
+    // Per-group knobs (M-I1): read ONCE for the round, same reason as above.
+    const cfgLine = await groupCfgDirective(convId);
     const outputs = await Promise.all(
       cast.slice(0, MAX_CONCURRENT_ACTORS).map(async ({ plan, member }): Promise<ActorOutput> => {
         const bubbles = await generateActorLines(
@@ -198,6 +201,8 @@ export async function sendGroupMessage(
           ctrl.signal,
           members.map((m) => ({ contactId: m.contactId, name: m.name })),
           convStateLine,
+          '',
+          cfgLine,
         );
         return { plan, member, bubbles };
       }),
@@ -280,6 +285,8 @@ async function generateActorLines(
    * every fifteen minutes.
    */
   pacingLine = '',
+  /** This room's knob-derived tone/topics line (M-I1), computed once per round. */
+  cfgLine = '',
 ): Promise<Bubble[]> {
   const persona = member.persona as PersonaVM;
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
@@ -354,6 +361,9 @@ async function generateActorLines(
   const stanceLine = await describePeerEdges(member.contactId, peers, now);
   if (stanceLine) system += `\n\n${stanceLine}`;
   if (pacingLine) system += `\n\n${pacingLine}`;
+  // The room's own tone (火药味/常聊话题, M-I1) — appended after the scene
+  // layer like every other room-level directive, never inserted into it.
+  if (cfgLine) system += `\n\n${cfgLine}`;
   // Her own habits in THIS room (M-H1). Group turns are short, which makes
   // repetition far more visible than in a DM: three "哈哈哈" from the same
   // member inside one screen is the loudest tell a group chat has.
@@ -554,6 +564,7 @@ export async function sendGroupProactiveMessage(
       members.map((m) => ({ contactId: m.contactId, name: m.name })),
       '',
       pacingDirective(readTopic(await repo.getSetting(topicKey(conv.id)), stamp), stamp, recent[recent.length - 1]?.createdAt),
+      await groupCfgDirective(conv.id),
     );
     if (ctrl.signal.aborted || bubbles.length === 0) return;
 
@@ -570,4 +581,14 @@ export async function sendGroupProactiveMessage(
   } finally {
     if (inFlight.get(conv.id) === ctrl) inFlight.delete(conv.id);
   }
+}
+
+/**
+ * The room's knob line (M-I1): spice tone + preferred topics, joined for the
+ * actor prompt. Reads the settings row; absent knobs produce '' and the
+ * prompt is byte-identical to the pre-knob era.
+ */
+async function groupCfgDirective(convId: string): Promise<string> {
+  const cfg = await getGroupCfg(convId);
+  return [spiceLine(cfg), topicsLine(cfg)].filter(Boolean).join('\n');
 }

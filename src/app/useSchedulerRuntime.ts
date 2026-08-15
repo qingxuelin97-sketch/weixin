@@ -64,6 +64,7 @@ import { requestPermission } from '../lib/notify';
 import { syncNotifications } from '../ai/notify-service';
 import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
+import { getGroupCfg, activityMultiplier } from '../ai/group-config';
 import { repo } from '../db/repo';
 import { useAppStore } from '../store/appStore';
 
@@ -425,12 +426,20 @@ async function runForegroundPass(): Promise<void> {
     if (!persona) return [];
     return [{ contactId: c.peerId, convId: c.id, persona, lastMsgAt: c.lastMsgAt }];
   });
-  const groups = s.conversations.flatMap<SimGroup>((c) => {
+  const groupsBase = s.conversations.flatMap<SimGroup>((c) => {
     if (c.type !== 'group') return [];
     const memberIds = (c.memberIds ?? []).filter((id) => s.personaFor(id));
     if (memberIds.length === 0) return [];
     return [{ convId: c.id, memberIds, lastMsgAt: c.lastMsgAt }];
   });
+  // The per-group activity knob rides in from here (M-I1): simulate() is pure
+  // and must not read storage, so the impure edge attaches the multiplier.
+  const groups = await Promise.all(
+    groupsBase.map(async (g) => ({
+      ...g,
+      activity: activityMultiplier(await getGroupCfg(g.convId)),
+    })),
+  );
   try {
     await runBackfill(now, { singles, groups });
   } catch {

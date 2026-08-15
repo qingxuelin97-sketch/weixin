@@ -297,6 +297,68 @@ describe('group config knobs', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Knob wiring — 写了没接线 = 没做.
+// ---------------------------------------------------------------------------
+
+describe('the knobs are actually wired', () => {
+  const read = (p: string) => readFileSync(resolve(__dirname, '../..', p), 'utf8');
+
+  it('group engine feeds the cfg line into actor prompts', () => {
+    const src = read('src/ai/group-engine.ts');
+    expect(src).toContain("from './group-config'");
+    expect(src).toContain('groupCfgDirective');
+  });
+
+  it('the foreground pass hands the activity multiplier to simulate', () => {
+    const src = read('src/app/useSchedulerRuntime.ts');
+    expect(src).toContain('getGroupCfg');
+    expect(src).toContain('activityMultiplier');
+  });
+
+  it('the group ＋ no longer jumps to CREATE-a-group', () => {
+    expect(read('src/features/chat/ChatInfoPage.tsx')).not.toContain("navigate('/group-new')");
+  });
+
+  it('the profile card owns the delete-contact entry', () => {
+    const src = read('src/features/contacts/ContactProfilePage.tsx');
+    expect(src).toContain('deleteContact');
+    expect(src).toContain('showConfirm');
+  });
+});
+
+describe('offline pacing respects the activity knob', () => {
+  const mkGroup = (activity?: number) => ({
+    convId: 'g1',
+    memberIds: ['a', 'b', 'c', 'd'],
+    lastMsgAt: 0,
+    ...(activity != null ? { activity } : {}),
+  });
+
+  it('a lively room plans more, a quiet room plans fewer — never zero', async () => {
+    const { simulate, MIN_GROUP_GAP_MS } = await import('../../src/ai/simulate');
+    const from = T0;
+    const to = T0 + 8 * 3_600_000; // 8h absence
+    const count = (activity?: number) =>
+      simulate(from, to, { singles: [], groups: [mkGroup(activity)] }, 'seed').events.filter(
+        (e) => e.kind === 'group_msg',
+      );
+    const quiet = count(0.3);
+    const normal = count(undefined);
+    const lively = count(1.6);
+    expect(quiet.length).toBeGreaterThanOrEqual(1); // quiet is not dead
+    expect(quiet.length).toBeLessThanOrEqual(normal.length);
+    expect(lively.length).toBeGreaterThanOrEqual(normal.length);
+    // The ≤2-per-15min bar is enforced by SPACING, which no knob may relax.
+    for (const events of [quiet, normal, lively]) {
+      const ats = events.map((e) => e.at).sort((a, b) => a - b);
+      for (let i = 1; i < ats.length; i++) {
+        expect(ats[i] - ats[i - 1]).toBeGreaterThanOrEqual(MIN_GROUP_GAP_MS);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // deleteContact — the cascade and its ledger.
 // ---------------------------------------------------------------------------
 
