@@ -46,6 +46,8 @@ import { GroupListPage, NewFriendsPage, SimpleListPage } from './features/contac
 import { CallPage } from './features/call/CallPage';
 import { SearchPage } from './features/search/SearchPage';
 import { NativePage } from './features/settings/NativePage';
+import { UsagePage } from './features/settings/UsagePage';
+import { PromptLabPage } from './features/settings/PromptLabPage';
 import { BatteryGuidePage } from './features/settings/BatteryGuidePage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
@@ -143,6 +145,8 @@ export function App() {
               <Route path="/settings/backup" element={<Push><BackupPage /></Push>} />
               <Route path="/settings/notify-test" element={<Push><NotifyTestPage /></Push>} />
               <Route path="/settings/env" element={<Push><EnvDiagPage /></Push>} />
+              <Route path="/settings/usage" element={<Push><UsagePage /></Push>} />
+              <Route path="/settings/prompt-lab" element={<Push><PromptLabPage /></Push>} />
               <Route path="/settings/media" element={<Push><MediaLibraryPage /></Push>} />
               <Route path="/settings/native" element={<Push><NativePage /></Push>} />
               <Route path="/settings/battery" element={<Push><BatteryGuidePage /></Push>} />

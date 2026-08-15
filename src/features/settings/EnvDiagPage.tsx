@@ -6,6 +6,7 @@
  * guesswork.
  */
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { SubNav } from '../../components/SubNav';
 import { getUsage, clearUsage, KIND_LABELS, type DayUsage, type UsageKind } from '../../lib/usage';
@@ -74,6 +75,7 @@ async function runProbes(): Promise<Probe[]> {
 
 export function EnvDiagPage() {
   const guard = useGuard();
+  const navigate = useNavigate();
   const showToast = useAppStore((s) => s.showToast);
   const [usage, setUsage] = useState<{ today: DayUsage; history: DayUsage[] } | null>(null);
   const [selftest, setSelftest] = useState<SelftestReport | undefined>(undefined);
@@ -189,6 +191,13 @@ export function EnvDiagPage() {
               所以这里能看见。
             </p>
           )}
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/usage')}
+          >
+            <span className="settings__label">用量明细（按天 × 按用途）</span>
+            <span className="settings__chevron">›</span>
+          </div>
           {(usage?.history.length ?? 0) > 0 && (
             <button
               className="btn-ghost"
@@ -203,6 +212,17 @@ export function EnvDiagPage() {
               清空用量记录
             </button>
           )}
+        </div>
+
+        <div className="settings__group">
+          <div
+            className="settings__row"
+            onClick={() => navigate('/settings/prompt-lab')}
+          >
+            <span className="settings__label">提示词工作台</span>
+            <span className="settings__value">看每次调用实际发了什么</span>
+            <span className="settings__chevron">›</span>
+          </div>
         </div>
 
         <div className="settings__group">
