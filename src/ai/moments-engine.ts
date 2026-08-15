@@ -21,7 +21,7 @@ import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
 import { pickImages } from '../data/moments-images';
 import { isActiveAt } from './heartbeat';
-import { agentEpoch, goalStateAt, goalMomentMaterial } from './goals';
+import { agentEpoch, goalStateAt, goalMomentMaterial, type GoalDomain, type GoalState } from './goals';
 import { getAllEdges, pairKey, effectiveAffinity } from './relationship';
 import { repo } from '../db/repo';
 
@@ -163,6 +163,143 @@ export async function collectReactors(
   return out;
 }
 
+/* --------------------------- AI reposts (M-I15) --------------------------- */
+
+/** A planned repost of a USER post — materialized as a `moment_repost` action. */
+export interface PlannedRepost {
+  contactId: string;
+  at: number;
+}
+
+/**
+ * How often a user post attracts a repost at all. A repost is a much bigger
+ * gesture than a like — someone putting YOUR words on THEIR wall — so it must
+ * stay rare enough that each one lands as an event.
+ */
+export const REPOST_RATE = 0.08;
+
+/** Only genuinely close friends repost; casual ones like and move on. */
+export const REPOST_MIN_AFFINITY = 55;
+
+/**
+ * At most one friend reposts this post, seeded and rare. USER posts only:
+ * agents boosting each other is feed noise, while a friend amplifying *you*
+ * is the moment the 转发 feature exists for. The reposter's text and quote
+ * are produced later through `moment-repost.ts`'s storage-re-read path, so
+ * this planner decides WHO and WHEN, never WHAT.
+ */
+export function planRepost(
+  momentId: string,
+  authorId: string,
+  postedAt: number,
+  reactors: ReactorInfo[],
+  seed: string,
+): PlannedRepost | null {
+  if (authorId !== 'self') return null;
+  const rng = seededRng(`${seed}:repost:${momentId}`);
+  if (rng() >= REPOST_RATE) return null;
+  const eligible = reactors.filter(
+    (r) => r.contactId !== authorId && r.affinity >= REPOST_MIN_AFFINITY,
+  );
+  if (eligible.length === 0) return null;
+  const who = eligible[Math.floor(rng() * eligible.length)];
+  // Later than a like would land: sharing takes deciding it's worth sharing.
+  const at = settle(postedAt + 30 * MINUTE + rng() * 6 * HOUR, who.activeHours);
+  return { contactId: who.contactId, at };
+}
+
+/**
+ * The reposter's own line above the quote card. One short LLM call; empty
+ * string on failure — a wordless repost is a perfectly normal repost, so this
+ * degrades to silence rather than to a lost action.
+ */
+export async function generateRepostText(
+  persona: PersonaVM,
+  reposter: ContactVM,
+  moment: MomentVM,
+  now: number,
+): Promise<string> {
+  const system = assembleSystemPrompt({
+    persona: toPersonaView(persona, reposter.remark ?? reposter.name),
+    nsfwTier: 'off', // constitution #6: Moments are never NSFW
+    scene: { kind: 'single', now: new Date(now) },
+  });
+  try {
+    const router = await getRouter();
+    const res = await router.complete(
+      { role: 'chat', nsfwTier: 'off' },
+      {
+        messages: [
+          { role: 'system', content: system },
+          {
+            role: 'user',
+            content:
+              `你朋友发了条朋友圈：「${moment.text ?? '[图片]'}」，你想转发到自己的朋友圈。\n` +
+              '写一句你转发时的配文。要求：15 字以内、你的语气、' +
+              '不复述原文、只输出配文本身。',
+          },
+        ],
+      },
+    );
+    return cleanPostText(res.text ?? '').slice(0, 40);
+  } catch {
+    return '';
+  }
+}
+
+/* ---------------------- topic tags & goal series (M-I15) ---------------------- */
+
+/**
+ * Tags a persona might plausibly hang on a post. Small on purpose: a topic
+ * page needs REPEAT hits to feel like a topic, and a hundred-tag pool would
+ * scatter every post into its own bucket. Goal-domain tags come first so a
+ * study-arc post tends to tag its own storyline.
+ */
+export const TOPIC_POOLS: Record<GoalDomain, string[]> = {
+  study: ['备考日记', '学习打卡'],
+  money: ['攒钱计划', '旅行基金'],
+  romance: ['恋爱脑', '心动瞬间'],
+  health: ['减肥日常', '自律打卡'],
+  career: ['打工人', '搞钱要紧'],
+  skill: ['厨房翻车现场', '今日份手艺'],
+};
+
+/** Everyday tags for posts with no goal storyline behind them. */
+export const GENERIC_TOPICS = ['日常', '碎碎念', '深夜emo', '干饭日记', '周末愉快'];
+
+/** Fraction of AI posts that carry a tag at all. A feed of hashtags reads as marketing. */
+export const TOPIC_TAG_RATE = 0.18;
+
+/**
+ * Should this post carry a #话题#, and which? Seeded per post so backfill and
+ * replay agree. Goal-flavored posts pull from their domain's pool — that is
+ * what turns three posts a month into a legible series.
+ */
+export function maybeTopicTag(domain: GoalDomain | undefined, seed: string): string | null {
+  const rng = seededRng(`mtopic:${seed}`);
+  if (rng() >= TOPIC_TAG_RATE) return null;
+  const pool = domain ? TOPIC_POOLS[domain] : GENERIC_TOPICS;
+  return pool[Math.floor(rng() * pool.length)];
+}
+
+/**
+ * 连续剧感 (M-I15): the extra prompt line that makes goal posts read as
+ * installments of ONE story instead of isolated updates. Only meaningful from
+ * the second reached milestone on — episode one has nothing to call back to.
+ * Pure; the caller appends it to `goalMomentMaterial`'s output.
+ */
+export function goalSeriesLine(g: GoalState): string {
+  if (g.status !== 'active' || g.milestoneIndex < 1) return '';
+  const prev = g.milestones.filter((m) => m.reached).at(-2);
+  if (!prev?.text) return '';
+  const episode = g.milestoneIndex + 1;
+  return (
+    `这不是你第一次围绕「${g.title}」发朋友圈了（这大概是第 ${episode} 篇，` +
+    `上一篇时你还在「${prev.text}」的阶段）。写出一点"连载下一集"的感觉——` +
+    '可以轻轻呼应之前的状态，让常看你朋友圈的人看得出进展，但别写成汇报。'
+  );
+}
+
 /** Strip model formatting habits that would look wrong in a feed post. */
 function cleanPostText(raw: string): string {
   return raw
@@ -222,7 +359,19 @@ export async function generateMomentPost(
   // becomes the post. Seeded gate inside — the feed must not turn into a
   // progress log, so this is empty most of the time.
   const goal = goalStateAt(peer.id, now, agentEpoch(peer.id));
-  const goalBg = goalMomentMaterial(goal, now, `${peer.id}:${now}`);
+  let goalBg = goalMomentMaterial(goal, now, `${peer.id}:${now}`);
+  // 连续剧式发帖 (M-I15): when the post IS goal material and this is not the
+  // first installment, ask for continuity with the previous one.
+  if (goalBg) {
+    const series = goalSeriesLine(goal);
+    if (series) goalBg += `\n${series}`;
+  }
+  // 偶尔带话题标签 (M-I15): seeded minority. Goal-flavored posts tag their own
+  // storyline's pool so the topic page accumulates a real series.
+  const topic = maybeTopicTag(
+    goalBg && goal.status === 'active' ? goal.domain : undefined,
+    `${peer.id}:${now}`,
+  );
 
   try {
     const router = await getRouter();
@@ -238,7 +387,10 @@ export async function generateMomentPost(
               '写一条你现在会发的朋友圈。要求：' +
               '1) 第一人称，像真人随手发的，不是作文；' +
               '2) 40 字以内，可以只有一句话，允许口语和不完整句；' +
-              '3) 不要话题标签、不要 emoji 堆砌、不要"分享一下"这类开场白；' +
+              (topic
+                ? `3) 在正文里自然带上话题标签 #${topic}#（只这一个，别再加别的标签）、` +
+                  '不要 emoji 堆砌、不要"分享一下"这类开场白；'
+                : '3) 不要话题标签、不要 emoji 堆砌、不要"分享一下"这类开场白；') +
               '4) 只输出正文，不要引号、不要解释。' +
               (goalBg ? `\n背景（不要照抄原句）：${goalBg}` : ''),
           },

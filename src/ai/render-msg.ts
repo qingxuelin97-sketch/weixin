@@ -115,7 +115,9 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
     }
 
     case 'sticker':
-      return str(m.content) ? `[表情：${m.content}]` : '[表情]';
+      // Custom stickers (M-I15) carry an opaque `idb:` ref — the model must
+      // never see internal ids, so those project as a bare tag.
+      return str(m.content) && !m.content?.startsWith('idb:') ? `[表情：${m.content}]` : '[表情]';
 
     case 'rp': {
       const greeting = str(meta.greeting);

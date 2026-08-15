@@ -24,6 +24,9 @@ import { TransferSendPage } from './features/money/TransferSendPage';
 import { WalletPage } from './features/money/WalletPage';
 import { MomentsPage } from './features/moments/MomentsPage';
 import { MomentPublishPage } from './features/moments/MomentPublishPage';
+import { MomentRepostPage } from './features/moments/MomentRepostPage';
+import { MomentTopicPage } from './features/moments/MomentTopicPage';
+import { MomentAlbumPage } from './features/moments/MomentAlbumPage';
 import { BackupPage } from './features/settings/BackupPage';
 import { NotifyTestPage } from './features/settings/NotifyTestPage';
 import { EnvDiagPage } from './features/settings/EnvDiagPage';
@@ -139,6 +142,9 @@ export function App() {
               <Route path="/search" element={<Push><SearchPage /></Push>} />
               <Route path="/moments" element={<Push><MomentsPage /></Push>} />
               <Route path="/moments/publish" element={<Push><MomentPublishPage /></Push>} />
+              <Route path="/moments/repost/:momentId" element={<Push><MomentRepostPage /></Push>} />
+              <Route path="/moments/topic/:tag" element={<Push><MomentTopicPage /></Push>} />
+              <Route path="/moments/album/:contactId" element={<Push><MomentAlbumPage /></Push>} />
               <Route path="/profile" element={<Push><ProfilePage /></Push>} />
               <Route path="/settings" element={<Push><SettingsPage /></Push>} />
               <Route path="/settings/api" element={<Push><ApiConfigPage /></Push>} />

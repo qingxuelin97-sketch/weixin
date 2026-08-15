@@ -99,6 +99,8 @@ export interface Repo {
   /** Likes+comments for a page of posts in two queries rather than 2N. */
   getMomentSocial(momentIds: string[]): Promise<{ likes: Record<string, MomentLikeVM[]>; comments: Record<string, MomentCommentVM[]> }>;
   getMoment(id: string): Promise<MomentVM | undefined>;
+  /** One person's whole timeline, newest first (个人相册页, M-I15). */
+  getMomentsByAuthor(authorId: string): Promise<MomentVM[]>;
   putMoment(m: MomentVM): Promise<void>;
   getLikes(momentId: string): Promise<MomentLikeVM[]>;
   putLike(l: MomentLikeVM): Promise<void>;
@@ -292,6 +294,15 @@ export class IdbRepo implements Repo {
       for (const cm of await this.getComments(m.id)) await idbDelete('moment_comments', cm.id);
       await idbDelete('moments', m.id);
     }
+    // Reposts by OTHERS that quote the dead contact keep their row but lose
+    // the snapshot (M-I15) — "every trace" includes quoted excerpts, and the
+    // card renders the WeChat idiom for it instead of a broken lookup.
+    for (const m of moments) {
+      if (m.authorId !== id && m.repostAuthorId === id) {
+        const { repostAuthorId: _drop, ...rest } = m;
+        await idbPut('moments', { ...rest, repostExcerpt: '原内容已删除' });
+      }
+    }
     for (const l of await idbGetAll<MomentLikeVM>('moment_likes')) {
       if (l.contactId === id) await idbDelete('moment_likes', l.id);
     }
@@ -473,6 +484,15 @@ export class IdbRepo implements Repo {
   }
   async getMoment(id: string) {
     return idbGet<MomentVM>('moments', id);
+  }
+  /**
+   * Full scan by design: the album page is an occasional destination, one
+   * author's posts are a small slice, and adding a byAuthor index would cost a
+   * DB_VERSION bump for a query that runs on a tap, not a tick.
+   */
+  async getMomentsByAuthor(authorId: string) {
+    const all = await idbGetAll<MomentVM>('moments');
+    return all.filter((m) => m.authorId === authorId).sort((a, b) => b.createdAt - a.createdAt);
   }
   async putMoment(m: MomentVM) {
     await idbPut('moments', m);

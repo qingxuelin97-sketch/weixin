@@ -384,6 +384,8 @@ export const SCHEDULED_ACTION_KINDS = [
   'group_event',
   /** An AI proposes forming a group with two mutual friends, in her 1:1 (M-I3). */
   'agent_invite',
+  /** A close friend reposts one of the USER's moments, rarely (M-I15). */
+  'moment_repost',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

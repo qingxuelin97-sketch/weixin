@@ -122,6 +122,13 @@ export interface HandlerDeps {
     authorName: string,
     at?: number,
   ) => Promise<void>;
+  /** A close friend reposts the user's post (M-I15). */
+  runMomentRepost: (
+    momentId: string,
+    reposter: ContactVM,
+    persona: PersonaVM,
+    at?: number,
+  ) => Promise<void>;
   /** Deliver a planned red packet / transfer from an agent (M-H1). */
   runGift: (p: GiftPayload) => Promise<void>;
   /** Raise an incoming-call overlay. Returns false if it could not ring. */
@@ -746,6 +753,25 @@ export async function handleMomentComment(
   const author = d.contactById(moment.authorId);
   const authorName = moment.authorId === 'self' ? '你' : (author?.remark ?? author?.name ?? '朋友');
   await d.runMomentComment(momentId, commenter, persona, authorName, optNum(payload.at));
+}
+
+/**
+ * A planned repost of the user's post fires (M-I15). Same staleness re-checks
+ * as every other reaction: the reposter may have been deleted since planning,
+ * and the source may be gone — `runMomentRepost` re-reads it from storage,
+ * which is also what keeps the quote's content feed-derived (leak rule).
+ */
+export async function handleMomentRepost(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const momentId = str(payload.momentId);
+  const contactId = str(payload.contactId);
+  if (!momentId || !contactId) return;
+  const reposter = d.contactById(contactId);
+  const persona = d.personaFor(contactId);
+  if (!reposter || !persona) return;
+  await d.runMomentRepost(momentId, reposter, persona, optNum(payload.at));
 }
 
 /* ------------------------------ calls ------------------------------ */

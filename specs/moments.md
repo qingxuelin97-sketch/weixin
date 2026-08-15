@@ -63,3 +63,76 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
 `pickImages(seed, count, tags?)`：`tags` 来自 `PersonaVM.imageTags`，按标签过滤
 `idb:` 照片池（吃货人设不发健身照）；空标签或过滤后为空 → 回落全池（宁可跑题不可
 让人设永远无图）。优先级：运行时媒体库 > 构建期 assets > 渐变占位。同种子同图不变。
+
+## M-I15 增补：朋友圈 v2
+
+### 转发/引用（转发卡片 + 泄漏铁律）
+
+- 数据：`MomentVM.repostOf`（**根**原帖 id，链条永远塌缩到根）+ 快照
+  `repostAuthorId` / `repostExcerpt`（原帖删除后卡片仍可渲染）。
+- **泄漏铁律**：引用内容只能来自「已入公开 feed 的 moment 行」。唯一构造器
+  `src/ai/moment-repost.ts`——`buildRepost` 只接受 `MomentVM` 并自行从
+  `source.text` 派生摘录（没有任何参数能注入任意文本）；服务层 `repostMoment`
+  只接受 **id** 并从存储重读，伪造的内存对象带不进任何内容。隐藏会话
+  （AI↔AI 私信）因此在结构上无法经转发链上屏。转红测试见
+  `tests/unit/moments-v2.test.ts`（repost leak rule）。
+- 删除联动：deleteContact 级联会抹掉引用了死者的快照
+  （`repostExcerpt: '原内容已删除'`），store 内存镜像 1:1 同步。
+- 入口：卡片胶囊「转发」（仅他人的帖）→ `/moments/repost/:momentId`。
+- **AI 也会转发你**：`planRepost`（种子化，~8%，仅 `authorId==='self'` 的帖、
+  affinity ≥ 55 的密友，30min–6.5h 后落地）→ 新 kind `moment_repost`（已入
+  `SCHEDULED_ACTION_KINDS` + `registerHandler`，无第二计时器）→
+  `runMomentRepost` 经同一 `repostMoment` 存储重读路径发布，配文
+  `generateRepostText`（失败=无配文，不丢行为）。AI 的转发帖不会再被转发
+  （planner 只认用户帖），不成环。
+
+### 话题标签
+
+- 解析器 `src/lib/topics.ts`：`#…#`（1–12 字符），未配对 `#` 与空白标签不算；
+  `topicSegments` 对正文**无损**切分供渲染高亮。
+- 聚合页 `/moments/topic/:tag`：`hasTopic` 严格匹配（提到词 ≠ 参与话题），
+  扫描最近一页（200 条）。
+- AI 发帖带标签：`maybeTopicTag`（moments-engine，种子门控 ~18%）；目标期帖子
+  抽本 domain 的 `TOPIC_POOLS`，日常帖抽 `GENERIC_TOPICS`——话题页因此能攒出
+  真正的系列。
+
+### 连续剧式发帖（接 I14 goals）
+
+`goalSeriesLine(goalStateAt(...))`：goal 素材帖从第二个里程碑起附加「上一集」
+指令（引用上一里程碑文案），purely derived、零存储。只在 `goalMomentMaterial`
+非空时追加——feed 不许变成进度日志。
+
+### 封面 / 访客感 / 赞评通知（I6 遗留）
+
+- 封面：settings KV `momentsCoverRef`（`idb:` ref），点击封面从照片库选，
+  可恢复默认渐变。
+- 访客：`recentVisitor`（moments-visitors.ts）按小时桶种子化，~28% 桶有访客、
+  45min TTL，纯函数（铁律 4）。
+- 通知：moment_like/moment_comment/moment_repost 的 pending 行经 notify-service 上锁屏，
+  **只限用户自己帖子**（调用方用存储行构建 allowlist 传入）。分级：点赞正文是
+  「行为本身」→ 新档 `reaction` 可预生成预览（转发同理「转发了你的朋友圈」）；评论文本 fire 时才生成 → 保持
+  `followup` 无预览。红点：`momentsSeenAt` 水位 + `collectMomentsNews` 纯函数
+  派生（点赞/评论/转发三类都算），Discover 行显示最新 actor 头像 + 红点 +「有新消息」。
+- 个人相册页 `/moments/album/:contactId`：`repo.getMomentsByAuthor`（全扫描，
+  点按级频率不配 index），MomentCard 复用，交互走 store 保持 feed 一致。
+
+### 表情包 v2
+
+- 媒体库新 kind `'sticker'`（行内字段，**无需迁移**）；素材库页第三个分段。
+- composer 表情面板「我的表情」区：点击即发 `type:'sticker'` +
+  `content:'idb:<id>'`；MessageBubble 对 `idb:` ref 渲染 110px 图（材质化前
+  渐变占位）；render-msg 投影为 `[表情]`——内部 id 永不进模型上下文。
+- AI 收藏：`sticker-taste.ts`——`stickerSent` KV 记录你**发过**的表情（上限
+  30），每个 agent 按 (agent, ref) 种子收藏 ~55%；引擎在模型自己决定发表情的
+  回合按 ~30% 种子率把词表 glyph 换成收藏的自定义表情。
+- 斗图：`sticker-battle.ts`（voice-send 式门控）——单聊发表情后按
+  `${convId}:${msgId}` 种子掷骰：连发 2–4 条时概率峰值 0.65、长战衰减；命中
+  则 0.8–2.5s 后**零 LLM** 回一张（优先她收藏的、永不复读你刚发的）；未命中
+  走正常引擎回复。
+
+### 已知坑（v2 新增）
+
+- 转发链只塌缩不递归：`buildRepost` 读 source 的快照字段而非追链查库。
+- `toNotifiable` 不带 `selfMomentIds` 时 moment_* 一律静默——旧调用方行为不变。
+- 自定义表情是 `idb:` ref，**收藏/斗图池要过 `startsWith('idb:')`**，词表
+  label 混进池子会被当 ref 渲染成裂图。

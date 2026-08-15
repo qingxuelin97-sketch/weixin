@@ -13,8 +13,11 @@ import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
 import { Sheet } from '../../components/Sheet';
 import { useDismissable } from '../../app/useDismissable';
-import { registerMedia } from '../../data/media-registry';
+import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
 import { useMedia } from '../../components/useMedia';
+import { recordUserSticker, agentStickerPool } from '../../ai/sticker-taste';
+import { battleReply, stickerStreak } from '../../ai/sticker-battle';
+import { playMessageSound } from '../../lib/sound';
 import { logError } from '../../lib/errlog';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
@@ -325,10 +328,29 @@ export function ChatPage() {
 
   // Photo messages resolve through the lazy media registry (M-G1): ask for the
   // blobs this transcript actually shows, and re-render when they land.
+  // Custom stickers (M-I15) are `idb:` refs too, so they prime the same way.
   useMedia(
     useMemo(
-      () => messages.filter((m) => m.type === 'image').map((m) => m.content),
+      () =>
+        messages
+          .filter(
+            (m) =>
+              m.type === 'image' ||
+              (m.type === 'sticker' && m.content?.startsWith('idb:')),
+          )
+          .map((m) => m.content),
       [messages],
+    ),
+  );
+
+  // 我的表情 (M-I15): the composer strip's custom stickers. Primed only while
+  // the emoji panel is open — the strip is the one place they all draw at once.
+  const customStickers = listRegisteredMedia('sticker');
+  useMedia(
+    useMemo(
+      () => (composer.mode === 'emoji' ? customStickers.map((s) => `idb:${s.id}`) : []),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [composer.mode, customStickers.length],
     ),
   );
 
@@ -601,6 +623,69 @@ export function ChatPage() {
     } catch (e) {
       logError('chat.favorite', e);
       showToast('收藏失败');
+    }
+  };
+
+  /**
+   * 发表情 (M-I15): a custom sticker from「我的表情」sends immediately as a
+   * sticker message. Then the 斗图 gate rolls — seeded on the persisted row id
+   * (constitution #4) — and on a hit she answers with a sticker of her own,
+   * zero LLM cost, after a human "finding the right one" delay. A miss falls
+   * through to the ordinary reply path, so a sticker still gets answered in
+   * words. Her sticker choice prefers ones she has "collected" from you
+   * (sticker-taste), which is what closes the loop of the whole feature.
+   */
+  const sendSticker = async (ref: string) => {
+    if (!conv) return;
+    const saved = await appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'sticker',
+      content: ref,
+      status: 'sent',
+      createdAt: Date.now(),
+    });
+    // Taste ledger: only SENT stickers are collectible. Fire-and-forget.
+    void recordUserSticker(ref).catch(() => {});
+
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+
+    if (conv.type === 'single' && conv.peerId) {
+      const peer = contactById(conv.peerId);
+      const persona = personaFor(conv.peerId);
+      if (!peer || !persona) return;
+      const tail = useAppStore.getState().messagesFor(convId);
+      const streak = stickerStreak(tail.map((m) => m.type));
+      const pool = await agentStickerPool(conv.peerId).catch(() => [] as string[]);
+      const reply = battleReply({ seed: `${convId}:${saved.id}`, streak }, pool, ref);
+      if (reply) {
+        // A wordless round: the sticker IS the reply. Deliberately NOT routed
+        // through the engine — no prompt, no tokens, no typing indicator; just
+        // the beat of someone scrolling for the right card.
+        setTimeout(() => {
+          void appendMessage({
+            convId,
+            senderId: peer.id,
+            type: 'sticker',
+            content: reply.content,
+            status: 'sent',
+            createdAt: Date.now(),
+          })
+            .then(() => playMessageSound(Date.now()))
+            .catch((e) => logError('chat.stickerBattle', e));
+        }, reply.delayMs);
+        return;
+      }
+      await replyToLatest(convId, peer, persona, globalTier, hooks);
+      return;
+    }
+    if (conv.type === 'group') {
+      const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
+        const c = contactById(id);
+        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
+      });
+      await replyToLatestInGroup(conv, members, globalTier, hooks, contactById);
     }
   };
 
@@ -1163,6 +1248,13 @@ export function ChatPage() {
           onEmoji={(e) => setDraft((d) => d + e)}
           onEmojiDelete={() => setDraft((d) => Array.from(d).slice(0, -1).join(''))}
           onGame={(kind) => void sendGame(kind).catch((err) => logError('chat.game', err))}
+          stickers={customStickers}
+          onSticker={(ref) =>
+            void sendSticker(ref).catch((err) =>
+              showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+            )
+          }
+          onManageStickers={() => navigate('/settings/media')}
         />
         <input
           ref={albumInputRef}

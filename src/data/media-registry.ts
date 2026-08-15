@@ -22,12 +22,12 @@
 
 export interface RegisteredMedia {
   url: string;
-  kind: 'avatar' | 'photo';
+  kind: 'avatar' | 'photo' | 'sticker';
   tags: string[];
 }
 
 interface Entry {
-  kind: 'avatar' | 'photo';
+  kind: 'avatar' | 'photo' | 'sticker';
   tags: string[];
   /** Live object URL, or undefined when not currently materialized. */
   url?: string;
@@ -65,7 +65,7 @@ export function subscribeMedia(fn: () => void): () => void {
 /** Register what an item IS, without paying for a URL. */
 export function registerMediaMeta(
   id: string,
-  meta: { kind: 'avatar' | 'photo'; tags: string[] },
+  meta: { kind: 'avatar' | 'photo' | 'sticker'; tags: string[] },
 ): void {
   const prev = registry.get(id);
   registry.set(id, { ...meta, url: prev?.url, touched: prev?.touched ?? 0 });
@@ -108,7 +108,8 @@ export function unmaterialized(ids: readonly string[]): string[] {
  *
  * Avatars are never evicted: a handful of small images that every conversation
  * row draws, so dropping them would mean visible flicker on every scroll for
- * no meaningful memory saving.
+ * no meaningful memory saving. Stickers (M-I15) are exempt for the same
+ * reason — small, few, redrawn on every composer open.
  */
 function evict(): void {
   const live = [...registry.entries()].filter(([, e]) => e.url && e.kind === 'photo');
