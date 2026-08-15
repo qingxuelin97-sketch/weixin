@@ -26,7 +26,7 @@ import { logError } from '../../lib/errlog';
 import { humanizePersona, HUMANIZE_LEVEL_LABELS, type HumanizeLevel } from '../../ai/humanize';
 import { applyPersonaPatch } from '../../data/persona-patch';
 import { HumanizeDiffSheet } from './HumanizeDiffSheet';
-import { showActionSheet } from '../../components/dialog';
+import { showActionSheet, showConfirm } from '../../components/dialog';
 import { getRouter } from '../../llm/service';
 import { globalTier } from '../../lib/nsfw-tier';
 import './settings.css';
@@ -114,6 +114,15 @@ export function PersonaEditPage() {
       setP(card.persona);
       setCardNotes(card.notes);
       showToast(`已载入「${card.name}」，确认后再保存`);
+      // 拟人化追问 (M-I2): imported cards are the ones most likely to read as
+      // generated — offer the rewrite while the card is still under review.
+      void showConfirm({
+        title: '顺手拟人化一遍？',
+        body: '刚导入的卡可以让 AI 加点人味——逐字段对照，想留哪条留哪条。',
+        confirmText: '来吧',
+      }).then((yes) => {
+        if (yes) void humanize();
+      });
     } catch (err) {
       logError('persona.import', err);
       showToast('读取失败');

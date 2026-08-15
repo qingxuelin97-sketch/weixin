@@ -44,6 +44,22 @@ describe('the patch discipline', () => {
     expect(page).toContain('humanizePersona');
   });
 
+  it('the group batch entry is wired with the distinctiveness constraint', () => {
+    const info = readFileSync(
+      resolve(__dirname, '../../src/features/chat/ChatInfoPage.tsx'),
+      'utf8',
+    );
+    expect(info).toContain('humanizePersona');
+    expect(info).toContain('siblingCatchphrases');
+    expect(info).toContain('applyPersonaPatch');
+    // ST import offers the rewrite while the card is still under review.
+    const edit = readFileSync(
+      resolve(__dirname, '../../src/features/settings/PersonaEditPage.tsx'),
+      'utf8',
+    );
+    expect(edit).toContain('顺手拟人化');
+  });
+
   it('locked fields in the model output are dropped, not applied', () => {
     const out = validateHumanizePatch(
       {

@@ -11,6 +11,13 @@ import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import { showConfirm, showPrompt, showActionSheet } from '../../components/dialog';
 import { getGroupCfg, putGroupCfg, type GroupCfg } from '../../ai/group-config';
+import { humanizePersona } from '../../ai/humanize';
+import { applyPersonaPatch } from '../../data/persona-patch';
+import { HumanizeDiffSheet } from '../settings/HumanizeDiffSheet';
+import { getRouter } from '../../llm/service';
+import { globalTier } from '../../lib/nsfw-tier';
+import { logError } from '../../lib/errlog';
+import type { PersonaVM } from '../../data/types';
 import { useGuard } from '../../app/useGuard';
 import '../settings/settings.css';
 import './chat.css';
@@ -26,12 +33,20 @@ export function ChatInfoPage() {
   const conv = useAppStore((s) => s.conversationById(convId));
   const contactById = useAppStore((s) => s.contactById);
   const contacts = useAppStore((s) => s.contacts);
+  const personaFor = useAppStore((s) => s.personaFor);
+  const putPersona = useAppStore((s) => s.putPersona);
   const patchConversation = useAppStore((s) => s.patchConversation);
   const deleteConversation = useAppStore((s) => s.deleteConversation);
   const showToast = useAppStore((s) => s.showToast);
   const [, bump] = useState(0);
   /** Tapping a member removes them instead of opening their card. */
   const [removeMode, setRemoveMode] = useState(false);
+  /** 整群拟人化 (M-I2): generated patches awaiting per-member review. */
+  const [batch, setBatch] = useState<{
+    items: Array<{ id: string; name: string; patch: Partial<PersonaVM> }>;
+    idx: number;
+  } | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
   /** Per-group knobs (M-I1); null until loaded, absent row = defaults. */
   const [cfg, setCfg] = useState<GroupCfg | null>(null);
   const isGroupConv = conv?.type === 'group';
@@ -123,6 +138,80 @@ export function ChatInfoPage() {
     showToast('已移出');
     bump((n) => n + 1);
   };
+
+  /**
+   * 整群拟人化 (M-I2): sequential per member, each generation seeing the
+   * catchphrases already taken by the others — the distinctiveness constraint
+   * that stops a generated group from sounding like one person in five hats.
+   * Every member then gets their own diff sheet; skipping one costs nothing.
+   */
+  const humanizeGroup = async () => {
+    if (batchBusy) return;
+    const ais = members.filter((m) => personaFor(m.id));
+    if (ais.length === 0) {
+      showToast('群里没有可拟人化的成员');
+      return;
+    }
+    const ok = await showConfirm({
+      title: '整群拟人化',
+      body: `逐个改写 ${ais.length} 名成员的人设（约 ${ais.length} 次模型调用）。每人一张对照单，逐字段可选，不满意可跳过。`,
+      confirmText: '开始',
+    });
+    if (!ok) return;
+    setBatchBusy(true);
+    try {
+      const router = await getRouter();
+      // Rule #6: derived tier, never declared at the call site.
+      const tier = await globalTier();
+      const generated: string[] = [];
+      const items: Array<{ id: string; name: string; patch: Partial<PersonaVM> }> = [];
+      for (const m of ais) {
+        const persona = personaFor(m.id)!;
+        const name = m.remark ?? m.name;
+        showToast(`正在改写「${name}」（${items.length + 1}/${ais.length}）`);
+        // Siblings = everyone ELSE's existing voice + everything generated so
+        // far this run. The member's own current catchphrases are fair to keep.
+        const siblings = [
+          ...ais.filter((x) => x.id !== m.id).flatMap((x) => personaFor(x.id)?.catchphrases ?? []),
+          ...generated,
+        ];
+        try {
+          const out = await humanizePersona(
+            persona,
+            name,
+            'medium',
+            {
+              complete: async (messages, opts) =>
+                (
+                  await router.complete(
+                    { role: 'reasoning', nsfwTier: tier },
+                    { messages, json: opts.json, maxTokens: opts.maxTokens, temperature: 0.9 },
+                    {},
+                    `humanize:${m.id}`,
+                  )
+                ).text,
+            },
+            { siblingCatchphrases: siblings },
+          );
+          if (out.ok && out.value) {
+            items.push({ id: m.id, name, patch: out.value });
+            generated.push(...(out.value.catchphrases ?? []));
+          }
+        } catch (err) {
+          logError('group.humanize', err); // one failed member must not sink the batch
+        }
+      }
+      if (items.length === 0) {
+        showToast('一个都没改成——检查 API 配置后重试');
+        return;
+      }
+      setBatch({ items, idx: 0 });
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+  const advanceBatch = () =>
+    setBatch((b) => (b && b.idx + 1 < b.items.length ? { ...b, idx: b.idx + 1 } : null));
 
   const saveCfg = async (next: GroupCfg) => {
     setCfg(next);
@@ -255,10 +344,15 @@ export function ChatInfoPage() {
         {isGroup && (
           <div className="settings__group">
             <div
-              className="settings__row"
+              className="settings__row settings__row--divided"
               onClick={() => navigate(`/group-generate?rebuild=${encodeURIComponent(conv.id)}`)}
             >
               <span className="settings__label">一键重新配置本群</span>
+              <span className="settings__chevron">›</span>
+            </div>
+            <div className="settings__row" onClick={() => guard('chatinfo.humanize', humanizeGroup)}>
+              <span className="settings__label">{batchBusy ? '正在逐个改写…' : '整群拟人化'}</span>
+              <span className="settings__value">每人单独确认</span>
               <span className="settings__chevron">›</span>
             </div>
           </div>
@@ -286,6 +380,28 @@ export function ChatInfoPage() {
           删除该聊天
         </button>
       </div>
+
+      {batch && (() => {
+        const cur = batch.items[batch.idx];
+        const orig = personaFor(cur.id);
+        if (!orig) return null;
+        return (
+          <HumanizeDiffSheet
+            key={cur.id}
+            open
+            original={orig}
+            patch={cur.patch}
+            onClose={advanceBatch}
+            onApply={(accepted) => {
+              const { persona } = applyPersonaPatch(orig, accepted);
+              void putPersona(persona).then(() => {
+                showToast(`已更新「${cur.name}」（${batch.idx + 1}/${batch.items.length}）`);
+              });
+              advanceBatch();
+            }}
+          />
+        );
+      })()}
     </>
   );
 }
