@@ -755,3 +755,200 @@
   color: var(--color-text-secondary);
   font-size: var(--fs-cell-title);
 }
+
+/* ---- M-I13 rich cards: location / contact / file / link. ----
+   WeChat renders these WHITE on both sides (a card, not speech) — so the base
+   bubble background and the tail color are overridden together. */
+.loc-card,
+.contact-card,
+.file-card,
+.link-card {
+  background: var(--color-bubble-other);
+  color: var(--color-bubble-other-text);
+  padding: 0;
+  overflow: hidden;
+  width: 232px;
+}
+.loc-card::before,
+.contact-card::before,
+.file-card::before,
+.link-card::before {
+  border-left-color: var(--color-bubble-other);
+  border-right-color: var(--color-bubble-other);
+}
+
+/* 位置卡片：name + address text block, static mini-map below. */
+.loc-card__name {
+  padding: 8px 12px 0;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loc-card__addr {
+  padding: 1px 12px 6px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loc-card__map {
+  height: 90px;
+  line-height: 0;
+}
+
+/* 名片：avatar + name, hairline, footer. */
+.contact-card__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+}
+.contact-card__lines {
+  min-width: 0;
+}
+.contact-card__name {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.contact-card__wxid {
+  margin-top: 2px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.contact-card__footer,
+.file-card__footer {
+  margin: 0 12px;
+  padding: 5px 0 6px;
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+/* 文件卡片：name/size left, doc icon right. */
+.file-card__main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+}
+.file-card__lines {
+  flex: 1;
+  min-width: 0;
+}
+.file-card__name {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.file-card__size {
+  margin-top: 4px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.file-card__icon {
+  position: relative;
+  flex: none;
+  line-height: 0;
+}
+.file-card__ext {
+  position: absolute;
+  left: 0;
+  right: 4px;
+  bottom: 7px;
+  text-align: center;
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+/* 链接分享卡：title, then summary + thumb row. */
+.link-card {
+  padding: 10px 12px;
+}
+.link-card__title {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.link-card__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.link-card__summary {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.link-card__thumb {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  background: var(--color-page-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 表情游戏：bare like a sticker — no bubble, just the face. */
+.msg-game {
+  font-size: 52px;
+  line-height: 1.05;
+}
+.msg-game svg {
+  display: block;
+}
+
+/* Emoji panel game row (dice / rock-paper-scissors senders). */
+.emoji-games {
+  display: flex;
+  gap: 14px;
+  padding: 10px 14px 4px;
+}
+.emoji-games__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: var(--color-cell-bg);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.emoji-games__item:active {
+  background: var(--color-cell-bg-pressed);
+}
+.emoji-games__glyph {
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+/* The emoji panel gained a games row — the whole panel scrolls if cramped. */
+.emoji-panel-scroll {
+  height: 100%;
+  overflow-y: auto;
+}

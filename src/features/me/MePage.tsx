@@ -147,6 +147,7 @@ export function MePage() {
                   else if (e.key === 'service') navigate('/wallet');
                   else if (e.key === 'album') navigate('/moments');
                   else if (e.key === 'report') navigate('/report');
+                  else if (e.key === 'fav') navigate('/favorites');
                   else showToast('暂未开放');
                 }}
               >

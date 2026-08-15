@@ -131,7 +131,24 @@ export const messages = sqliteTable(
     senderId: text('sender_id').notNull(), // contactId; 'self' for the user
     type: text('type', {
       // 'merged' (M-I6): a 合并转发 card — meta carries the copied lines.
-      enum: ['text', 'image', 'voice', 'sticker', 'rp', 'transfer', 'call', 'system', 'merged'],
+      // M-I13: 'location' | 'contact_card' | 'file' | 'link' cards (meta carries
+      // the card payload) and 'game' (dice / rock-paper-scissors, seeded result).
+      enum: [
+        'text',
+        'image',
+        'voice',
+        'sticker',
+        'rp',
+        'transfer',
+        'call',
+        'system',
+        'merged',
+        'location',
+        'contact_card',
+        'file',
+        'link',
+        'game',
+      ],
     }).notNull(),
     content: text('content'), // text body / caption / transcript
     metaJson: text('meta_json'), // type-specific: {w,h,thumbRef} | {duration,voiceId} | ...

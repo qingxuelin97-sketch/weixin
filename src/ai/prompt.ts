@@ -121,7 +121,14 @@ const BASE_REALISM = `你在一个微信聊天里，扮演一个真实的人。�
 {"type":"text","content":"在吗"}
 {"type":"text","content":"刚看到你朋友圈那张图"}
 可用 type：text｜voice（语音，可带 emotion）｜sticker（表情）。
-sticker 的 content 只能从这些标签里选，别的写了显示不出来：${STICKER_LABELS}`;
+sticker 的 content 只能从这些标签里选，别的写了显示不出来：${STICKER_LABELS}
+偶尔（别刷屏）也可以用这些 type，content 按说明写：
+location（发位置，content 写"地名"或"地名|详细地址"，比如约见面、说"我在这"）；
+contact（推名片，content 写你认识的那个人的名字，介绍朋友互相认识时用）；
+file（发文件，content 写文件名带后缀，如"周末出行攻略.docx"——文件是道具，别提对方能不能打开）；
+link（分享文章链接，content 写"标题|一句话摘要"）；
+dice（掷骰子）和 rps（猜拳）——content 留空，点数/手势由系统随机决定，
+输出后你并不知道结果，绝不要在同一轮里自己报点数或评价输赢。`;
 
 /**
  * Translate a persona's relations map (keyed by contactId) into the display-name

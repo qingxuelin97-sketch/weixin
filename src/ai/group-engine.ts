@@ -19,7 +19,9 @@ import { refreshConvState, convStateDirective } from './conv-state';
 import { collectTurnImages } from './vision-context';
 import { logError } from '../lib/errlog';
 import { selectFactsForInjection } from './memory';
-import { effectiveTier, voiceMeta, preferredRoute, type EngineHooks } from './engine';
+import { effectiveTier, voiceMeta, preferredRoute, cardResolver, type EngineHooks } from './engine';
+import { materializeBubble } from './bubble-materialize';
+import { gameDirective } from './game-react';
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
 import {
@@ -215,11 +217,17 @@ export async function sendGroupMessage(
       .filter((o) => o.bubbles.length > 0)
       .sort((a, b) => a.plan.priority - b.plan.priority);
 
+    // For `contact` bubbles (M-I13): the full contact list, read once per
+    // round, feeds the same name→card resolver the single chat uses.
+    const allContacts = await repo.getContacts();
+
     let firstPlayed = false;
     for (let i = 0; i < ordered.length; i++) {
       const { member, bubbles } = ordered[i];
       const persona = member.persona!;
-      for (const b of bubbles.slice(0, MAX_BUBBLES_PER_ACTOR)) {
+      const played = bubbles.slice(0, MAX_BUBBLES_PER_ACTOR);
+      for (let bi = 0; bi < played.length; bi++) {
+        const b = played[bi];
         // The slowest actor's real latency already elapsed inside Promise.all —
         // the very first played bubble only pays the remainder of its typing
         // delay (总等待 = max(真, 拟) 而非相加); the rest pace normally.
@@ -229,6 +237,29 @@ export async function sendGroupMessage(
         await sleep(delay, ctrl.signal);
         if (ctrl.signal.aborted) return;
         if (i === ordered.length - 1) hooks.setTyping(convId, false);
+        // M-I13 rich types go through the SAME materializer as the single
+        // chat. `at` is read once so a game's seed and its stored createdAt
+        // are the same number (rule #4: the throw replays identically).
+        const at = hooks.now();
+        const rich = materializeBubble(b, {
+          convId,
+          at,
+          index: bi,
+          resolveContact: cardResolver(allContacts, member.contactId),
+        });
+        if (rich) {
+          await hooks.appendMessage({
+            convId,
+            senderId: member.contactId,
+            type: rich.type,
+            content: rich.content,
+            ...(rich.meta ? { meta: rich.meta } : {}),
+            status: 'sent',
+            createdAt: at,
+          });
+          playMessageSound(hooks.now());
+          continue;
+        }
         await hooks.appendMessage({
           convId,
           senderId: member.contactId,
@@ -380,6 +411,10 @@ async function generateActorLines(
   const ownRecent = ownLines(recent, member.contactId);
   const habit = styleNote(ownRecent, persona.catchphrases);
   if (habit) system += `\n\n${habit}`;
+  // A live game at the tail (M-I13): same etiquette line as the single chat —
+  // in a group the thrower may be the user OR another member.
+  const gameLine = gameDirective(recent, member.contactId);
+  if (gameLine) system += `\n\n${gameLine}`;
   system += `\n\n# 本轮导演提示\n${direction}`;
 
   const size = promptStats(system);
@@ -578,13 +613,22 @@ export async function sendGroupProactiveMessage(
     );
     if (ctrl.signal.aborted || bubbles.length === 0) return;
 
-    // One line only — ambient chatter, not a monologue.
+    // One line only — ambient chatter, not a monologue. Rich types (a shared
+    // link, a thrown die) are legal ambient chatter too and go through the
+    // same materializer; seeded on the planned `stamp`, so backfill replays.
     const b = bubbles[0];
+    const rich = materializeBubble(b, {
+      convId: conv.id,
+      at: stamp,
+      index: 0,
+      resolveContact: cardResolver(await repo.getContacts(), speaker.contactId),
+    });
     await hooks.appendMessage({
       convId: conv.id,
       senderId: speaker.contactId,
-      type: b.type === 'sticker' ? 'sticker' : 'text',
-      content: b.content,
+      type: rich ? rich.type : b.type === 'sticker' ? 'sticker' : 'text',
+      content: rich ? rich.content : b.content,
+      ...(rich?.meta ? { meta: rich.meta } : {}),
       status: 'sent',
       createdAt: stamp,
     });

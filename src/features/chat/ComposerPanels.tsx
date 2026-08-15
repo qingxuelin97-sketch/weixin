@@ -1,4 +1,5 @@
 import type { ComposerMode } from './useComposerPanel';
+import type { GameKind } from '../../lib/game';
 
 // A small emoji set stands in for WeChat's yellow-face pack (V1 uses emoji mapping).
 const EMOJIS = [
@@ -28,6 +29,7 @@ export function ComposerPanels({
   onAction,
   onEmoji,
   onEmojiDelete,
+  onGame,
   disabledKeys,
 }: {
   mode: ComposerMode;
@@ -38,6 +40,8 @@ export function ComposerPanels({
   onEmoji?: (emoji: string) => void;
   /** Backspace key on the emoji panel. */
   onEmojiDelete?: () => void;
+  /** 表情游戏 (M-I13): a dice / rock-paper-scissors send from the emoji panel. */
+  onGame?: (game: GameKind) => void;
   /** + panel tiles rendered greyed-out (e.g. 'transfer' in a group chat). */
   disabledKeys?: string[];
 }) {
@@ -45,15 +49,36 @@ export function ComposerPanels({
   return (
     <div className="composer-panel" style={{ height }}>
       {mode === 'emoji' ? (
-        <div className="emoji-grid">
-          {EMOJIS.map((e, i) => (
-            <button key={i} className="emoji-grid__item" onClick={() => onEmoji?.(e)}>
-              {e}
+        <div className="emoji-panel-scroll">
+          <div className="emoji-grid">
+            {EMOJIS.map((e, i) => (
+              <button key={i} className="emoji-grid__item" onClick={() => onEmoji?.(e)}>
+                {e}
+              </button>
+            ))}
+            <button className="emoji-grid__item emoji-grid__del" aria-label="删除" onClick={() => onEmojiDelete?.()}>
+              ⌫
             </button>
-          ))}
-          <button className="emoji-grid__item emoji-grid__del" aria-label="删除" onClick={() => onEmojiDelete?.()}>
-            ⌫
-          </button>
+          </div>
+          {/* 表情游戏 (M-I13): the dice / 猜拳 "dynamic stickers". Tapping one
+              SENDS immediately — like WeChat, there is no draft state for a
+              throw, and the seeded result is fixed the moment it lands. */}
+          {onGame && (
+            <div className="emoji-games">
+              <button className="emoji-games__item" onClick={() => onGame('dice')}>
+                <span className="emoji-games__glyph" aria-hidden>
+                  🎲
+                </span>
+                掷骰子
+              </button>
+              <button className="emoji-games__item" onClick={() => onGame('rps')}>
+                <span className="emoji-games__glyph" aria-hidden>
+                  ✊
+                </span>
+                猜拳
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="plus-grid">
