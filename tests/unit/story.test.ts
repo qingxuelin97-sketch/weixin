@@ -479,7 +479,9 @@ describe('rollback cascades into memory and Moments', () => {
       expect(f.storySaveId).toBe(s.id);
     }
     for (const m of (await repo.getMoments()).filter((x) => x.storyTag)) {
-      expect(isFromLaterBeat(m.storyTag, 'demo', -1)).toBe(true);
+      // Since M-I7 the tag namespace is the RUN (save id), not the script id —
+      // two 周目 of the same script must never find each other's rows.
+      expect(isFromLaterBeat(m.storyTag, s.id, -1)).toBe(true);
     }
   });
 });

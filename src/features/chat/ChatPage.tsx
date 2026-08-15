@@ -513,7 +513,10 @@ export function ChatPage() {
           </span>
           <button
             className="group-announce__action"
-            onClick={() => navigate('/story')}
+            // Straight to THIS run's dashboard (M-I7) — the banner's job is
+            // "something is happening here", and the run page is where 继续/
+            // 回滚/存档 all live now, not the library list.
+            onClick={() => navigate(`/story/run/${story.id}`)}
           >
             {story.stalledAt ? '去处理' : '查看'}
           </button>

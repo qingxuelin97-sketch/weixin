@@ -310,6 +310,32 @@ export function parseWhen(when: string): When {
 }
 
 /**
+ * A trigger condition in words a person can read (M-I7).
+ *
+ * The 分幕 browser and the graph inspector show a beat's exits; raw
+ * `expr:vars.trust >= 2` reads like source code to the person deciding whether
+ * to take a branch back. This strips the machinery without changing meaning:
+ * `vars.` vanishes, `llm:` becomes "由 GM 判断", an unprefixed condition is
+ * named as the authoring error it is (it will never fire — see
+ * `evaluateTriggers`).
+ */
+export function describeWhen(when: string): string {
+  const w = parseWhen(when);
+  switch (w.kind) {
+    case 'expr':
+      return w.source
+        .replace(/vars\./g, '')
+        .replace(/==/g, '=')
+        .replace(/\s*&&\s*/g, ' 且 ')
+        .replace(/\s*\|\|\s*/g, ' 或 ');
+    case 'llm':
+      return `由 GM 判断：${w.prompt}`;
+    default:
+      return `（无效条件，永不触发：${w.source}）`;
+  }
+}
+
+/**
  * Evaluate an `expr:` condition.
  *
  * A DELIBERATELY tiny language — comparisons and boolean combinations over

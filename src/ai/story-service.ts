@@ -11,10 +11,11 @@
 import { enqueue } from './scheduler';
 import { repo } from '../db/repo';
 import type { ContactVM, MemoryFactVM, MomentVM } from '../data/types';
-import { getScript, activeSaveFor, putSave, planBeat, advance, applyTrigger, materializeEffects, endRun, type StorySaveRow } from './story-gm';
+import { getScript, activeSaveFor, putSave, planBeat, advance, applyTrigger, materializeEffects, endRun, getSave, clearStall, type StorySaveRow } from './story-gm';
 import type { Trigger } from './story-script';
 import { BUILTIN_SCRIPTS } from './story-builtin';
 import { saveScript, listScripts } from './story-gm';
+import { beginStoryStamp, endStoryStamp } from './story-stamp';
 import { logError } from '../lib/errlog';
 
 /** How long between beats. Slow enough to read, fast enough to feel alive. */
@@ -129,6 +130,30 @@ export async function chainNextBeat(
   await scheduleNextBeat(save, now, tick + 1);
 }
 
+/** Newest message id in a conversation — the rollback watermark. 0 when empty. */
+export async function latestMessageId(convId: string): Promise<number> {
+  const rows = await repo.getMessages(convId, { limit: 1 });
+  return rows.at(-1)?.id ?? 0;
+}
+
+/**
+ * Resume a paused (stalled) run: clear the strike state and open a fresh tick
+ * chain (M-I7 — the STALL_NOTICE has promised "可在剧情页继续" since M-G0,
+ * and until now the story page had no button that did it).
+ *
+ * The tick is keyed on the resume moment. Safe against the `enqueue` upsert
+ * trap: a stalled run queued NO successor (`chainNextBeat` refuses while
+ * stalled), so there is no pending row this id could revive.
+ */
+export async function resumeRun(saveId: string, now: number): Promise<StorySaveRow | undefined> {
+  const save = await getSave(saveId);
+  if (!save || !save.isActive) return undefined;
+  const cleared = clearStall(save, now);
+  await putSave(cleared);
+  await scheduleNextBeat(cleared, now, now);
+  return cleared;
+}
+
 /**
  * One beat. The successor is already queued by `chainNextBeat` before this
  * runs, so throwing here pauses the story rather than ending it: the next tick
@@ -159,102 +184,119 @@ export async function runStoryBeat(
 
   const now = hooks.now();
 
-  // Narration first, as a grey system line — the story's own voice, visibly
-  // distinct from anything a character says.
-  //
-  // `stallsOf(save) === 0` gates it to the FIRST attempt at this beat. Retries
-  // re-enter with the same unadvanced save, so without the gate a flaky night
-  // would print the same narration line once per retry.
-  if (plan.narrate && save.turnsInNode === 0 && gm.stallsOf(save) === 0) {
-    await hooks.appendMessage({
-      convId: save.convId,
-      senderId: 'system',
-      type: 'system',
-      content: plan.narrate,
-      status: 'sent',
-      createdAt: now,
-    });
-  }
-
+  // Every message this beat causes — narration, the actors' lines out of
+  // `playBeat`, the stall/ending notices, and the user's own replies while the
+  // scene plays — carries the run's (scriptId, seq) tag. The columns waited
+  // since M1 for a writer; the stamp closes in `finally` so a thrown beat can
+  // never leave the conversation stamping ordinary chat forever.
+  beginStoryStamp(save.convId, { saveId: save.id, scriptId: save.scriptId, seq: save.seq });
   try {
-    await hooks.playBeat(save.convId, plan.directives, plan.goal);
-  } catch (e) {
-    // The successor tick is already queued (chain-before-work), so this is a
-    // retry, not a death — up to MAX_STALLS of them.
-    const stalls = gm.stallsOf(save) + 1;
-    const paused = stalls >= MAX_STALLS;
-    await putSave({
-      ...save,
-      stalls,
-      ...(paused ? { stalledAt: hooks.now() } : {}),
-      updatedAt: hooks.now(),
-    });
-    if (paused) {
+    // Narration first, as a grey system line — the story's own voice, visibly
+    // distinct from anything a character says.
+    //
+    // `stallsOf(save) === 0` gates it to the FIRST attempt at this beat. Retries
+    // re-enter with the same unadvanced save, so without the gate a flaky night
+    // would print the same narration line once per retry.
+    if (plan.narrate && save.turnsInNode === 0 && gm.stallsOf(save) === 0) {
       await hooks.appendMessage({
         convId: save.convId,
         senderId: 'system',
         type: 'system',
-        content: STALL_NOTICE,
+        content: plan.narrate,
+        status: 'sent',
+        createdAt: now,
+      });
+    }
+
+    try {
+      await hooks.playBeat(save.convId, plan.directives, plan.goal);
+    } catch (e) {
+      // The successor tick is already queued (chain-before-work), so this is a
+      // retry, not a death — up to MAX_STALLS of them.
+      const stalls = gm.stallsOf(save) + 1;
+      const paused = stalls >= MAX_STALLS;
+      await putSave({
+        ...save,
+        stalls,
+        ...(paused ? { stalledAt: hooks.now() } : {}),
+        updatedAt: hooks.now(),
+      });
+      if (paused) {
+        await hooks.appendMessage({
+          convId: save.convId,
+          senderId: 'system',
+          type: 'system',
+          content: STALL_NOTICE,
+          status: 'sent',
+          createdAt: hooks.now(),
+        });
+      }
+      // Rethrow so the scheduler's error sink logs it: a story that quietly
+      // stops is the exact failure mode this whole change exists to kill.
+      throw e;
+    }
+
+    if (plan.ending) {
+      await hooks.appendMessage({
+        convId: save.convId,
+        senderId: 'system',
+        type: 'system',
+        content: `【剧情结束：${script.title}】`,
         status: 'sent',
         createdAt: hooks.now(),
       });
+      // Record WHICH ending — the结局画廊 unlocks from this (M-I7).
+      await endRun(save, hooks.now(), plan.node.id);
+      return { finished: true };
     }
-    // Rethrow so the scheduler's error sink logs it: a story that quietly
-    // stops is the exact failure mode this whole change exists to kill.
-    throw e;
-  }
 
-  if (plan.ending) {
-    await hooks.appendMessage({
-      convId: save.convId,
-      senderId: 'system',
-      type: 'system',
-      content: `【剧情结束：${script.title}】`,
-      status: 'sent',
-      createdAt: hooks.now(),
+    // The transcript watermark for the snapshot a move takes: the newest
+    // message id now that this beat's lines are on screen. Rolling back to
+    // this beat later restores the conversation to exactly this point —
+    // scenes after it are trimmed, this scene's dialogue survives.
+    const msgCursor = await latestMessageId(save.convId);
+
+    // Advance the graph and materialize whatever the trigger caused.
+    let result = advance(script, save, hooks.now(), msgCursor);
+
+    // The `llm:` track. `advance` is pure, so it can only hand back the soft
+    // conditions it could not judge; consuming them is this seam's job. Until
+    // M-G0 nobody consumed `pending` at all, which made every `llm:` edge a
+    // silently dropped one and left such beats to time out.
+    //
+    // Only reached when no local `expr:` fired — deterministic conditions are
+    // never second-guessed by a model, and the common beat still costs 0 tokens.
+    if (!result.moved && result.pending.length > 0 && hooks.judgeTriggers) {
+      let picked: Trigger | undefined;
+      try {
+        picked = await hooks.judgeTriggers(save.convId, plan.goal, result.pending);
+      } catch (e) {
+        // A failed judgement is "not yet", not a dead story: the node's own
+        // `timeout` is the exit the author already wrote for this case.
+        logError('story.judge', e);
+      }
+      if (picked) {
+        // Apply to the ORIGINAL save, not the turn-incremented one `advance`
+        // returned — moving resets `turnsInNode` anyway, and counting a turn the
+        // story did not spend would bring the timeout forward by one beat.
+        const stepped = applyTrigger(save, picked, hooks.now(), msgCursor);
+        result = { save: stepped.save, fired: picked, pending: [], moved: true, effects: stepped.effects };
+      }
+    }
+
+    await materializeEffects(result.save, result.effects, result.save.bindings, hooks.now(), {
+      putMemory: (f: MemoryFactVM) => repo.putMemory(f),
+      putMoment: (m: MomentVM) => repo.putMoment(m),
     });
-    await endRun(save, hooks.now());
-    return { finished: true };
+    // A completed beat clears the strike count — MAX_STALLS counts CONSECUTIVE
+    // failures, so one bad night mid-story must not carry over into the next.
+    await putSave({ ...result.save, stalls: 0 });
+    // NOTE: the successor tick is queued by `chainNextBeat`, not here. Scheduling
+    // it at the end of the work is what made a single LLM failure terminal.
+    return { finished: false };
+  } finally {
+    endStoryStamp(save.convId);
   }
-
-  // Advance the graph and materialize whatever the trigger caused.
-  let result = advance(script, save, hooks.now());
-
-  // The `llm:` track. `advance` is pure, so it can only hand back the soft
-  // conditions it could not judge; consuming them is this seam's job. Until
-  // M-G0 nobody consumed `pending` at all, which made every `llm:` edge a
-  // silently dropped one and left such beats to time out.
-  //
-  // Only reached when no local `expr:` fired — deterministic conditions are
-  // never second-guessed by a model, and the common beat still costs 0 tokens.
-  if (!result.moved && result.pending.length > 0 && hooks.judgeTriggers) {
-    let picked: Trigger | undefined;
-    try {
-      picked = await hooks.judgeTriggers(save.convId, plan.goal, result.pending);
-    } catch (e) {
-      // A failed judgement is "not yet", not a dead story: the node's own
-      // `timeout` is the exit the author already wrote for this case.
-      logError('story.judge', e);
-    }
-    if (picked) {
-      // Apply to the ORIGINAL save, not the turn-incremented one `advance`
-      // returned — moving resets `turnsInNode` anyway, and counting a turn the
-      // story did not spend would bring the timeout forward by one beat.
-      const stepped = applyTrigger(save, picked, hooks.now());
-      result = { save: stepped.save, fired: picked, pending: [], moved: true, effects: stepped.effects };
-    }
-  }
-
-  await materializeEffects(result.save, result.effects, result.save.bindings, hooks.now(), {
-    putMemory: (f: MemoryFactVM) => repo.putMemory(f),
-    putMoment: (m: MomentVM) => repo.putMoment(m),
-  });
-  // A completed beat clears the strike count — MAX_STALLS counts CONSECUTIVE
-  // failures, so one bad night mid-story must not carry over into the next.
-  await putSave({ ...result.save, stalls: 0 });
-  // NOTE: the successor tick is queued by `chainNextBeat`, not here. Scheduling
-  // it at the end of the work is what made a single LLM failure terminal.
-  return { finished: false };
 }
 
 /** Is a story currently playing in this conversation? Used to gate the UI. */

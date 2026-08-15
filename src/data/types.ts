@@ -46,6 +46,16 @@ export interface MessageVM {
   status: 'sending' | 'sent' | 'failed';
   isRecalled?: boolean;
   createdAt: number;
+  /**
+   * Story mode (V3): which script's run produced this message. The schema
+   * columns (`story_script_id`, `story_seq`) existed since M1 with zero
+   * writers; M-I7 finally writes them — every message appended while a story
+   * beat is playing carries the run's script id and the beat's seq, so a
+   * transcript line can be traced to the exact幕 that caused it.
+   */
+  storyScriptId?: string;
+  /** Beat counter at the moment this message landed. See storyScriptId. */
+  storySeq?: number;
 }
 
 export interface ConversationVM {

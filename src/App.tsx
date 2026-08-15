@@ -29,7 +29,9 @@ import { EnvDiagPage } from './features/settings/EnvDiagPage';
 import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
 import { WorldbookPage } from './features/settings/WorldbookPage';
-import { StoryPage } from './features/settings/StoryPage';
+import { StoryPage } from './features/story/StoryPage';
+import { ScriptDetailPage } from './features/story/ScriptDetailPage';
+import { StoryRunPage } from './features/story/StoryRunPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
 import { NewContactPage } from './features/contacts/NewContactPage';
 import { PersonaGeneratePage } from './features/contacts/PersonaGeneratePage';
@@ -127,6 +129,8 @@ export function App() {
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
               <Route path="/settings/worldbook" element={<Push><WorldbookPage /></Push>} />
               <Route path="/story" element={<Push><StoryPage /></Push>} />
+              <Route path="/story/script/:scriptId" element={<Push><ScriptDetailPage /></Push>} />
+              <Route path="/story/run/:saveId" element={<Push><StoryRunPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
               <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />
               <Route path="/contact-new/ai" element={<Push><PersonaGeneratePage /></Push>} />

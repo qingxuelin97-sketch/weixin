@@ -1,0 +1,633 @@
+/**
+ * Story mode V3 (M-I7): library, script detail, run dashboard, casting sheet.
+ *
+ * Everything colored goes through tokens.css semantic variables — including
+ * every SVG stroke/fill in the graph view (the hardcoded-color check reads
+ * TSX too, so the graph earns no exemption).
+ */
+
+.story {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0 24px;
+}
+
+/* ---- script rows on the library page ---- */
+.story-script {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--color-cell-bg);
+}
+.story-script:active {
+  background: var(--color-cell-bg-pressed);
+}
+.story-script + .story-script::after {
+  content: none;
+}
+.story-script__body {
+  flex: 1;
+  min-width: 0;
+}
+.story-script__title {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.story-script__meta {
+  margin-top: 2px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.story-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: var(--fs-badge);
+  color: var(--color-text-secondary);
+  background: var(--color-page-bg);
+  flex-shrink: 0;
+}
+.story-chip--adult {
+  color: var(--color-badge);
+  background: var(--color-system-msg-bg);
+}
+.story-chip--live {
+  color: var(--color-brand);
+  background: var(--color-system-msg-bg);
+}
+.story-chip--paused {
+  color: var(--color-money);
+  background: var(--color-system-msg-bg);
+}
+
+/* ---- run rows (library + script detail) ---- */
+.story-run-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--color-cell-bg);
+}
+.story-run-row:active {
+  background: var(--color-cell-bg-pressed);
+}
+.story-run-row__body {
+  flex: 1;
+  min-width: 0;
+}
+.story-run-row__title {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.story-run-row__meta {
+  margin-top: 2px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+/* ---- the SVG graph ---- */
+.sgraph {
+  overflow-x: auto;
+  background: var(--color-cell-bg);
+  padding: 4px 0;
+  /* Momentum scroll on Android WebView. */
+  -webkit-overflow-scrolling: touch;
+}
+.sgraph svg {
+  display: block;
+}
+.sgraph__edge {
+  fill: none;
+  stroke: var(--color-hairline);
+  stroke-width: 1.5;
+}
+.sgraph__edge--timeout {
+  stroke-dasharray: 4 3;
+  stroke: var(--color-text-placeholder);
+}
+.sgraph__edge--walked {
+  stroke: var(--color-brand);
+  stroke-width: 2;
+}
+.sgraph__arrow {
+  fill: var(--color-hairline);
+}
+.sgraph__arrow--walked {
+  fill: var(--color-brand);
+}
+.sgraph__node rect {
+  fill: var(--color-page-bg);
+  stroke: var(--color-hairline);
+  stroke-width: 1;
+}
+.sgraph__node text {
+  fill: var(--color-text-primary);
+  font-size: 11px;
+}
+.sgraph__node--visited rect {
+  stroke: var(--color-brand);
+  fill: var(--color-cell-bg);
+}
+.sgraph__node--current rect {
+  fill: var(--color-brand);
+  stroke: var(--color-brand);
+}
+.sgraph__node--current text {
+  fill: var(--color-text-on-brand);
+}
+.sgraph__node--selected rect {
+  stroke: var(--color-link);
+  stroke-width: 2;
+}
+.sgraph__node--ending rect {
+  stroke: var(--color-money);
+}
+.sgraph__node--ending.sgraph__node--current rect {
+  fill: var(--color-money);
+  stroke: var(--color-money);
+}
+.sgraph__flag {
+  fill: var(--color-money);
+  font-size: 9px;
+}
+.sgraph__adult {
+  fill: var(--color-badge);
+  font-size: 9px;
+}
+.sgraph__legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 16px 10px;
+  font-size: var(--fs-badge);
+  color: var(--color-text-secondary);
+  background: var(--color-cell-bg);
+}
+.sgraph__legend i {
+  display: inline-block;
+  width: 14px;
+  height: 0;
+  border-top: 2px solid var(--color-hairline);
+  vertical-align: middle;
+  margin-right: 4px;
+  font-style: normal;
+}
+.sgraph__legend i.dash {
+  border-top-style: dashed;
+}
+.sgraph__legend i.walked {
+  border-top-color: var(--color-brand);
+}
+
+/* Node detail line under the graph (tap a node to inspect it). */
+.sgraph-detail {
+  padding: 10px 16px 12px;
+  background: var(--color-cell-bg);
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.sgraph-detail__tag {
+  margin-right: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--fs-small-gray);
+}
+
+/* ---- run page ---- */
+.run-head {
+  background: var(--color-cell-bg);
+  padding: 14px 16px;
+}
+.run-head__title {
+  font-size: var(--fs-cell-title);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.run-head__sub {
+  margin-top: 4px;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-secondary);
+  line-height: var(--lh-body);
+}
+.run-head__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.run-btn {
+  flex: 1;
+  height: 36px;
+  border: none;
+  border-radius: 6px;
+  font-size: var(--fs-cell-sub);
+  background: var(--color-page-bg);
+  color: var(--color-text-primary);
+}
+.run-btn:active {
+  background: var(--color-page-pressed);
+}
+.run-btn--primary {
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+.run-btn--primary:active {
+  background: var(--color-brand-pressed);
+}
+.run-btn--danger {
+  color: var(--color-badge);
+}
+
+/* ---- timeline (幕 list) ---- */
+.timeline {
+  background: var(--color-cell-bg);
+}
+.timeline__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  position: relative;
+}
+.timeline__item + .timeline__item::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 0;
+  top: 0;
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.timeline__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-hairline);
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.timeline__item--current .timeline__dot {
+  background: var(--color-brand);
+}
+.timeline__body {
+  flex: 1;
+  min-width: 0;
+}
+.timeline__title {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.timeline__meta {
+  margin-top: 2px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+/* ---- slots + gallery ---- */
+.slot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--color-cell-bg);
+}
+.slot-row + .slot-row {
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.slot-row__body {
+  flex: 1;
+  min-width: 0;
+}
+.slot-row__name {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slot-row__meta {
+  margin-top: 2px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+.gallery {
+  background: var(--color-cell-bg);
+}
+.gallery__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+.gallery__item + .gallery__item {
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.gallery__medal {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-badge);
+  background: var(--color-page-bg);
+  color: var(--color-text-placeholder);
+  flex-shrink: 0;
+}
+.gallery__item--unlocked .gallery__medal {
+  background: var(--color-money);
+  color: var(--color-text-on-brand);
+}
+.gallery__body {
+  flex: 1;
+  min-width: 0;
+}
+.gallery__goal {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.gallery__item--locked .gallery__goal {
+  color: var(--color-text-placeholder);
+}
+.gallery__meta {
+  margin-top: 2px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+/* ---- 班底 grid (run page cast board) ---- */
+.cast-board {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 12px 12px 8px;
+  background: var(--color-cell-bg);
+}
+.cast-board__cell {
+  width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 2px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+}
+.cast-board__cell:active {
+  background: var(--color-cell-bg-pressed);
+}
+.cast-board__hole {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--avatar-radius);
+  background: var(--color-page-bg);
+  color: var(--color-text-placeholder);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-cell-title);
+}
+.cast-board__name {
+  max-width: 100%;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cast-board__role {
+  max-width: 100%;
+  font-size: var(--fs-badge);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 剧情变量 chips (run page) ---- */
+.vars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--color-cell-bg);
+}
+.vars__chip {
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--color-page-bg);
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-primary);
+}
+
+/* ---- 这一轮的痕迹 (run page stats) ---- */
+.run-stats {
+  display: flex;
+  background: var(--color-cell-bg);
+  padding: 12px 8px;
+}
+.run-stats__cell {
+  flex: 1;
+  text-align: center;
+  min-width: 0;
+}
+.run-stats__num {
+  font-size: var(--fs-cell-title);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.run-stats__label {
+  margin-top: 2px;
+  font-size: var(--fs-badge);
+  color: var(--color-text-secondary);
+}
+.run-traces {
+  background: var(--color-cell-bg);
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  padding: 8px 16px 12px;
+}
+.run-traces__row {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-primary);
+  line-height: var(--lh-body);
+  padding: 3px 0;
+}
+.run-traces__who {
+  color: var(--color-text-secondary);
+  margin-right: 6px;
+}
+.run-traces__row--more {
+  color: var(--color-text-placeholder);
+}
+
+/* ---- 分幕 browser (script detail) ---- */
+.beats {
+  background: var(--color-cell-bg);
+}
+.beats__row {
+  padding: 10px 16px;
+}
+.beats__row + .beats__row {
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.beats__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.beats__id {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.beats__goal {
+  margin-top: 3px;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+  line-height: var(--lh-body);
+}
+.beats__exits {
+  margin-top: 4px;
+}
+.beats__exit {
+  font-size: var(--fs-small-gray);
+  color: var(--color-link);
+  line-height: var(--lh-body);
+}
+.beats__exit--timeout {
+  color: var(--color-text-secondary);
+}
+.beats__meta {
+  margin-top: 3px;
+  font-size: var(--fs-badge);
+  color: var(--color-text-placeholder);
+}
+
+/* ---- cast list on the script detail page ---- */
+.cast-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--color-cell-bg);
+}
+.cast-row + .cast-row {
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.cast-row__role {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.cast-row__hint {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+/* ---- casting sheet ---- */
+.casting {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 8px;
+}
+.casting__section-title {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+.casting__stage {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.casting__stage-item {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: var(--hairline-width) solid var(--color-hairline);
+  background: var(--color-cell-bg);
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.casting__stage-item--active {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+.casting__role {
+  padding: 8px 0;
+}
+.casting__role + .casting__role {
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.casting__role-name {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.casting__secret {
+  font-size: var(--fs-badge);
+  color: var(--color-text-secondary);
+}
+.casting__actors {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.casting__actor {
+  padding: 5px 10px;
+  border-radius: 14px;
+  border: var(--hairline-width) solid var(--color-hairline);
+  background: var(--color-cell-bg);
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-primary);
+}
+.casting__actor--picked {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+.casting__actor--taken {
+  color: var(--color-text-placeholder);
+}
+.casting__issues {
+  font-size: var(--fs-small-gray);
+  color: var(--color-badge);
+  line-height: var(--lh-body);
+}
+.casting__start {
+  width: 100%;
+  height: 44px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-title);
+}
+.casting__start:active {
+  background: var(--color-brand-pressed);
+}
+.casting__start:disabled {
+  opacity: 0.5;
+}
