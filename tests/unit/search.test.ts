@@ -6,6 +6,8 @@ import {
   excerpt,
   groupByKind,
   searchAll,
+  searchConversation,
+  searchConversationAll,
   DEEP_SCAN_LIMIT,
   type SearchInput,
 } from '../../src/lib/search';
@@ -322,5 +324,70 @@ describe('searchAll reaches history the store never loaded', () => {
     expect(asked).not.toContain('secret');
     expect(hits.every((h) => h.convId !== 'secret')).toBe(true);
     expect(hits.filter((h) => h.kind === 'message')).toHaveLength(1);
+  });
+});
+
+describe('searchConversation — 会话内搜索 (M-I6)', () => {
+  it('returns only message hits from the target conversation', () => {
+    const hits = searchConversation(base, 'conv_a', '雨');
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.kind === 'message' && h.convId === 'conv_a')).toBe(true);
+    // '雨' also matches contact 林小雨 and conv title — a scoped search must not
+    // surface either.
+    expect(hits.some((h) => h.kind === 'contact' || h.kind === 'conversation')).toBe(false);
+  });
+
+  it('does not leak other conversations even when they match', () => {
+    const hits = searchConversation(base, 'conv_a', '周末');
+    expect(hits).toEqual([]);
+  });
+
+  it('refuses a hidden conversation outright', () => {
+    const input: SearchInput = {
+      ...base,
+      conversations: [...base.conversations, conv('dm', '私信', { isHidden: true })],
+      messages: { ...base.messages, dm: [msg(9, 'dm', '秘密话题')] },
+    };
+    expect(searchConversation(input, 'dm', '秘密')).toEqual([]);
+  });
+
+  it('refuses an unknown conversation id', () => {
+    expect(searchConversation(base, 'nope', '雨')).toEqual([]);
+  });
+});
+
+describe('searchConversationAll — scoped deep pass', () => {
+  it('pages ONLY the target conversation', async () => {
+    const paged: string[] = [];
+    const deps = {
+      page: async (convId: string, beforeId: number | undefined, limit: number) => {
+        paged.push(convId);
+        void beforeId;
+        void limit;
+        return convId === 'conv_a' && beforeId === undefined
+          ? [msg(1, 'conv_a', '今天下雨了'), msg(2, 'conv_a', '记得带伞')]
+          : [];
+      },
+    };
+    const r = await searchConversationAll(base, 'conv_a', '伞', deps);
+    expect(r.hits.map((h) => h.id)).toEqual(['2']);
+    expect(new Set(paged)).toEqual(new Set(['conv_a']));
+  });
+
+  it('never even pages a hidden conversation', async () => {
+    const input: SearchInput = {
+      ...base,
+      conversations: [...base.conversations, conv('dm', '私信', { isHidden: true })],
+    };
+    const paged: string[] = [];
+    const deps = {
+      page: async (convId: string) => {
+        paged.push(convId);
+        return [];
+      },
+    };
+    const r = await searchConversationAll(input, 'dm', '秘密', deps);
+    expect(r.hits).toEqual([]);
+    expect(paged).toEqual([]);
   });
 });

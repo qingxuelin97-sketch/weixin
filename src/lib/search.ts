@@ -345,3 +345,51 @@ export async function searchAll(
 
   return { hits: [...shallow, ...deep].sort(byScore), truncated };
 }
+
+/* ==================================================================== */
+/* Conversation-scoped search (M-I6)                                     */
+/* ==================================================================== */
+
+/**
+ * Search inside ONE conversation — the ChatInfoPage「查找聊天记录」entry.
+ *
+ * Reuses `search()` on a scoped input rather than re-implementing matching, so
+ * scoring, excerpting and the recall rule stay in exactly one place. The hidden
+ * guard is re-stated here even though `search()` also enforces it: this
+ * function takes a convId directly, so it must refuse a hidden id on its own —
+ * a caller cannot be trusted to have checked, and the leak is irreversible.
+ */
+export function searchConversation(input: SearchInput, convId: string, query: string): SearchHit[] {
+  const conv = input.conversations.find((c) => c.id === convId);
+  if (!conv || conv.isHidden) return [];
+  const scoped: SearchInput = {
+    contacts: [],
+    conversations: [conv],
+    messages: { [convId]: input.messages[convId] ?? [] },
+    moments: [],
+  };
+  return search(scoped, query).filter((h) => h.kind === 'message');
+}
+
+/**
+ * Conversation-scoped deep pass: scans this one thread's full history through
+ * the same paging dependency `searchAll` uses, and nothing else — the other
+ * conversations are never even read.
+ */
+export async function searchConversationAll(
+  input: SearchInput,
+  convId: string,
+  query: string,
+  deps: DeepSearchDeps,
+): Promise<DeepSearchResult> {
+  const conv = input.conversations.find((c) => c.id === convId);
+  if (!conv || conv.isHidden) return { hits: [], truncated: false };
+  const scoped: SearchInput = {
+    contacts: [],
+    conversations: [conv],
+    messages: {},
+    moments: [],
+  };
+  const r = await searchAll(scoped, query, deps);
+  return { hits: r.hits.filter((h) => h.kind === 'message'), truncated: r.truncated };
+}

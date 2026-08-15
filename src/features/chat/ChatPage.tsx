@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   IconBack,
   IconMore,
@@ -347,6 +347,49 @@ export function ChatPage() {
     }
   };
 
+  // 搜索命中锚定 (M-I6): `?at=<msgId>` — a search hit lands here, pages history
+  // in until the target row exists, scrolls it to center and flashes it once.
+  // Keyed so re-renders don't re-run the jump, but a NEW hit in the same
+  // conversation does.
+  const [searchParams] = useSearchParams();
+  const atParam = searchParams.get('at');
+  const [flashId, setFlashId] = useState<number | null>(null);
+  const anchoredKey = useRef<string | null>(null);
+  useEffect(() => {
+    const at = atParam ? Number(atParam) : NaN;
+    if (!Number.isFinite(at) || !threadReady) return;
+    const key = `${convId}:${at}`;
+    if (anchoredKey.current === key) return;
+    anchoredKey.current = key;
+    let alive = true;
+    void (async () => {
+      // Page older history in until the target is present. Two stop rules
+      // besides success: the top of history, and an oldest-loaded row already
+      // older than the target — that means the message was deleted, and paging
+      // further would walk the whole thread for nothing.
+      for (let guard = 0; guard < 40; guard++) {
+        const list = useAppStore.getState().messagesFor(convId);
+        if (list.some((m) => m.id === at)) break;
+        if (list.length && list[0].id <= at) return;
+        pinToBottom.current = false;
+        const n = await loadOlderMessages(convId, 200);
+        if (!alive || n === 0) return;
+      }
+      if (!alive) return;
+      pinToBottom.current = false;
+      requestAnimationFrame(() => {
+        const el = scrollRef.current?.querySelector(`[data-msg-id="${at}"]`);
+        if (el) {
+          (el as HTMLElement).scrollIntoView({ block: 'center' });
+          setFlashId(at);
+        }
+      });
+    })().catch((e) => logError('chat.anchor', e));
+    return () => {
+      alive = false;
+    };
+  }, [convId, atParam, threadReady, loadOlderMessages]);
+
   // Is a story playing here? Re-checked as the transcript grows, which is also
   // when a run ends or pauses. Never throws into the page: an unreadable save
   // row means "no banner", not a blank chat.
@@ -607,7 +650,19 @@ export function ChatPage() {
             ) : (
               <div
                 key={row.msg.id}
-                className={selecting ? 'msg-selectable' : undefined}
+                data-msg-id={row.msg.id}
+                className={
+                  [selecting && 'msg-selectable', flashId === row.msg.id && 'msg-anchor-flash']
+                    .filter(Boolean)
+                    .join(' ') || undefined
+                }
+                onAnimationEnd={
+                  flashId === row.msg.id
+                    ? // Child animations (bubble entrances) bubble up too — only
+                      // the flash itself may clear the flag.
+                      (e) => e.animationName === 'msg-anchor-flash' && setFlashId(null)
+                    : undefined
+                }
                 onClickCapture={
                   selecting
                     ? (e) => {

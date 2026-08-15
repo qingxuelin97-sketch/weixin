@@ -427,7 +427,7 @@ export function ChatInfoPage() {
         <div className="settings__group">
           <div
             className="settings__row settings__row--divided"
-            onClick={() => navigate('/search')}
+            onClick={() => navigate(`/search?conv=${conv.id}`)}
           >
             <span className="settings__label">查找聊天记录</span>
             <span className="settings__chevron">›</span>

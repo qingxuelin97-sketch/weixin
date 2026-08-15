@@ -10,11 +10,19 @@
  * state to design around.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '../../store/appStore';
 import { Avatar } from '../../components/Avatar';
 import { IconBack, IconSearch } from '../../components/icons';
-import { search, searchAll, groupByKind, highlightParts, type SearchHit } from '../../lib/search';
+import {
+  search,
+  searchAll,
+  searchConversation,
+  searchConversationAll,
+  groupByKind,
+  highlightParts,
+  type SearchHit,
+} from '../../lib/search';
 import { momentTimestamp } from '../../lib/time';
 import { repo } from '../../db/repo';
 import { logError } from '../../lib/errlog';
@@ -41,6 +49,12 @@ export function SearchPage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
 
+  // 会话内搜索 (M-I6): `?conv=<id>` scopes everything to one thread. The
+  // ChatInfoPage「查找聊天记录」entry lands here; without the param this is the
+  // global search it always was.
+  const [params] = useSearchParams();
+  const scopeConvId = params.get('conv') ?? undefined;
+
   const contacts = useAppStore((s) => s.contacts);
   const conversations = useAppStore((s) => s.conversations);
   const messages = useAppStore((s) => s.messages);
@@ -49,15 +63,23 @@ export function SearchPage() {
   const contactById = useAppStore((s) => s.contactById);
   const now = useNow();
 
+  const scopeConv = scopeConvId
+    ? conversations.find((c) => c.id === scopeConvId && !c.isHidden)
+    : undefined;
+
   // Moments are loaded lazily elsewhere; searching them requires them present.
+  // A scoped search never touches Moments, so it skips the load.
   useEffect(() => {
-    void loadMoments();
-  }, [loadMoments]);
+    if (!scopeConvId) void loadMoments();
+  }, [loadMoments, scopeConvId]);
 
   // The in-memory pass renders instantly off what the store already holds.
   const shallow = useMemo(
-    () => search({ contacts, conversations, messages, moments }, query),
-    [contacts, conversations, messages, moments, query],
+    () =>
+      scopeConvId
+        ? searchConversation({ contacts, conversations, messages, moments }, scopeConvId, query)
+        : search({ contacts, conversations, messages, moments }, query),
+    [contacts, conversations, messages, moments, query, scopeConvId],
   );
 
   // …then the database pass replaces it, reaching history hydration never
@@ -74,10 +96,14 @@ export function SearchPage() {
       return;
     }
     let alive = true;
-    void searchAll(
-      { contacts, conversations, messages, moments },
-      q,
-      { page: (convId, beforeId, limit) => repo.getMessages(convId, { beforeId, limit }) },
+    const deps = {
+      page: (convId: string, beforeId: number | undefined, limit: number) =>
+        repo.getMessages(convId, { beforeId, limit }),
+    };
+    const input = { contacts, conversations, messages, moments };
+    void (scopeConvId
+      ? searchConversationAll(input, scopeConvId, q, deps)
+      : searchAll(input, q, deps)
     )
       .then((r) => {
         // Ignore a result whose query the user has already typed past.
@@ -87,7 +113,7 @@ export function SearchPage() {
     return () => {
       alive = false;
     };
-  }, [contacts, conversations, messages, moments, query]);
+  }, [contacts, conversations, messages, moments, query, scopeConvId]);
 
   const hits = deep && deep.query === query.trim() ? deep.hits : shallow;
   const groups = useMemo(() => groupByKind(hits), [hits]);
@@ -104,10 +130,9 @@ export function SearchPage() {
         navigate(`/chat/${h.id}`);
         break;
       case 'message':
-        // Deep-linking to a specific message needs anchored scrolling in the
-        // chat view; until that exists, open the conversation rather than
-        // pretend to jump and land somewhere arbitrary.
-        navigate(`/chat/${h.convId}`);
+        // Anchored jump (M-I6): ChatPage pages history in until the target
+        // message exists, scrolls it to center and flashes it.
+        navigate(`/chat/${h.convId}?at=${h.id}`);
         break;
       case 'moment':
         navigate('/moments');
@@ -143,7 +168,7 @@ export function SearchPage() {
           <input
             autoFocus
             value={query}
-            placeholder="搜索"
+            placeholder={scopeConv ? `在「${scopeConv.title}」中搜索` : '搜索'}
             aria-label="搜索"
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -157,7 +182,9 @@ export function SearchPage() {
 
       <div className="search__body">
         {!query.trim() ? (
-          <p className="search__tip">搜索聊天记录、联系人、朋友圈</p>
+          <p className="search__tip">
+            {scopeConv ? '搜索本会话的聊天记录' : '搜索聊天记录、联系人、朋友圈'}
+          </p>
         ) : groups.length === 0 ? (
           <p className="search__tip">
             没有找到「<span className="search__hit">{query.trim()}</span>」相关内容

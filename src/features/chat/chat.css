@@ -755,3 +755,19 @@
   color: var(--color-text-secondary);
   font-size: var(--fs-cell-title);
 }
+
+/* Search-hit anchor flash (M-I6): one pulse marking the row a search jump
+   landed on. Cleared via onAnimationEnd, so it can replay for a new hit. */
+.msg-anchor-flash {
+  border-radius: 8px;
+  animation: msg-anchor-flash 1.2s ease-out 1;
+}
+@keyframes msg-anchor-flash {
+  0%,
+  55% {
+    background: var(--color-page-pressed);
+  }
+  100% {
+    background: transparent;
+  }
+}
