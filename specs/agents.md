@@ -183,3 +183,26 @@ DM = 正式 `conversations` 行，id = `dm_<a>_<b>`（a/b 按字典序，保证�
 - **新状态一律 settings 行**，不动 `DB_VERSION`（v6 已含 story 两表与 `byFireAt` 索引）。
 - **prompt 六段层序一字不动**，新内容只追加在 scene 之后（前缀缓存）。
 - 尾层每多一句就稀释一分人设：立场/生活线/对话状态在没话说时**一律输出空串**。
+
+## M-I3 · 社交织体
+
+四个新 kind，全部登记真源 + handler（wiring 测试自动看守）：
+
+- **joint_plan**：AI↔AI 私信完成后种子化孵化（`maybeJointPlan`，纯函数），20-44h
+  后物化为两条互相咬合、两种声线的朋友圈。成本闸 `JOINT_PLAN_LLM_CALLS = 1`
+  （一次调用写两侧），单测锁死。
+- **agent_forward**：AI 把**用户可见会话**里的话原文带进群（模板包引号，零生成）。
+  铁律：隐藏私信内容永不原文外传——`canForwardFrom` 排期时查一次、fire 时再查
+  一次（屏幕上的东西收不回来）；发起人已退群则静默。
+- **group_event**：聚会三段弧 propose→rsvp→aftermath，`registerChainedHandler`
+  （先续链后干活）。每相位 ≤1 次 LLM 调用；RSVP 是一次派发调用写出全部接话
+  （名字白名单、每人一条、上限 `RSVP_MAX`）。前台 pass 每群每周种子化掷骰 +
+  stable id + `actionExists` 守卫（enqueue 按 id upsert 的坑）。
+- **agent_invite**：有两个共同 AI 好友、且三人没有共同群时，每周种子化低概率
+  在 1:1 里提议拉群；建议名单进 `meta.suggestGroup`（I13 卡片化）。建群永远
+  是用户的动作，AI 只提议。
+
+孵化点：joint_plan/agent_forward 挂在 `handleAgentDm` 成功之后（stable id 上插，
+重放不复制）；group_event/agent_invite 由前台 pass 播种。规划模块
+（social-plans/agent-forward/group-events/agent-invite）全部禁 Date.now/
+Math.random（铁律 4，源码级测试）。

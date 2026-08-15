@@ -47,6 +47,7 @@ import {
   type JointKind,
 } from './social-plans';
 import { canForwardFrom, maybeForward, forwardLine } from './agent-forward';
+import { inviteLine } from './agent-invite';
 import {
   nextPhase,
   phaseDelayMs,
@@ -631,6 +632,38 @@ export async function handleGroupEvent(
       createdAt: at,
     });
   }
+}
+
+/**
+ * A group proposal fires: she suggests the trio in her own 1:1. The suggested
+ * roster rides in `meta.suggestGroup`, so a later UI (I13's card types) can
+ * make it tappable; the message itself is already a complete experience.
+ */
+export async function handleAgentInvite(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const contactId = str(payload.contactId);
+  const f1 = str(payload.friend1);
+  const f2 = str(payload.friend2);
+  if (!contactId || !f1 || !f2) return;
+  // Everyone involved must still exist — deletion since planning drops it.
+  if (!d.contactById(contactId) || !d.contactById(f1) || !d.contactById(f2)) return;
+  const conv = d.visibleConvWithUser(contactId);
+  if (!conv) return;
+  const nameOf = (id: string) => {
+    const c = d.contactById(id);
+    return c?.remark ?? c?.name ?? id;
+  };
+  await d.hooks.appendMessage({
+    convId: conv.id,
+    senderId: contactId,
+    type: 'text',
+    content: inviteLine(nameOf(f1), nameOf(f2)),
+    status: 'sent',
+    createdAt: optNum(payload.at) ?? d.now(),
+    meta: { suggestGroup: [contactId, f1, f2] },
+  });
 }
 
 /**

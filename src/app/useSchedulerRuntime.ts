@@ -54,6 +54,7 @@ import {
   handleAiCall,
   handleJointPlan,
   handleAgentForward,
+  handleAgentInvite,
   handleGroupEvent,
   chainGroupEvent as chainGroupEventStep,
   chainHeartbeat as chainHeartbeatStep,
@@ -70,6 +71,7 @@ import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
 import { getGroupCfg, activityMultiplier } from '../ai/group-config';
 import { maybeGroupEvent } from '../ai/group-events';
+import { maybeGroupInvite } from '../ai/agent-invite';
 import { repo } from '../db/repo';
 import { useAppStore } from '../store/appStore';
 
@@ -207,6 +209,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
     // Social fabric (M-I3): hatched by a completed agent DM, fired here.
     registerHandler('joint_plan', (p) => handleJointPlan(deps, p));
     registerHandler('agent_forward', (p) => handleAgentForward(deps, p));
+    registerHandler('agent_invite', (p) => handleAgentInvite(deps, p));
 
     // Story mode's beat (M-E5, chained in M-G0).
     //
@@ -498,6 +501,37 @@ async function runForegroundPass(): Promise<void> {
       });
     } catch (e) {
       logError('gevt.schedule', e);
+    }
+  }
+
+  // 1.6) Group proposals (M-I3): a friend with two mutual AI friends who do
+  // not already share a room with her occasionally suggests forming one.
+  // Same discipline as events: seeded weekly, stable id, actionExists guard.
+  const groupRosters = s.conversations
+    .filter((c) => c.type === 'group' && !c.isHidden)
+    .map((c) => c.memberIds ?? []);
+  for (const c of singles) {
+    try {
+      const relationAiIds = Object.keys(c.persona.relations).filter(
+        (id) => id !== 'user' && s.personaFor(id),
+      );
+      const inv = maybeGroupInvite(c.contactId, relationAiIds, groupRosters, now);
+      if (!inv) continue;
+      if (await actionExists(inv.id)) continue;
+      await enqueue({
+        kind: 'agent_invite',
+        fireAt: inv.fireAt,
+        payload: {
+          contactId: c.contactId,
+          friend1: inv.friends[0],
+          friend2: inv.friends[1],
+          at: inv.fireAt,
+        },
+        now,
+        id: inv.id,
+      });
+    } catch (e) {
+      logError('ainv.schedule', e);
     }
   }
 

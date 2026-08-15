@@ -364,6 +364,8 @@ export const SCHEDULED_ACTION_KINDS = [
   'agent_forward',
   /** 聚会 arc: propose → rsvp → aftermath, three chained phases (M-I3). */
   'group_event',
+  /** An AI proposes forming a group with two mutual friends, in her 1:1 (M-I3). */
+  'agent_invite',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

@@ -234,6 +234,51 @@ describe('the 聚会 arc', () => {
   });
 });
 
+describe('the group proposal', () => {
+  it('needs two friends, skips trios already sharing a room, is pure', async () => {
+    const { maybeGroupInvite } = await import('../../src/ai/agent-invite');
+    expect(maybeGroupInvite('ai_a', ['ai_b'], [], T0)).toBeNull();
+    // Deterministic.
+    const one = maybeGroupInvite('ai_a', ['ai_b', 'ai_c'], [], T0);
+    expect(maybeGroupInvite('ai_a', ['ai_b', 'ai_c'], [], T0)).toEqual(one);
+    // Find a hatching seed, then show an existing shared room suppresses it.
+    for (let i = 0; i < 300; i++) {
+      const id = `ai_p${i}`;
+      const hit = maybeGroupInvite(id, ['ai_b', 'ai_c'], [], T0);
+      if (!hit) continue;
+      expect(
+        maybeGroupInvite(id, ['ai_b', 'ai_c'], [[id, 'ai_b', 'ai_c', 'ai_z']], T0),
+      ).toBeNull();
+      return;
+    }
+    throw new Error('no seed hatched in 300 tries — chance gate broken');
+  });
+
+  it('the fired proposal lands in her visible 1:1 with the roster in meta', async () => {
+    const { handleAgentInvite } = await import('../../src/ai/handlers');
+    const oneOnOne: ConversationVM = {
+      id: 'conv_ai_a', type: 'single', peerId: 'ai_a', title: 'x', avatarColor: 'var(--wx-a)',
+      avatarText: 'x', isPinned: false, isMuted: false, unreadCount: 0, mentionMe: false,
+      lastMsgPreview: '', lastMsgAt: T0,
+    };
+    const appended: Array<Omit<MessageVM, 'id'>> = [];
+    const deps = fakeDeps({ convs: [oneOnOne], appended });
+    deps.visibleConvWithUser = (id) => (id === 'ai_a' ? oneOnOne : undefined);
+    await handleAgentInvite(deps, {
+      contactId: 'ai_a', friend1: 'ai_b', friend2: 'ai_c', at: T0,
+    });
+    expect(appended).toHaveLength(1);
+    expect(appended[0].convId).toBe('conv_ai_a');
+    expect(appended[0].meta?.suggestGroup).toEqual(['ai_a', 'ai_b', 'ai_c']);
+    // A deleted friend kills the proposal.
+    appended.length = 0;
+    const deps2 = fakeDeps({ convs: [oneOnOne], appended, missing: ['ai_c'] });
+    deps2.visibleConvWithUser = () => oneOnOne;
+    await handleAgentInvite(deps2, { contactId: 'ai_a', friend1: 'ai_b', friend2: 'ai_c', at: T0 });
+    expect(appended).toEqual([]);
+  });
+});
+
 /* ------------------------------ fakes ------------------------------ */
 
 function groupConv(): ConversationVM {
