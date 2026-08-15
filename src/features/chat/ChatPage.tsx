@@ -104,6 +104,21 @@ export function ChatPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   /** 群 @ 选择器 (M-I6): open after the user types '@'. */
   const [atPicker, setAtPicker] = useState(false);
+  // 群昵称 (M-I6): per-room aliases from chat info; bubbles show the alias by
+  // overlaying it as `remark` on the sender the row renders with.
+  const [groupNicks, setGroupNicks] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (conv?.type !== 'group') return;
+    void repo
+      .getSetting<Record<string, string>>(`groupNick:${convId}`)
+      .then((n) => setGroupNicks(n ?? {}))
+      .catch(() => {});
+  }, [convId, conv?.type]);
+  const senderFor = (senderId: string) => {
+    const c = contactById(senderId);
+    const nick = groupNicks[senderId];
+    return c && nick ? { ...c, remark: nick } : c;
+  };
   const [mergedForward, setMergedForward] = useState<{
     title: string;
     items: Array<{ name: string; body: string; at: number }>;
@@ -610,7 +625,7 @@ export function ChatPage() {
                 )}
                 <MessageBubble
                   msg={row.msg}
-                  sender={contactById(row.msg.senderId)}
+                  sender={senderFor(row.msg.senderId)}
                   isSelf={row.msg.senderId === 'self'}
                   showNickname={isGroup}
                   onMoneyTap={onMoneyTap}

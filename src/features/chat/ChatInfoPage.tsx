@@ -11,6 +11,7 @@ import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import { showConfirm, showPrompt, showActionSheet } from '../../components/dialog';
 import { getGroupCfg, putGroupCfg, type GroupCfg } from '../../ai/group-config';
+import { repo } from '../../db/repo';
 import { humanizePersona } from '../../ai/humanize';
 import { applyPersonaPatch } from '../../data/persona-patch';
 import { HumanizeDiffSheet } from '../settings/HumanizeDiffSheet';
@@ -57,6 +58,14 @@ export function ChatInfoPage() {
     return () => {
       alive = false;
     };
+  }, [convId, isGroupConv]);
+  // 群昵称 (M-I6): per-room display aliases, settings KV `groupNick:<convId>`.
+  // The chat page reads the same row to label bubbles — an alias here is an
+  // alias everywhere in this room, and nowhere outside it.
+  const [nicks, setNicks] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!isGroupConv) return;
+    void repo.getSetting<Record<string, string>>(`groupNick:${convId}`).then((n) => setNicks(n ?? {}));
   }, [convId, isGroupConv]);
 
   if (!conv) {
@@ -218,6 +227,33 @@ export function ChatInfoPage() {
     await putGroupCfg(convId, next);
   };
 
+  const editNicks = async () => {
+    const ms = members;
+    if (ms.length === 0) return;
+    const idx = await showActionSheet({
+      title: '改谁的群昵称',
+      actions: ms.map((m) => {
+        const nick = nicks[m.id];
+        return nick ? `${m.remark ?? m.name}（现：${nick}）` : (m.remark ?? m.name);
+      }),
+    });
+    if (idx == null) return;
+    const m = ms[idx];
+    const next = await showPrompt({
+      title: `${m.remark ?? m.name} 的群昵称`,
+      initial: nicks[m.id] ?? '',
+      placeholder: '留空恢复本名',
+      maxLength: 12,
+      allowEmpty: true,
+    });
+    if (next == null) return;
+    const map = { ...nicks };
+    if (next.trim()) map[m.id] = next.trim();
+    else delete map[m.id];
+    setNicks(map);
+    await repo.putSetting(`groupNick:${convId}`, map);
+  };
+
   const editTopics = async () => {
     if (!cfg) return;
     const next = await showPrompt({
@@ -234,9 +270,9 @@ export function ChatInfoPage() {
     // The old row destroyed the whole thread on a single tap — the only
     // destructive action in the app with no confirmation at all.
     const ok = await showConfirm({
-      title: '删除该聊天',
-      body: '聊天记录将被删除，且无法恢复。',
-      confirmText: '删除',
+      title: isGroup ? '退出群聊' : '删除该聊天',
+      body: isGroup ? '退出后本群的聊天记录将被删除，且无法恢复。' : '聊天记录将被删除，且无法恢复。',
+      confirmText: isGroup ? '退出' : '删除',
       danger: true,
     });
     if (!ok) return;
@@ -331,6 +367,13 @@ export function ChatInfoPage() {
                 ))}
               </div>
             </div>
+            <div className="settings__row settings__row--divided" onClick={() => void editNicks()}>
+              <span className="settings__label">成员群昵称</span>
+              <span className="settings__value">
+                {Object.keys(nicks).length ? `${Object.keys(nicks).length} 人已设` : '未设置'}
+              </span>
+              <span className="settings__chevron">›</span>
+            </div>
             <div className="settings__row" onClick={() => void editTopics()}>
               <span className="settings__label">常聊话题</span>
               <span className="settings__value">
@@ -377,7 +420,7 @@ export function ChatInfoPage() {
         </div>
 
         <button className="btn-ghost" onClick={() => guard('chatinfo.delete', removeChat)}>
-          删除该聊天
+          {isGroup ? '退出群聊' : '删除该聊天'}
         </button>
       </div>
 
