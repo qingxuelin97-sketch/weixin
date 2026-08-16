@@ -212,6 +212,23 @@ export async function sqliteClearStore(db: SqlDb, store: string): Promise<void> 
   await db.run(`DELETE FROM "${store}"`, [], false);
 }
 
+/**
+ * Delete ONE row by primary key. Backup increments need this to apply
+ * tombstones (a row the user deleted after the base full was taken); every
+ * other write path here replaces or clears wholesale.
+ */
+export async function sqliteDeleteRow(
+  db: SqlDb,
+  store: string,
+  key: string | number,
+): Promise<void> {
+  if (store === 'messages') {
+    await db.run(`DELETE FROM messages WHERE id = ?`, [key], false);
+    return;
+  }
+  await db.run(`DELETE FROM "${store}" WHERE key = ?`, [String(key)], false);
+}
+
 export async function sqliteCount(db: SqlDb, store: string): Promise<number> {
   const res = await db.query(`SELECT COUNT(*) AS n FROM "${store}"`);
   return Number(res.values?.[0]?.n ?? 0);

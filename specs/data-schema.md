@@ -72,21 +72,17 @@ CI 构建，`src/assets/` 构建期槽位在设备上永远不可达。
   失败/中断自动留在 IDB。CryptoKey 行与迁移自身的 bookkeeping 行行级排除。
   回退 = 清标志（数据仍在 IDB 原处）。
 
-## 备份 v2（M-I17）
+## 备份 `.aiwx` v3（M-I17 增量 / M-I18 正确性）
 
-`BACKUP_VERSION = 2`，旧 v1 全量包照常恢复（无 `mode` 视为 full）。
+**完整规格见 `specs/backup.md`**。与本文件的不变量相关的只有两条，改动时必须同时看：
 
-- **增量包**：append 型 store（messages/moments/likes/comments/wallet_tx/media）
-  按水位（messages 用 id，其余 createdAt）只带新增行；messages 额外带水位以下的
-  已撤回行（撤回是对旧行的原地编辑）。其余小而可变的 store 每包整份快照。
-  恢复 = 先全量整库替换，再按时间序逐个叠加增量（快照 store 替换、水位 store
-  upsert 原 key）。等价性转红测试：backup-v2.test.ts（增量+全量 == 直接全量）。
-- **自动备份**：scheduled kind `auto_backup`（台账 + registerChainedHandler，
-  先续链后干活；SELF_CHAINING 清单已登记）。频率 关/每日/每周（备份页设置），
-  每 7 次一个全量、其余增量；新全量落地后清理更旧的自动条目。id 按周期索引
-  稳定（`actionExists` 守卫防复活）。
-- **备份历史**：元数据存 settings KV `backupHistory`（**不加 IDB store**），
-  内容经 @capacitor/filesystem 存 `backups/`。条目只含聚合行数/大小——
-  隐藏会话内容不可能经此页泄漏。恢复链解析 `resolveRestoreChain`（纯函数）。
-- 设备密钥行排除铁律沿用到增量路径（instanceof CryptoKey + key 名单双保险），
-  并新增排除 `sqliteMigratedAt` / `sqliteMigrateProgress`（描述本机引擎的行）。
+- **删除只能用墓碑表达**（`file.tombstones[store] = [主键…]`），恢复时先删后写。
+  删一行不会给幸存行重新编号，所以不变量 1（`rowid 序 == 时间序`）不受影响；
+  **禁止**用「压缩/重排 id 区间」表达删除——那会改 id，游标分页立刻错乱。
+  消息的墓碑必须还原成**数字**主键（删 `"7"` 是空操作，墓碑会静默失效）。
+- **可变表不能用水位判断**。messages 的 `meta`（转账收款状态）、`isRecalled`、
+  `status` 都是对旧行的**原地改写**，id 与 createdAt 都不变。判据是逐行内容哈希
+  （`RowDigest`，存本机 `backupRowDigest`，永不进包）；哈希对 key 排序后计算，
+  因为 SQLite 读回是 `{...JSON.parse(data), id}` 而 IDB 是存入顺序。
+- 设备本地行（`__crypto_master` / 货架 / 通知权限 / 引擎标志…）走
+  `src/lib/device-local.ts` 那**一份**清单：导出滤掉、恢复保本机，有守卫测试。
