@@ -83,6 +83,13 @@ src/
   group_event / agent_invite / moment_repost / auto_backup。自续链的那几种用
   `registerChainedHandler`（先续链后干活，失败只暂停不终结），并且必须进 wiring 测试的
   SELF_CHAINING 清单。
+- **`SETTINGS_KEY_CASCADE` 台账**（`src/db/repo.ts`，M-I18）：settings 是个 KV 大杂烩，
+  里面既有全局配置也有 per-contact / per-conv / per-pair 的状态。**每个键（或冒号前缀）
+  必须登记** scope 与「删联系人时怎么办」，`deleteContactCascade` **读这份台账**行事——
+  所以「登记一个前缀」本身就是修复。源码扫描守卫会断言扫到的键集合与台账相等，
+  新增键不表态即转红（此前 `agent_state:` / `goal_told:` / `giftAt:` 就是这样漏掉的）。
+  值是 id 键控 map 的行（`rel_edges` / `groupNick:`）走**逐条手术**，不能删整行——
+  那一行里还有活人的数据。
 - **前台生命周期**（`src/app/useForegroundLifecycle.ts`）：回前台 = 回填 → 撤销并重排通知。
   没有它，`runBackfill` 只在冷启动跑一次——而手机上「切后台→回前台」才是常态。
 - **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
