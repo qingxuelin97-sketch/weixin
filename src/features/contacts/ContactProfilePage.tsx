@@ -3,9 +3,12 @@
  * straight into an editor, and now neither do we: this card fronts every AI
  * contact with the actions that matter (发消息 / 通话 / 编辑人设 / 记忆).
  */
+import { useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
+import { FLIP_KEYS } from '../../lib/flip';
+import { useFlipEnter } from '../../lib/useFlipEnter';
 import { useAppStore } from '../../store/appStore';
 import { showConfirm, showPrompt } from '../../components/dialog';
 import { Switch } from '../../components/Switch';
@@ -17,6 +20,14 @@ export function ContactProfilePage() {
   const guard = useGuard();
   const { contactId = '' } = useParams();
   const navigate = useNavigate();
+  /**
+   * 共享元素转场 (M-I8): the 64px avatar here grows out of the 40px avatar in
+   * the row that was tapped. `useFlipEnter` claims the rect the contacts list
+   * left behind; arriving any other way (search, a 名片 bubble, a deep link)
+   * finds nothing parked and the card simply appears.
+   */
+  const avatarRef = useRef<HTMLDivElement>(null);
+  useFlipEnter(FLIP_KEYS.contactAvatar(contactId), avatarRef);
   const contact = useAppStore((s) => s.contactById(contactId));
   const persona = useAppStore((s) => s.personaFor(contactId));
   const conversations = useAppStore((s) => s.conversations);
@@ -85,7 +96,12 @@ export function ContactProfilePage() {
       <SubNav title="" />
       <div className="page-body contacts contact-card">
         <div className="contact-card__head">
-          <Avatar color={contact.avatarColor} text={contact.avatarText} imageRef={contact.avatarRef} size={64} />
+          {/* The wrapper is the flip target: it is what the row's avatar rect
+              is measured against, and putting the ref on <Avatar/> would mean
+              threading one through a component every other call site shares. */}
+          <div className="contact-card__avatar" ref={avatarRef}>
+            <Avatar color={contact.avatarColor} text={contact.avatarText} imageRef={contact.avatarRef} size={64} />
+          </div>
           <div className="contact-card__id">
             <div className="contact-card__name">{contact.remark ?? contact.name}</div>
             {contact.wxid && <div className="contact-card__meta">微信号：{contact.wxid}</div>}

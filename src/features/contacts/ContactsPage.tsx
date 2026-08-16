@@ -3,6 +3,8 @@ import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
 import { IconPlus, IconSearch } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
+import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
+import { useStagger, type StaggerRowProps } from '../../lib/useStagger';
 import './contacts.css';
 
 /**
@@ -71,6 +73,11 @@ function FnGlyph({ kind }: { kind: string }) {
 
 export function ContactsPage() {
   const navigate = useNavigate();
+  // First paint only (M-I8): the letter sections arrive in sequence instead of
+  // all at once. Rows revealed by the A-Z rail or by scrolling do not replay —
+  // the effect belongs to arriving at the list.
+  const stagger = useStagger();
+  let row = 0;
   const showToast = useAppStore((s) => s.showToast);
   // Select the STABLE array reference, then derive — a selector that returns a
   // fresh array (`.filter`) each call makes useSyncExternalStore loop (React #185).
@@ -143,6 +150,8 @@ export function ContactsPage() {
                 color={cc.avatarColor}
                 text={cc.avatarText}
                 imageRef={cc.avatarRef}
+                flipKey={FLIP_KEYS.contactAvatar(cc.id)}
+                stagger={stagger(row++)}
                 onClick={() => navigate(`/contact/${cc.id}`)}
               />
             ))}
@@ -158,6 +167,8 @@ export function ContactsPage() {
                 color={cc.avatarColor}
                 text={cc.avatarText}
                 imageRef={cc.avatarRef}
+                flipKey={FLIP_KEYS.contactAvatar(cc.id)}
+                stagger={stagger(row++)}
                 onClick={() => navigate(`/contact/${cc.id}`)}
               />
             ))}
@@ -191,15 +202,33 @@ function ContactRow({
   text,
   imageRef,
   onClick,
+  flipKey,
+  stagger,
 }: {
   name: string;
   color: string;
   text: string;
   imageRef?: string;
   onClick?: () => void;
+  /** Hand this row's avatar rect to the profile card's (M-I8, lib/flip.ts). */
+  flipKey?: string;
+  /** First-paint entrance props, or undefined for a row arriving later (M-I8). */
+  stagger?: StaggerRowProps;
 }) {
   return (
-    <div className="contacts__row" onClick={onClick}>
+    <div
+      className={`contacts__row${stagger?.className ? ` ${stagger.className}` : ''}`}
+      style={stagger?.style}
+      onClick={(e) => {
+        // The avatar is found by query rather than held in a ref, deliberately:
+        // a ref would need a wrapper element around <Avatar/>, and every row in
+        // the contacts golden would shift by whatever that wrapper's box does.
+        // Measured at the TAP, because the list scrolls (and unmounts) before
+        // the profile card lays out, and a rect read late flies in from nowhere.
+        if (flipKey) captureFlipSource(flipKey, e.currentTarget.querySelector('.avatar'));
+        onClick?.();
+      }}
+    >
       <Avatar color={color} text={text} imageRef={imageRef} size={40} />
       <span className="contacts__name hairline-bottom contacts__cell">{name}</span>
     </div>

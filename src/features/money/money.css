@@ -139,8 +139,11 @@
   justify-content: center;
   transform-style: preserve-3d;
 }
+/* Beat 1 of the open sequence (M-I8). Retimed from 900ms to match FLIP_MS in
+   RedPacketOpenPage.tsx — the coin is now the OPENING beat, not the whole
+   event, so it must clear the screen before the amount arrives. */
 .rp-open__coin--flip {
-  animation: rp-coin-flip 900ms var(--ease-standard) forwards;
+  animation: rp-coin-flip 700ms var(--ease-standard) forwards;
 }
 @keyframes rp-coin-flip {
   0% {
@@ -154,11 +157,104 @@
     opacity: 0;
   }
 }
+
+/* ---- Beat 2 (M-I8): the envelope lifts.
+   The sender block and the greeting travel up and fade as the packet comes
+   open. No extra DOM at rest — the class rides on the page root, so the idle
+   screen (and its golden) is byte-identical to before. */
+.rp-open--opening .rp-open__sender {
+  animation: rp-lift 620ms var(--ease-standard) both;
+}
+.rp-open--opening .rp-open__greeting {
+  animation: rp-lift 620ms var(--ease-standard) both;
+  animation-delay: 60ms;
+}
+@keyframes rp-lift {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-26px);
+    opacity: 0.35;
+  }
+}
+
+/* ---- Beat 3 (M-I8): the amount rolls up, one glyph at a time. */
+.rp-open__reveal {
+  margin-top: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.rp-open__amount {
+  display: flex;
+  align-items: baseline;
+  /* Clip the rise: each glyph starts BELOW its slot, and without this it is
+     briefly visible sitting on the greeting above. */
+  overflow: hidden;
+  color: var(--color-rp-coin);
+  font-size: 44px;
+  font-weight: var(--fw-medium);
+  line-height: 1.2;
+}
+.rp-open__digit,
+.rp-open__unit {
+  display: inline-block;
+  animation: rp-digit-roll 420ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  animation-delay: var(--roll-delay, 0ms);
+}
+.rp-open__unit {
+  margin-left: 6px;
+  font-size: 20px;
+}
+@keyframes rp-digit-roll {
+  from {
+    transform: translateY(110%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.rp-open__stored {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-rp-coin);
+  opacity: 0.8;
+  animation: rp-stored-in 320ms var(--ease-standard) both;
+  animation-delay: 260ms;
+}
+@keyframes rp-stored-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 0.8;
+    transform: translateY(0);
+  }
+}
+
 .rp-open__expired {
   margin-top: 56px;
   font-size: var(--fs-cell-title);
   color: var(--color-rp-coin);
   opacity: 0.85;
+}
+
+/* One switch turns the whole sequence off; the packet still opens, the money
+   still lands, only the theatre is dropped. */
+@media (prefers-reduced-motion: reduce) {
+  .rp-open__coin--flip,
+  .rp-open--opening .rp-open__sender,
+  .rp-open--opening .rp-open__greeting,
+  .rp-open__digit,
+  .rp-open__unit,
+  .rp-open__stored {
+    animation: none !important;
+  }
 }
 
 /* ---- Red packet detail ---- */

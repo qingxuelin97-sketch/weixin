@@ -1,0 +1,66 @@
+/**
+ * Rolling counter (M-I8).
+ *
+ * The host is an inline-block that is layout-transparent: it inherits its line
+ * height and takes its size from the incoming digit, so dropping it inside an
+ * existing badge does not move a single pixel at rest. That constraint is why
+ * this is NOT an inline-grid or a flex box with its own line-height — both
+ * change where the digit's baseline lands, and every unread badge in the app
+ * would shift by a pixel or two the moment this shipped.
+ *
+ * Likewise it deliberately does NOT set `overflow: hidden`: an inline-block
+ * with a clipped overflow takes its bottom margin edge as its baseline instead
+ * of its text's, which moves the digit inside the badge. Clipping is the HOST's
+ * job — the badges that use this already draw a pill and can clip to it.
+ */
+.num-roll {
+  display: inline-block;
+  position: relative;
+}
+
+/* The outgoing value is taken out of flow so the host never resizes mid-roll
+   (a two-digit count leaving while a one-digit count arrives would otherwise
+   make the pill breathe). */
+.num-roll__digit--out {
+  position: absolute;
+  inset: 0;
+  animation: num-roll-out 240ms var(--ease-standard) both;
+}
+@keyframes num-roll-out {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-110%);
+    opacity: 0;
+  }
+}
+
+/* New value arrives from below, into the space the old one is vacating. */
+.num-roll__digit--in {
+  display: inline-block;
+  animation: num-roll-in 240ms var(--ease-standard) both;
+}
+@keyframes num-roll-in {
+  from {
+    transform: translateY(110%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .num-roll__digit--in {
+    animation: none !important;
+  }
+  /* With no animation there is no `animationend`, so the outgoing digit would
+     sit on top of the new one forever. Hide it outright. */
+  .num-roll__digit--out {
+    animation: none !important;
+    display: none;
+  }
+}

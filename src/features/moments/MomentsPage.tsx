@@ -26,6 +26,9 @@ import { repo } from '../../db/repo';
 import { listRegisteredMedia } from '../../data/media-registry';
 import { resolveImageRef } from '../../data/moments-images';
 import { recentVisitor, visitorLine } from '../../ai/moments-visitors';
+import { usePullRefresh } from '../../components/usePullRefresh';
+import { PullRefresh } from '../../components/PullRefresh';
+import { useStagger } from '../../lib/useStagger';
 import type { MomentCommentVM } from '../../data/types';
 import './moments.css';
 
@@ -134,6 +137,28 @@ export function MomentsPage() {
     }
   };
 
+  /**
+   * 下拉刷新 (M-I8).
+   *
+   * Reuses the force path `loadMoments` already had: the feed was frozen for
+   * the life of the process before that flag existed, and this is the gesture
+   * that finally asks for it. Also re-reads the 新消息 badge, because a like
+   * that arrived while the feed was open is exactly what the pull is for.
+   */
+  const pullRef = useRef<HTMLDivElement>(null);
+  const refreshMomentsNews = useAppStore((s) => s.refreshMomentsNews);
+  const pull = usePullRefresh({
+    ref: pullRef,
+    scroller: () => scrollRef.current,
+    onRefresh: async () => {
+      await loadMoments(true);
+      await refreshMomentsNews().catch(() => {});
+    },
+  });
+  // First paint only: cards revealed by scrolling (INITIAL_CARDS at a time)
+  // must not animate — the effect belongs to arriving at the feed.
+  const stagger = useStagger();
+
   // 回复某人 (M-I6): replyToCommentId had render logic since M4 and no writer
   // — tapping a friend's comment now targets the composer at it.
   const [replyTo, setReplyTo] = useState<MomentCommentVM | null>(null);
@@ -192,7 +217,12 @@ export function MomentsPage() {
         </button>
       </header>
 
-      <div className="moments__scroll" ref={scrollRef} onScroll={onScroll}>
+      {/* The clip does not move; the host inside it is what the pull
+          translates (see pull-refresh.css). */}
+      <div className="pull-clip moments__pull">
+        <div className="pull-host" ref={pullRef} {...pull.handlers}>
+          <PullRefresh phase={pull.phase} progress={pull.progress} />
+          <div className="moments__scroll" ref={scrollRef} onScroll={onScroll}>
         <div
           className="moments__cover"
           role="button"
@@ -219,10 +249,11 @@ export function MomentsPage() {
           <p className="moments__empty">还没有动态。点右上角相机发一条吧。</p>
         ) : (
           <div className="moments__list">
-            {visible.map((m) => {
+            {visible.map((m, cardIdx) => {
               const likes = likesFor(m.id);
+              const enter = stagger(cardIdx);
               return (
-                <div key={m.id}>
+                <div key={m.id} className={enter?.className} style={enter?.style}>
                   <MomentCard
                     moment={m}
                     author={m.authorId === 'self' ? self : byId.get(m.authorId)}
@@ -297,6 +328,8 @@ export function MomentsPage() {
             })}
           </div>
         )}
+          </div>
+        </div>
       </div>
 
       {/* 封面选择 (M-I15): the photo library, plus a reset row. */}

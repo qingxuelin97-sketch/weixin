@@ -300,3 +300,12 @@
 .report__cover .report__sec-inner {
   text-align: center;
 }
+
+/* Accessibility (M-I8): the cover's floating bob is an infinite loop, which is
+   the single worst thing to leave running for someone who asked for less
+   motion. Everything else in this file is static. */
+@media (prefers-reduced-motion: reduce) {
+  .report__hint {
+    animation: none !important;
+  }
+}

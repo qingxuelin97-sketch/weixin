@@ -67,6 +67,10 @@
   line-height: 18px;
   text-align: center;
   box-sizing: border-box;
+  /* Clips the rolling counter's outgoing digit to the pill (M-I8). The badge
+     owns this rather than <RollingNumber/>, because an inline-block with a
+     clipped overflow changes its own baseline — see rolling-number.css. */
+  overflow: hidden;
 }
 .conv-row__badge--dot {
   min-width: 10px;

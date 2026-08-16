@@ -157,4 +157,8 @@
   font-size: var(--fs-badge);
   line-height: 18px;
   text-align: center;
+  /* Clips <RollingNumber/>'s outgoing digit to the pill (M-I8). The badge owns
+     the clip because an inline-block that clips its own overflow changes its
+     baseline — see components/rolling-number.css. */
+  overflow: hidden;
 }

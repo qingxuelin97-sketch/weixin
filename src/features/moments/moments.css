@@ -46,6 +46,11 @@
   opacity: var(--nav-alpha);
 }
 
+/* 下拉刷新 (M-I8): the non-moving clip that hides the indicator parked above
+   the feed. The scroll pane itself is inside the host that translates. */
+.moments__pull {
+  height: 100%;
+}
 .moments__scroll {
   height: 100%;
   overflow-y: auto;
@@ -146,6 +151,14 @@
   aspect-ratio: 1;
   overflow: hidden;
   background: var(--color-moments-image-empty);
+  /* The shimmer below is absolutely positioned into this cell (M-I8). */
+  position: relative;
+}
+/* Loading shimmer, under the photo. `.skeleton` (motion.css) paints it; this
+   rule only says where it lives. */
+.moment__image-skeleton {
+  position: absolute;
+  inset: 0;
 }
 .moment__image img {
   width: 100%;

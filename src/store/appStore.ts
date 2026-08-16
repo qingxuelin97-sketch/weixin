@@ -109,6 +109,16 @@ interface AppState {
    * scenes on the next render. No-op for a thread that was never loaded.
    */
   reloadConversation: (convId: string, limit?: number) => Promise<void>;
+  /**
+   * Re-read the conversation list from the Repo (M-I8, 下拉刷新).
+   *
+   * The list is written through on every mutation, so this is not about
+   * repairing state — it is about the rows an AGENT wrote while the user was
+   * looking at something else (a backfilled absence, a background heartbeat,
+   * an AI↔AI thread surfacing). Hydration is guarded by `hydrated` and cannot
+   * be asked twice, so pull-to-refresh needed a door of its own.
+   */
+  refreshConversations: () => Promise<void>;
   conversationById: (id: string) => ConversationVM | undefined;
   personaFor: (contactId: string) => PersonaVM | undefined;
   setTyping: (convId: string, on: boolean) => void;
@@ -323,6 +333,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       lastMsgPreview: last ? previewOf(last, senderNameOf(s.contacts, last.senderId)) : '',
       ...(last ? { lastMsgAt: last.createdAt } : {}),
     });
+  },
+  refreshConversations: async () => {
+    // Only the list rows: messages stay lazily loaded per conversation, which
+    // is the whole reason hydration got off the critical path in M-G2. Pulling
+    // 200 messages per thread here would put it straight back.
+    const conversations = await repo.getConversations();
+    conversations.sort(sortConversations);
+    set({ conversations });
   },
   conversationById: (id) => get().conversations.find((cc) => cc.id === id),
   personaFor: (contactId) => get().personas[contactId],

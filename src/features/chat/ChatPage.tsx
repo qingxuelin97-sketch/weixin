@@ -18,6 +18,7 @@ import { useMedia } from '../../components/useMedia';
 import { recordUserSticker, agentStickerPool } from '../../ai/sticker-taste';
 import { battleReply, stickerStreak } from '../../ai/sticker-battle';
 import { playMessageSound } from '../../lib/sound';
+import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { logError } from '../../lib/errlog';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
@@ -782,7 +783,11 @@ export function ChatPage() {
     return { imageRefs: refs, imageIndexByMsgId: byId };
   }, [rows]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  const onImageTap = (msg: MessageVM) => {
+  const onImageTap = (msg: MessageVM, el: HTMLElement | null) => {
+    // Hand the tapped bubble's rect to the viewer so the photo grows out of it
+    // (M-I8, lib/flip.ts). Captured here, at the tap, because the thread keeps
+    // scrolling between this and the viewer's first layout.
+    captureFlipSource(FLIP_KEYS.imageViewer, el);
     setViewerIndex(imageIndexByMsgId.get(msg.id) ?? 0);
   };
 

@@ -70,6 +70,13 @@
   padding: 20px 16px;
   background: var(--color-cell-bg);
 }
+/* Flip target for the row→card shared-element transition (M-I8). Sized by the
+   avatar it holds, so the card's layout is byte-identical to before it existed. */
+.contact-card__avatar {
+  flex: none;
+  display: flex;
+  align-self: flex-start;
+}
 .contact-card__id {
   display: flex;
   flex-direction: column;
