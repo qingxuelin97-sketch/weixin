@@ -19,7 +19,30 @@
  *    emotional timing right without spending a token on it.
  */
 import { seededRng } from '../lib/money';
+import { STICKER_RATE_BASELINE } from '../data/persona-defaults';
 import { repo } from '../db/repo';
+
+/**
+ * 表情使用率 → a multiplier on every seeded sticker gate (M-I19).
+ *
+ * Until now "how often does she send stickers" was two module constants shared
+ * by every character in the app, so the 话痨 who spams 斗图 and the 高冷 one who
+ * has never sent a sticker in her life behaved identically. `stickerRate` is a
+ * persona field now (like `likeRate`), and this is the one place it turns into
+ * a number the gates can multiply by.
+ *
+ * The baseline maps to exactly 1.0, so an unset persona behaves byte-for-byte
+ * as it did before. Capped at 2× — a rate of 1.0 should make her reach for a
+ * sticker at nearly every opportunity, not break the probability's shape.
+ *
+ * `undefined` reads as the baseline rather than as 0: a persona row written
+ * before this field existed must degrade to "normal", never to the silent
+ * "never sends stickers" that the constitution's makePersona trap warns about.
+ */
+export function stickerScale(rate: number | undefined): number {
+  const r = typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 ? rate : STICKER_RATE_BASELINE;
+  return Math.min(2, r / STICKER_RATE_BASELINE);
+}
 
 /** Settings row holding the refs the user has sent, most recent last. */
 export const USER_STICKER_KEY = 'stickerSent';
@@ -51,18 +74,26 @@ export function collectedStickers(contactId: string, ledger: readonly string[]):
   return ledger.filter((ref) => seededRng(`stkfav:${contactId}:${ref}`)() < 0.55);
 }
 
-/** How often a sticker turn reaches for a collected custom sticker. */
+/** How often a sticker turn reaches for a collected custom sticker, at baseline rate. */
 export const AGENT_STICKER_SWAP_RATE = 0.3;
 
 /**
  * When the engine is about to play a sticker bubble: keep the vocab glyph, or
  * swap in one of the agent's collected customs? Returns the ref to send, or
  * null to keep the original content. Seeded per turn so replays agree.
+ *
+ * `rate` is the persona's 表情使用率 (M-I19): someone who lives in her sticker
+ * drawer reaches for a collected one far more readily than someone who sends
+ * three a month. Omitted = baseline = the pre-M-I19 constant, unchanged.
  */
-export function maybeAgentSticker(pool: readonly string[], seed: string): string | null {
+export function maybeAgentSticker(
+  pool: readonly string[],
+  seed: string,
+  rate?: number,
+): string | null {
   if (pool.length === 0) return null;
   const rng = seededRng(`stkswap:${seed}`);
-  if (rng() >= AGENT_STICKER_SWAP_RATE) return null;
+  if (rng() >= Math.min(1, AGENT_STICKER_SWAP_RATE * stickerScale(rate))) return null;
   return pool[Math.floor(rng() * pool.length)];
 }
 

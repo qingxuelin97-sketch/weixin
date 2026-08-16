@@ -8,9 +8,12 @@ import {
   foldUserSticker,
   collectedStickers,
   maybeAgentSticker,
+  stickerScale,
   USER_STICKER_MAX,
   AGENT_STICKER_SWAP_RATE,
 } from '../../src/ai/sticker-taste';
+import { makePersona, STICKER_RATE_BASELINE } from '../../src/data/persona-defaults';
+import { stickerHabitLine } from '../../src/ai/prompt';
 import {
   battleUrge,
   wantsBattle,
@@ -188,5 +191,122 @@ describe('custom sticker projection', () => {
 
   it('still names vocab stickers', () => {
     expect(renderMessageBody(msg('捂脸'))).toBe('[表情：捂脸]');
+  });
+});
+
+/* ------------------- 表情使用率联动 persona (M-I19) ------------------- */
+
+/**
+ * Before M-I19 every character in the app shared two module constants, so the
+ * 话痨 who lives in her sticker drawer and the 高冷 one who has never sent a
+ * sticker behaved identically. `stickerRate` is a persona field now, exactly
+ * like `likeRate` / `commentRate` / `momentsPerDay`.
+ */
+describe('stickerScale', () => {
+  it('maps the baseline to exactly 1 — an unset persona behaves as before', () => {
+    expect(stickerScale(STICKER_RATE_BASELINE)).toBe(1);
+    expect(stickerScale(undefined)).toBe(1);
+  });
+
+  it('reads a missing/garbage value as the baseline, never as zero', () => {
+    // The makePersona trap (CLAUDE.md §3.5): `undefined` silently meaning
+    // "never" is a feature that vanishes without an error.
+    expect(stickerScale(NaN)).toBe(1);
+    expect(stickerScale(-1)).toBe(1);
+  });
+
+  it('is monotonic and capped', () => {
+    expect(stickerScale(0)).toBe(0);
+    expect(stickerScale(0.7)).toBeGreaterThan(1);
+    expect(stickerScale(1)).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('battleUrge follows the persona', () => {
+  it('a sticker-happy persona out-battles a reserved one at every streak', () => {
+    for (const streak of [1, 2, 3, 4, 5, 8]) {
+      expect(battleUrge(streak, 0.9)).toBeGreaterThan(battleUrge(streak, 0.1));
+    }
+  });
+
+  it('rate 0 means she never答图 — no floor to leak through', () => {
+    for (const streak of [1, 2, 3, 4, 10]) expect(battleUrge(streak, 0)).toBe(0);
+  });
+
+  it('keeps the curve SHAPE: a streak still invites, a long war still decays', () => {
+    for (const rate of [0.1, 0.35, 0.9]) {
+      expect(battleUrge(2, rate)).toBeGreaterThanOrEqual(battleUrge(1, rate));
+      expect(battleUrge(9, rate)).toBeLessThan(battleUrge(3, rate));
+    }
+  });
+
+  it('leaves the default identical to the pre-M-I19 constants', () => {
+    expect(battleUrge(1)).toBeCloseTo(0.35, 10);
+    expect(battleUrge(3)).toBeCloseTo(0.65, 10);
+  });
+});
+
+describe('两个不同 stickerRate 的人设在同一种子下发表情次数不同', () => {
+  /** Count sticker replies over one fixed set of seeds. Deterministic. */
+  const battlesWon = (rate: number): number => {
+    let n = 0;
+    for (let i = 0; i < 300; i++) {
+      if (battleReply({ seed: `war:${i}`, streak: (i % 4) + 1, rate }, ['idb:a', 'idb:b'], 'idb:c')) {
+        n++;
+      }
+    }
+    return n;
+  };
+
+  const swaps = (rate: number): number => {
+    let n = 0;
+    for (let i = 0; i < 300; i++) {
+      if (maybeAgentSticker(['idb:a', 'idb:b'], `turn:${i}`, rate)) n++;
+    }
+    return n;
+  };
+
+  it('斗图: the 话痨 answers far more often than the 高冷 one', () => {
+    const chatty = battlesWon(0.9);
+    const cold = battlesWon(0.1);
+    expect(chatty).toBeGreaterThan(cold);
+    // Not a rounding difference — a visibly different character.
+    expect(chatty - cold).toBeGreaterThan(50);
+  });
+
+  it('斗图: the same rate on the same seeds is reproducible', () => {
+    expect(battlesWon(0.9)).toBe(battlesWon(0.9));
+    expect(battlesWon(0.1)).toBe(battlesWon(0.1));
+  });
+
+  it('自定义表情替换: the same ordering holds, and is reproducible', () => {
+    expect(swaps(0.9)).toBeGreaterThan(swaps(0.1));
+    expect(swaps(0.9)).toBe(swaps(0.9));
+  });
+
+  it('rate 0 sends nothing at all through either gate', () => {
+    expect(battlesWon(0)).toBe(0);
+    expect(swaps(0)).toBe(0);
+  });
+});
+
+describe('makePersona backfills stickerRate', () => {
+  it('fills the default so a pre-M-I19 row never reads as 从不发表情', () => {
+    const p = makePersona({ contactId: 'x', core: 'c' });
+    expect(p.stickerRate).toBe(STICKER_RATE_BASELINE);
+  });
+
+  it('keeps an explicit value', () => {
+    expect(makePersona({ contactId: 'x', core: 'c', stickerRate: 0.9 }).stickerRate).toBe(0.9);
+  });
+
+  it('is carried into the prompt layer only at the two ends of the range', () => {
+    // A middling character says nothing about stickers — the persona layer must
+    // not be diluted by a line that carries no information, and the default
+    // prompt stays byte-identical for prefix caching.
+    expect(stickerHabitLine(STICKER_RATE_BASELINE)).toBe('');
+    expect(stickerHabitLine(0.9)).toContain('爱发表情包');
+    expect(stickerHabitLine(0.05)).toContain('几乎不发表情包');
+    expect(stickerHabitLine(undefined)).toBe('');
   });
 });

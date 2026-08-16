@@ -282,6 +282,7 @@ export function exportStCard(
           momentsPerDay: persona.momentsPerDay,
           likeRate: persona.likeRate,
           commentRate: persona.commentRate,
+          stickerRate: persona.stickerRate,
           affinityInit: persona.affinityInit,
           generosity: persona.generosity,
           grabSpeed: persona.grabSpeed,

@@ -26,7 +26,7 @@
  * complete card.
  */
 import { z } from 'zod';
-import { makePersona, PERSONA_LIMITS } from '../data/persona-defaults';
+import { makePersona, PERSONA_LIMITS, STICKER_RATE_BASELINE } from '../data/persona-defaults';
 import type { PersonaVM } from '../data/types';
 import { runChain, type ChainDeps, type ChainResult, type GenIssue } from './generate-chain';
 
@@ -50,6 +50,7 @@ export const PERSONA_JSON_SYSTEM = `你在为一个微信聊天 App 生成「AI 
   "momentsPerDay": 0.3,
   "likeRate": 0.5,
   "commentRate": 0.25,
+  "stickerRate": 0.35,
   "affinityInit": 20,
   "generosity": 0.35,
   "grabSpeed": "fast|mid|slow",
@@ -63,6 +64,7 @@ export const PERSONA_JSON_SYSTEM = `你在为一个微信聊天 App 生成「AI 
 - typingCpm：打字速度，150（慢）到 600（快）。
 - momentsPerDay：发朋友圈频率（0 = 从不发，0.3 = 每周两三条，1 = 每天）。
 - likeRate / commentRate 0..1：给别人朋友圈点赞、评论的倾向。
+- stickerRate 0..1：发表情包/斗图的频率（0.1 = 几乎只打字，0.8 = 表情包不离手）。
 - affinityInit 0..100：一开始跟用户有多熟。generosity 0..1：多大方（会不会主动发红包）。
 - grabSpeed：抢红包的手速。temperature 0.6..1.1：说话的发散程度。
 - imageTags：她发照片时从素材库里挑哪些标签（没有合适的就留空数组）。`;
@@ -94,6 +96,7 @@ const RawSchema = z.object({
   momentsPerDay: z.number().optional(),
   likeRate: z.number().optional(),
   commentRate: z.number().optional(),
+  stickerRate: z.number().optional(),
   affinityInit: z.number().optional(),
   generosity: z.number().optional(),
   grabSpeed: z.enum(['fast', 'mid', 'slow']).optional(),
@@ -199,6 +202,7 @@ export function validateGeneratedPersona(
     momentsPerDay: clamp(p.momentsPerDay, 0, 5, 0.3),
     likeRate: clamp(p.likeRate, 0, 1, 0.5),
     commentRate: clamp(p.commentRate, 0, 1, 0.25),
+    stickerRate: clamp(p.stickerRate, 0, 1, STICKER_RATE_BASELINE),
     affinityInit: Math.round(clamp(p.affinityInit, 0, 100, 20)),
     generosity: clamp(p.generosity, 0, 1, 0.35),
     grabSpeed: p.grabSpeed ?? 'mid',

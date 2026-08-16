@@ -51,6 +51,8 @@ export const personas = sqliteTable('personas', {
   momentsPerDay: real('moments_per_day').notNull().default(0.3),
   likeRate: real('like_rate').notNull().default(0.5),
   commentRate: real('comment_rate').notNull().default(0.25),
+  /** 0..1 — 表情使用率 (M-I19). Scales 斗图 urge + custom-sticker swap. */
+  stickerRate: real('sticker_rate').notNull().default(0.35),
   typingCpm: integer('typing_cpm').notNull().default(300), // chars/min for typing-delay sim
   grabSpeed: text('grab_speed', { enum: ['fast', 'mid', 'slow'] }).default('mid'), // red-packet grab
   modelChat: text('model_chat'), // null → global default
@@ -191,6 +193,13 @@ export const moments = sqliteTable('moments', {
   text: text('text'),
   imageRefsJson: text('image_refs_json'),
   isNsfw: integer('is_nsfw', { mode: 'boolean' }).notNull().default(false),
+  /**
+   * 可见范围 (M-I19): `{ mode, ids }` — see MomentVisibility. NULL = 公开, which
+   * is what every row written before M-I19 and every AI-authored post carries.
+   * A JSON column rather than a join table on purpose: the audience is read on
+   * every feed row and only ever as a whole (data-schema.md「JSON 列演进」).
+   */
+  visibilityJson: text('visibility_json'),
   createdAt: integer('created_at').notNull(),
 });
 export const momentLikes = sqliteTable(

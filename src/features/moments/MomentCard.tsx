@@ -19,6 +19,7 @@ import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { resolveImageRef } from '../../data/moments-images';
 import { momentTimestamp } from '../../lib/time';
 import { topicSegments } from '../../lib/topics';
+import { audienceLabel } from '../../lib/moment-visibility';
 import type { MomentVM, MomentLikeVM, MomentCommentVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -248,6 +249,13 @@ export function MomentCard({
         <div className="moment__meta">
           <span className="moment__time">
             {momentTimestamp(moment.createdAt, now)}
+            {/* 可见范围 tag (M-I19). WeChat shows it beside the timestamp on the
+                author's own restricted posts — without it, "did that actually
+                save as 私密?" has no answer anywhere in the app. Absent
+                visibility (公开, and every AI post) renders nothing. */}
+            {moment.visibility && moment.visibility.mode !== 'public' && (
+              <span className="moment__audience">{audienceLabel(moment.visibility)}</span>
+            )}
             {onDelete && (
               <button className="moment__delete" onClick={onDelete}>
                 删除

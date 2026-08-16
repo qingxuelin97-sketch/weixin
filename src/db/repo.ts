@@ -40,6 +40,7 @@ import {
   idbPageDesc,
   idbFirstByIndex,
 } from './idb';
+import { visibleMoments, withoutContact } from '../lib/moment-visibility';
 
 export interface Repo {
   // contacts & personas
@@ -94,13 +95,20 @@ export interface Repo {
   putWalletTx(t: WalletTxVM): Promise<void>;
 
   // moments
-  /** Newest first. `before` paginates by createdAt for infinite scroll. */
-  getMoments(opts?: { limit?: number; before?: number }): Promise<MomentVM[]>;
+  /**
+   * Newest first. `before` paginates by createdAt for infinite scroll.
+   *
+   * 可见范围 (M-I19): every driver applies `visibleMoments` before returning, so
+   * a post the viewer may not see never leaves the data layer. `viewer` defaults
+   * to 'self' — the user sees their own restricted posts, which is what makes
+   * 私密 a diary rather than a hole; an agent-side read MUST pass its contactId.
+   */
+  getMoments(opts?: { limit?: number; before?: number; viewer?: string }): Promise<MomentVM[]>;
   /** Likes+comments for a page of posts in two queries rather than 2N. */
   getMomentSocial(momentIds: string[]): Promise<{ likes: Record<string, MomentLikeVM[]>; comments: Record<string, MomentCommentVM[]> }>;
   getMoment(id: string): Promise<MomentVM | undefined>;
-  /** One person's whole timeline, newest first (个人相册页, M-I15). */
-  getMomentsByAuthor(authorId: string): Promise<MomentVM[]>;
+  /** One person's whole timeline, newest first (个人相册页, M-I15). Audience-filtered. */
+  getMomentsByAuthor(authorId: string, viewer?: string): Promise<MomentVM[]>;
   putMoment(m: MomentVM): Promise<void>;
   getLikes(momentId: string): Promise<MomentLikeVM[]>;
   putLike(l: MomentLikeVM): Promise<void>;
@@ -536,6 +544,16 @@ export async function deleteContactCascade(
       await repo.putMoment({ ...rest, repostExcerpt: '原内容已删除' });
     }
   }
+  // 可见范围 (M-I19): the dead contact's id lingering in a 部分可见 whitelist or
+  // a 不给谁看 blacklist is a trace like any other. Surgical, like the
+  // `rel_edges` / `groupNick:` rows — the OTHER people named in that audience
+  // are alive, so the row is rewritten, never dropped. A whitelist emptied by
+  // the deletion degrades to 私密, not to 公开 (see withoutContact).
+  for (const m of moments) {
+    if (m.authorId === id) continue; // already deleted above
+    const patched = withoutContact(m, id);
+    if (patched) await repo.putMoment(patched);
+  }
   for (const l of await ops.allLikes()) {
     if (l.contactId === id) await repo.deleteLike(l.id);
   }
@@ -738,15 +756,20 @@ export class IdbRepo implements Repo {
     return { likes, comments };
   }
 
-  async getMoments(opts: { limit?: number; before?: number } = {}) {
+  async getMoments(opts: { limit?: number; before?: number; viewer?: string } = {}) {
     // Walks `byCreatedAt` backwards (v7) instead of reading and sorting the
     // whole store. The old version applied `limit` only AFTER deserializing
     // every post ever written, so opening Moments got slower forever while the
     // screen it drew stayed the same size.
-    return idbPageDesc<MomentVM>('moments', 'byCreatedAt', {
+    const page = await idbPageDesc<MomentVM>('moments', 'byCreatedAt', {
       limit: opts.limit ?? DEFAULT_MOMENTS_PAGE,
       before: opts.before,
     });
+    // 可见范围 (M-I19) — inside the driver, so no reader can forget. The filter
+    // runs AFTER the page is cut, which can hand back a short page to an agent
+    // viewer; that is the right trade for the two agent-side readers (limit 8
+    // and 10), and 'self' — the paginating reader — never loses a row.
+    return visibleMoments(page, opts.viewer ?? 'self');
   }
   async getMoment(id: string) {
     return idbGet<MomentVM>('moments', id);
@@ -756,9 +779,12 @@ export class IdbRepo implements Repo {
    * author's posts are a small slice, and adding a byAuthor index would cost a
    * DB_VERSION bump for a query that runs on a tap, not a tick.
    */
-  async getMomentsByAuthor(authorId: string) {
+  async getMomentsByAuthor(authorId: string, viewer = 'self') {
     const all = await idbGetAll<MomentVM>('moments');
-    return all.filter((m) => m.authorId === authorId).sort((a, b) => b.createdAt - a.createdAt);
+    return visibleMoments(
+      all.filter((m) => m.authorId === authorId),
+      viewer,
+    ).sort((a, b) => b.createdAt - a.createdAt);
   }
   async putMoment(m: MomentVM) {
     await idbPut('moments', m);

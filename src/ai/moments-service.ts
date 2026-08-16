@@ -18,6 +18,7 @@ import {
   generateRepostText,
 } from './moments-engine';
 import { repostMoment } from './moment-repost';
+import { canSeeMoment } from '../lib/moment-visibility';
 import { repo } from '../db/repo';
 
 export interface MomentsHooks {
@@ -40,7 +41,9 @@ export async function scheduleReactionsFor(
   now: number,
 ): Promise<void> {
   const reactors = await collectReactors(contacts, personaFor, now);
-  const planned = planReactions(moment.id, moment.authorId, moment.createdAt, reactors, 'react');
+  // The whole row goes in, so the post's 可见范围 (M-I19) is inside the planner's
+  // reach and cannot be dropped on the way.
+  const planned = planReactions(moment, reactors, 'react');
   for (const p of planned) {
     await enqueue({
       kind: p.kind,
@@ -53,7 +56,7 @@ export async function scheduleReactionsFor(
   }
   // 转发 (M-I15): rarely, one close friend reposts a USER post. The planner
   // refuses everything else, so no queue row exists to go wrong for AI posts.
-  const rp = planRepost(moment.id, moment.authorId, moment.createdAt, reactors, 'react');
+  const rp = planRepost(moment, reactors, 'react');
   if (rp) {
     await enqueue({
       kind: 'moment_repost',
@@ -120,6 +123,10 @@ export async function runMomentLike(
 ): Promise<void> {
   const moment = await repo.getMoment(momentId);
   if (!moment) return; // post was deleted before the like landed
+  // 可见范围 checked AGAIN at fire time (M-I19), the same two-checks rule
+  // `canForwardFrom` follows: the row was queued hours ago, and what lands on
+  // screen cannot be taken back.
+  if (!canSeeMoment(moment, contactId)) return;
   // Route through the store so an open feed updates without a reload; the store
   // writes through to the Repo and ignores a like that already exists.
   await hooks.applyLike({
@@ -151,6 +158,11 @@ export async function runMomentRepost(
 ): Promise<void> {
   const source = await repo.getMoment(momentId);
   if (!source) return; // post deleted before the repost landed
+  // Re-check the audience at fire time (M-I19). A repost is republication —
+  // the strictest of the three reactions, so it refuses anything restricted
+  // outright rather than merely checking this reposter.
+  if (source.visibility && source.visibility.mode !== 'public') return;
+  if (!canSeeMoment(source, reposter.id)) return;
   const stamp = at ?? hooks.now();
   const text = await generateRepostText(persona, reposter, source, stamp);
   const posted = await repostMoment(
@@ -173,6 +185,7 @@ export async function runMomentComment(
 ): Promise<void> {
   const moment = await repo.getMoment(momentId);
   if (!moment) return;
+  if (!canSeeMoment(moment, commenter.id)) return; // M-I19, checked twice
   const stamp = at ?? hooks.now();
   const text = await generateMomentComment(persona, commenter, moment, authorName, stamp);
   if (!text) return;

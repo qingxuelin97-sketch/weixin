@@ -140,6 +140,16 @@ export interface PersonaVM {
   likeRate: number;
   /** Base probability this persona comments on a given post. */
   commentRate: number;
+  /**
+   * 表情使用率 (M-I19), 0..1 — how sticker-happy this character is.
+   *
+   * A persona trait exactly like `momentsPerDay` / `likeRate` / `commentRate`,
+   * and for the same reason: 话痨爱斗图的 and 高冷的 must not share one global
+   * constant. `STICKER_RATE_BASELINE` (0.35) is the neutral point — the rate
+   * scales every seeded sticker gate (斗图 urge, custom-sticker swap) and tells
+   * the prompt layer whether to say anything about stickers at all.
+   */
+  stickerRate: number;
   /** Starting closeness, 0..100. Scales like/comment rates and heartbeat warmth. */
   affinityInit: number;
   /**
@@ -300,6 +310,29 @@ export interface ProviderVM {
 /* ---- Moments (朋友圈) ---- */
 
 /**
+ * WeChat's four audiences for a post (M-I19).
+ *
+ * `public`   公开        — everyone
+ * `private`  私密        — the author only
+ * `include`  部分可见    — `ids` is a WHITELIST
+ * `exclude`  不给谁看    — `ids` is a BLACKLIST
+ */
+export type MomentAudience = 'public' | 'private' | 'include' | 'exclude';
+
+/**
+ * Who may see one post. Absent on a row = 公开 (every pre-M-I19 post, and every
+ * post an AI writes — agents post to everyone).
+ *
+ * `ids` are contactIds and are only meaningful for include/exclude; the other
+ * two modes carry an empty list rather than an absent one so the JSON column
+ * has exactly one shape.
+ */
+export interface MomentVisibility {
+  mode: MomentAudience;
+  ids: string[];
+}
+
+/**
  * A Moments post. Authored by 'self' or an AI contact.
  *
  * `imageRefs` are keys into the image pool (see src/lib/moments-assets.ts), not
@@ -332,6 +365,13 @@ export interface MomentVM {
   repostAuthorId?: string;
   /** Snapshot excerpt of the original's text (built by repostExcerpt, capped). */
   repostExcerpt?: string;
+  /**
+   * 可见范围 (M-I19). Absent = 公开. Enforced in the DATA layer
+   * (`src/lib/moment-visibility.ts`, applied inside the Repo drivers and inside
+   * the reaction planner) rather than by whoever renders the feed — the whole
+   * point is that a caller who forgets cannot leak the post.
+   */
+  visibility?: MomentVisibility;
 }
 
 /** A like. `id` is `${momentId}:${contactId}` — one like per person per moment. */
