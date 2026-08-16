@@ -133,6 +133,23 @@ export async function actionExists(id: string): Promise<boolean> {
   return (await idbGet<ScheduledAction>('scheduled_actions', id)) != null;
 }
 
+/**
+ * The status of a row by id, or `null` when no such row was ever queued.
+ *
+ * `actionExists` answers "was this id ever used", which is the RIGHT question
+ * for a once-ever action (a nudge must not fire twice, whatever happened to the
+ * first row). It is the WRONG question for a self-chaining action: a `cancelled`
+ * row also "exists", so a guard written on existence turns a cancellation into a
+ * permanent stop. That is exactly how auto-backup died — `setAutoBackupFreq`
+ * cancels the pending row and immediately re-schedules, and within the same
+ * period the successor's deterministic id is the id it just cancelled, so the
+ * guard skipped it and the chain never restarted (tapping 每天 twice was enough).
+ * Chain guards must ask about the STATE, not the existence.
+ */
+export async function actionStatus(id: string): Promise<ScheduledAction['status'] | null> {
+  return (await idbGet<ScheduledAction>('scheduled_actions', id))?.status ?? null;
+}
+
 /** Is ANY action of this kind still pending? Used for roster-wide schedules (agent DMs). */
 export async function hasPendingOfKind(kind: ActionKind): Promise<boolean> {
   return (await pendingActions()).some((a) => a.kind === kind);
@@ -267,7 +284,14 @@ let running = false;
  * drain before any LLM-bound kind: a backfill batch of 8 slow generations in
  * front would otherwise stall a grab by minutes.
  */
-const FAST_KINDS: ReadonlySet<ActionKind> = new Set(['rp_grab', 'transfer_accept']);
+const FAST_KINDS: ReadonlySet<ActionKind> = new Set([
+  'rp_grab',
+  'transfer_accept',
+  // 斗图 (M-I18): a sticker comeback is a 0.8–2.5s beat in a live exchange. It
+  // costs no LLM call, so letting it queue behind a backfill batch would turn
+  // the one instant reaction in the app into a two-minute delayed punchline.
+  'sticker_reply',
+]);
 
 /**
  * Execute every past-due action once. Re-entrant-safe: a slow handler can't cause

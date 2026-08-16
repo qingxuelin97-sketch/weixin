@@ -14,12 +14,7 @@ import {
 } from '../../src/ai/sticker-taste';
 import { makePersona, STICKER_RATE_BASELINE } from '../../src/data/persona-defaults';
 import { stickerHabitLine } from '../../src/ai/prompt';
-import {
-  battleUrge,
-  wantsBattle,
-  battleReply,
-  stickerStreak,
-} from '../../src/ai/sticker-battle';
+import { battleUrge, battleReply, stickerStreak } from '../../src/ai/sticker-battle';
 import { STICKER_VOCAB } from '../../src/data/stickers';
 import { renderMessageBody } from '../../src/ai/render-msg';
 import type { MessageVM } from '../../src/data/types';
@@ -110,10 +105,9 @@ describe('battleUrge', () => {
   });
 });
 
-describe('wantsBattle / battleReply', () => {
+describe('battleReply', () => {
   it('is deterministic per seed', () => {
     const ctx = { seed: 'c1:42', streak: 2 };
-    expect(wantsBattle(ctx)).toBe(wantsBattle(ctx));
     expect(battleReply(ctx, ['idb:a'], 'idb:u')).toEqual(battleReply(ctx, ['idb:a'], 'idb:u'));
   });
 

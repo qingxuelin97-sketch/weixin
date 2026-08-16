@@ -52,10 +52,15 @@ export function battleUrge(streak: number, rate?: number): number {
   return Math.min(1, base * stickerScale(rate));
 }
 
-/** Seeded gate over the urge. */
-export function wantsBattle(ctx: BattleContext): boolean {
-  return seededRng(`stkbattle:${ctx.seed}`)() < battleUrge(ctx.streak, ctx.rate);
-}
+/*
+ * There used to be a `wantsBattle(ctx)` here — the seeded gate, exported. It
+ * had exactly one consumer: a test asserting it returns the same answer twice.
+ * `battleReply` rolls the identical gate on its own first line (it has to: the
+ * same rng stream then picks the sticker), so the export was a second name for
+ * a decision nothing outside ever asked for separately. Deleted rather than
+ * wired, because there is no capability behind it — a caller that wants to know
+ * whether she plays asks for the move.
+ */
 
 export interface BattleReply {
   /** What she sends: a custom ref (`idb:…`) or a vocab label (「捂脸」…). */

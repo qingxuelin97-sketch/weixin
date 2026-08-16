@@ -59,7 +59,25 @@ export interface NotifiableAction {
   body?: string;
   /** Explicit grading for non-heartbeat kinds (M-I15); heartbeats derive theirs. */
   notifyKind?: NotifyKind;
+  /**
+   * Where a tap should land (M-I18).
+   *
+   * The moments kinds already had to read `momentId` off the payload for the
+   * self-authored allowlist — and then dropped it, so the notification landed
+   * on whatever screen the app was last on and the user got to scroll the feed
+   * looking for the post someone had just reacted to. Heartbeats carry `convId`
+   * for the same reason: a proactive-message notification that opens the chat
+   * LIST is the same defect, one screen shallower.
+   */
+  route?: string;
 }
+
+/** `aiwx://moments?at=<id>` — the feed, anchored on one post. */
+export const momentsRoute = (momentId: string): string =>
+  `aiwx://moments?at=${encodeURIComponent(momentId)}`;
+
+/** `aiwx://chat/<convId>` — the same shape the Kotlin side builds for live ones. */
+export const chatRoute = (convId: string): string => `aiwx://chat/${encodeURIComponent(convId)}`;
 
 export interface NotifiableOpts {
   /**
@@ -84,6 +102,7 @@ export function toNotifiable(
     try {
       const p = JSON.parse(a.payloadJson) as {
         contactId?: unknown;
+        convId?: unknown;
         body?: unknown;
         momentId?: unknown;
       };
@@ -97,6 +116,10 @@ export function toNotifiable(
           kind: a.kind,
           fireAt: a.fireAt,
           contactId: p.contactId,
+          // The momentId was already in hand for the allowlist check above and
+          // used to stop here — which is why tapping the notification could not
+          // find the post it was about.
+          route: momentsRoute(p.momentId),
           ...(a.kind === 'moment_like'
             ? { body: LIKE_NOTIFY_BODY, notifyKind: 'reaction' as const }
             : a.kind === 'moment_repost'
@@ -111,6 +134,7 @@ export function toNotifiable(
         fireAt: a.fireAt,
         contactId: p.contactId,
         body: typeof p.body === 'string' && p.body.trim() ? p.body : undefined,
+        ...(typeof p.convId === 'string' && p.convId ? { route: chatRoute(p.convId) } : {}),
       });
     } catch {
       /* malformed payload — not worth failing the whole sync over */
@@ -145,6 +169,7 @@ export function buildNotifications(
       body: a.body ?? '',
       fireAt: a.fireAt,
       kind: a.notifyKind ?? (a.body ? 'greeting' : 'followup'),
+      ...(a.route ? { route: a.route } : {}),
     });
   }
   return out.sort((x, y) => x.fireAt - y.fireAt);

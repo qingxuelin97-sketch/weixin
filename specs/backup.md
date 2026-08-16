@@ -124,6 +124,11 @@ IDB——迁移后的设备上 settings 是 TEXT 列）。IDB 那一路最后写
 5. 成功后清标记、`clearBackupState()`（本机数据已不再是货架基准所描述的那份，下次自动备份
    必须是全量）、重置 `lastForegroundAt` 屏障（否则下次前台 pass 会把整段空档「回填」成
    编出来的活动）。
+6. **一个 store 一个事务**（M-I18）：写回走 `writeStoreRows`（IDB 侧是
+   `idbBulkPut`，整批一个事务），不是逐行 `writeStoreRow`。`writeStoreRows` 自 I17 就写好了
+   且零调用方——而恢复正是它存在的理由：四万条消息=四万个事务，慢到足以让 Android 在
+   `media` 中途回收 WebView，也就是上面 §5 那个「中断可知」要报的场景本身。
+   失败语义不变（逐行循环本来也是第一次抛错就整体中止并回滚）。
 
 v2 的增量路径走的是同样的 clear+write，却**既不写标记、也不快照、也不回滚**：链中途一个
 被截断的包会静默拿走联系人 / 会话 / 设置（I18-5）。
@@ -151,9 +156,18 @@ v2 的增量路径走的是同样的 clear+write，却**既不写标记、也不
   （AI↔AI 私信）内容不可能经此页泄漏。恢复链解析 `resolveRestoreChain`（纯函数）。
 - **自动备份**：scheduled kind `auto_backup`，`registerChainedHandler`（先续链后干活）。
   频率 关/每日/每周；每 `FULL_EVERY=7` 次一个全量，其余增量；新全量落地后清理更旧的自动
-  条目。id 按周期索引稳定，`actionExists` 守卫防复活。
+  条目。id 按周期索引稳定，守卫防复活。
   **基准两半必须同时具备**：只有水位没有哈希 → 退化成 v2 行为 → 就是本轮要修的 bug，
   所以此时强制走全量。
+- **守卫看的是状态，不是存在性**（M-I18）：`scheduleNext` 原先用 `actionExists(id)`，
+  而 `cancelled` 行也「存在」。`setAutoBackupFreq` 恰好是**先取消再重排**，同一周期内
+  重算出来的 id 就是它刚取消掉的那个 id —— 于是在设置页把「每天」再点一次（或
+  每天→每周→每天），链就断了；`ensureAutoBackupScheduled` 也救不回来（它只在没有 pending
+  时补，然后撞上同一个守卫）。结果：自动备份**永久静默停止**，而设置页还写着「每天」。
+  现在判据是 `actionStatus(id) === 'done'` —— 只有真的备份过的周期才跳过，取消掉的重建。
+  正向时钟下 done 分支其实不可达（done 行的 fireAt ≤ 执行时刻 ≤ now，而新 id 属于
+  now 之后的周期），留着是防时钟倒退。这是 CLAUDE.md「`enqueue` 按 id upsert」那条陷阱的
+  **反面**：一次性动作要问「有没有过」，自续链要问「是不是干完了」。
 - **水位只在文件真的落到货架之后才前进**（`commitBackupState`，I18-7）：手动导出旧代码
   `recordBackup(...).catch(() => {})` 吞掉失败却照样推进水位，之后的自动增量就挂在一个
   **货架上不存在的全量**之上——恢复链解析不出来，静默缺一段。失败时 UI 明说

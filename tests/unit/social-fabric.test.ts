@@ -660,6 +660,7 @@ function fakeDeps(opts: {
     visibleConvWithUser: () => undefined,
     claimRedPacket: async () => {},
     acceptTransfer: async () => {},
+    returnTransfer: async () => {},
     sendProactiveMessage: async () => {},
     sendGroupProactiveMessage: async () => {},
     runMemExtract: async () => {},

@@ -342,15 +342,27 @@ function BubbleContent({
     case 'transfer': {
       const amount = fenToYuan((msg.meta?.amountFen as number) ?? 0);
       const status = (msg.meta?.status as string) ?? 'pending';
-      const done = status === 'accepted';
+      const accepted = status === 'accepted';
+      // 24h 未收款自动退还 (M-I18). Settled the same way an accept is — dimmed,
+      // no longer tappable — because there is nothing left to do with it.
+      const returned = status === 'returned' || status === 'expired';
+      const done = accepted || returned;
       const statusText =
         (msg.meta?.statusText as string) ??
-        (done ? (isSelf ? '已收款' : '已被接收') : isSelf ? '你发起了一笔转账' : '请收款');
+        (returned
+          ? '已退还'
+          : accepted
+            ? isSelf
+              ? '已收款'
+              : '已被接收'
+            : isSelf
+              ? '你发起了一笔转账'
+              : '请收款');
       return (
         <div className={`money-bubble money-bubble--${side}${done ? ' money-bubble--dim' : ''}`}>
           <div className="money-bubble__main">
             <div className="transfer-icon" aria-hidden>
-              {done ? (
+              {accepted ? (
                 <svg viewBox="0 0 36 36" width="34" height="34">
                   <circle cx="18" cy="18" r="16" fill="none" stroke="currentColor" strokeWidth="2.4" />
                   <path

@@ -140,11 +140,29 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
   `${convId}:${msgId}` 种子掷骰：连发 2–4 条时概率峰值 0.65、长战衰减；命中
   则 0.8–2.5s 后**零 LLM** 回一张（优先她收藏的、永不复读你刚发的）；未命中
   走正常引擎回复。
+  **那 0.8–2.5s 走 `scheduled_actions`（M-I18）**：新 kind `sticker_reply`
+  （已入 `SCHEDULED_ACTION_KINDS` + `registerHandler`，并进 `FAST_KINDS`——
+  它是零成本的即时反应，排在回填的 LLM 批次后面会把唯一一个「秒回」变成
+  两分钟后的冷笑话）。原先是 ChatPage 里一个裸 `setTimeout`：这是**产生真实
+  消息**的第二条时间推进路径（违反铁律 5），窗口内退出会话就把这一回合吃掉，
+  而 `stickerStreak` 已经把它算进连击了。决策与随机仍在发送时一次算完，
+  排期行只搬运结论——所以 handler 不需要 rng、不需要人格、不需要 prompt。
 
 ### 已知坑（v2 新增）
 
 - 转发链只塌缩不递归：`buildRepost` 读 source 的快照字段而非追链查库。
 - `toNotifiable` 不带 `selfMomentIds` 时 moment_* 一律静默——旧调用方行为不变。
+- **通知要带落点**（M-I18）：`toNotifiable` 早就为「只通知你自己的帖」读了
+  `momentId`，然后把它丢掉，而 `ScheduledNotification` 根本没有目的地字段——
+  于是「XX 赞了你的朋友圈」点进去只是打开 App，用户还得自己在 feed 里翻。
+  现在 moment_* 带 `aiwx://moments?at=<momentId>`、heartbeat 带
+  `aiwx://chat/<convId>`，随 `extra.route` 下发；点击回来经
+  `onNotificationTap` → **同一个** `parseDeepLink` 白名单（通知 payload 不比
+  任何别的 intent 更可信），`/moments` 已入白名单。落地端
+  `MomentsPage` 读 `?at=`，必要时把 `shown` 涨到目标下标、滚到居中、
+  `.moment-anchor-flash` 闪一下（复用聊天页 `msg-anchor-flash` 那套；
+  `backwards` 不是 `both`——卡片包装器留残余样式就是 I8 那个把全屏图片查看器
+  缩成 390px 的包含块陷阱）。
 - 自定义表情是 `idb:` ref，**收藏/斗图池要过 `startsWith('idb:')`**，词表
   label 混进池子会被当 ref 渲染成裂图。
 

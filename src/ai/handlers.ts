@@ -95,6 +95,8 @@ export interface HandlerDeps {
   // --- domain services, injected so a handler test never reaches the network ---
   claimRedPacket: (rpId: string, contactId: string, name: string, hooks: EngineHooks) => Promise<unknown>;
   acceptTransfer: (transferId: string, hooks: EngineHooks) => Promise<unknown>;
+  /** 24h uncollected → the money goes back (M-I18). No-op if already settled. */
+  returnTransfer: (transferId: string, hooks: EngineHooks, at?: number) => Promise<unknown>;
   sendProactiveMessage: (
     convId: string,
     peer: ContactVM,
@@ -185,6 +187,53 @@ export async function handleTransferAccept(
 ): Promise<void> {
   const transferId = str(payload.transferId);
   if (transferId) await d.acceptTransfer(transferId, d.hooks);
+}
+
+/**
+ * 24h passed and nobody collected: the money goes home (M-I18).
+ *
+ * A no-op unless the transfer is still pending, so the row is safe to leave
+ * queued after an accept rather than paying a pending-set scan to cancel it.
+ */
+export async function handleTransferReturn(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const transferId = str(payload.transferId);
+  if (transferId) await d.returnTransfer(transferId, d.hooks, optNum(payload.at));
+}
+
+/* ----------------------------- 斗图 (M-I18) ----------------------------- */
+
+/**
+ * Her wordless sticker comeback.
+ *
+ * The decision (does she play, with which sticker, after how long) was already
+ * made and seeded when the user's sticker landed — this only delivers it. That
+ * split is why the delay could move onto the queue at all: nothing here needs
+ * an rng, a persona or a prompt, so a reply queued before the app was closed
+ * still lands correctly whenever the queue is next drained.
+ */
+export async function handleStickerReply(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const contactId = str(payload.contactId);
+  const content = str(payload.content);
+  if (!convId || !contactId || !content) return;
+  // The conversation may have been deleted inside the 0.8–2.5s window.
+  if (!d.conversationExists(convId)) return;
+  const at = optNum(payload.at) ?? d.now();
+  await d.hooks.appendMessage({
+    convId,
+    senderId: contactId,
+    type: 'sticker',
+    content,
+    status: 'sent',
+    createdAt: at,
+  });
+  d.playMessageSound(at);
 }
 
 /* ---------------------------- heartbeat ---------------------------- */

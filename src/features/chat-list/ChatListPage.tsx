@@ -7,6 +7,7 @@ import { Badge } from '../../components/Badge';
 import { IconPlus, IconSearch } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
 import { listTimestamp } from '../../lib/time';
+import { totalUnread as totalUnreadOf } from '../../lib/unread';
 import type { ConversationVM } from '../../data/types';
 import './chat-list.css';
 import { useNow } from '../../lib/useNow';
@@ -28,7 +29,10 @@ export function ChatListPage() {
   // Hidden (AI↔AI DM) conversations must never surface here.
   const conversations = useMemo(() => all.filter((c) => !c.isHidden), [all]);
   const navigate = useNavigate();
-  const totalUnread = conversations.reduce((n, c) => n + (c.isMuted ? 0 : c.unreadCount), 0);
+  // Over `all`, not the filtered list: the exclusion rule (muted AND hidden)
+  // belongs to lib/unread.ts, so this surface cannot drift from the tab badge
+  // by relying on a filter that happens to have run first.
+  const totalUnread = totalUnreadOf(all);
 
   /**
    * 下拉刷新 (M-I8).

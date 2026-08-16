@@ -29,8 +29,10 @@ import {
   buildNotifications,
   LIKE_NOTIFY_BODY,
   REPOST_NOTIFY_BODY,
+  momentsRoute,
 } from '../../src/ai/notify-service';
 import { displayBody, NO_PREVIEW_BODY, canPregenerateBody } from '../../src/lib/notify';
+import { parseDeepLink } from '../../src/native/deep-link';
 import type { GoalState } from '../../src/ai/goals';
 import type { ScheduledAction } from '../../src/ai/scheduler';
 import type { MomentVM, MomentLikeVM, MomentCommentVM } from '../../src/data/types';
@@ -445,5 +447,76 @@ describe('moments reaction notifications (尊重内容分级)', () => {
     const [n] = buildNotifications(toNotifiable([hb], { selfMomentIds }), nameOf, NOW);
     expect(n.kind).toBe('greeting');
     expect(displayBody(n)).toBe('早安');
+  });
+});
+
+/**
+ * 通知落点 (M-I18).
+ *
+ * `toNotifiable` had the momentId in hand for the self-post allowlist and then
+ * dropped it, and `ScheduledNotification` had no destination field at all — so
+ * a pre-scheduled notification opened the app at wherever it last was. For a
+ * 赞/评 that means the user is told someone reacted to their post and then has
+ * to go find which one. The live notifications (background-notify) always
+ * carried `aiwx://chat/<convId>`; this is the scheduled half catching up.
+ */
+describe('a reaction notification knows which post it is about', () => {
+  const nameOf = (id: string) => (id === 'a' ? '林小雨' : undefined);
+  const selfMomentIds = new Set(['mm']);
+
+  it('carries an anchored moments route through to the scheduled item', () => {
+    const [n] = buildNotifications(toNotifiable([action()], { selfMomentIds }), nameOf, NOW);
+    expect(
+      n.route,
+      '朋友圈通知没有落点——点进去只能自己在feed里翻找那一条',
+    ).toBe('aiwx://moments?at=mm');
+  });
+
+  it('every moments kind gets one, comments included', () => {
+    for (const kind of ['moment_like', 'moment_comment', 'moment_repost'] as const) {
+      const [n] = buildNotifications(
+        toNotifiable([action({ kind })], { selfMomentIds }),
+        nameOf,
+        NOW,
+      );
+      expect(n.route).toBe('aiwx://moments?at=mm');
+    }
+  });
+
+  it('a momentId with URL-hostile characters survives the round trip', () => {
+    const a = action({ payload: { momentId: 'mo/1?x=2&y', contactId: 'a' } });
+    const [n] = buildNotifications(
+      toNotifiable([a], { selfMomentIds: new Set(['mo/1?x=2&y']) }),
+      nameOf,
+      NOW,
+    );
+    const route = parseDeepLink(n.route!);
+    expect(route).toBe('/moments?at=mo%2F1%3Fx%3D2%26y');
+    expect(new URLSearchParams(route!.split('?')[1]).get('at')).toBe('mo/1?x=2&y');
+  });
+
+  it('a heartbeat opens its own chat, not the chat list', () => {
+    const hb = action({
+      kind: 'heartbeat',
+      id: 'hb1',
+      payload: { contactId: 'a', convId: 'conv_a', body: '早安' },
+    });
+    const [n] = buildNotifications(toNotifiable([hb], { selfMomentIds }), nameOf, NOW);
+    expect(n.route).toBe('aiwx://chat/conv_a');
+    expect(parseDeepLink(n.route!)).toBe('/chat/conv_a');
+  });
+
+  it('a heartbeat with no convId simply has no route, rather than a broken one', () => {
+    const hb = action({ kind: 'heartbeat', id: 'hb2', payload: { contactId: 'a' } });
+    const [n] = buildNotifications(toNotifiable([hb], { selfMomentIds }), nameOf, NOW);
+    expect(n.route).toBeUndefined();
+  });
+
+  it('the route still has to pass the deep-link allowlist', () => {
+    // A notification payload is not more trusted than any other intent: it goes
+    // back in through the same gate. /moments had to be added to it.
+    expect(parseDeepLink(momentsRoute('mm'))).toBe('/moments?at=mm');
+    expect(parseDeepLink('aiwx://moments/secret')).toBeNull();
+    expect(parseDeepLink('aiwx://settings/keys')).toBeNull();
   });
 });

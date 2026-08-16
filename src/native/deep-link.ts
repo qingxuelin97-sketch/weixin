@@ -16,6 +16,11 @@ const ALLOWED: RegExp[] = [
   /^\/chats$/,
   /^\/chat\/[^/]+$/,
   /^\/call\/[^/]+$/,
+  // 朋友圈赞评通知 (M-I18): tapping one lands on the feed, anchored to the post
+  // via `?at=<momentId>` — the same query convention the chat page uses for a
+  // search hit. Before this the moments notification had no route at all: it
+  // opened the launcher's idea of the app and the user had to find the post.
+  /^\/moments$/,
   /^\/settings\/battery$/,
   /^\/settings\/native$/,
 ];

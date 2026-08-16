@@ -19,7 +19,8 @@ import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
 import { useMedia } from '../../components/useMedia';
 import { recordUserSticker, agentStickerPool } from '../../ai/sticker-taste';
 import { battleReply, stickerStreak } from '../../ai/sticker-battle';
-import { playMessageSound } from '../../lib/sound';
+import { totalUnread as totalUnreadOf } from '../../lib/unread';
+import { enqueue } from '../../ai/scheduler';
 import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { logError } from '../../lib/errlog';
 import { ComposerPanels } from './ComposerPanels';
@@ -121,9 +122,7 @@ export function ChatPage() {
     return read ? lastSelf.id : null;
   }, [messages, readReceipts, isTyping]);
   // Being *in* this conversation zeroes its badge, so no per-conv exception here.
-  const totalUnread = useAppStore((s) =>
-    s.conversations.reduce((n, c) => n + (c.isMuted || c.isHidden ? 0 : c.unreadCount), 0),
-  );
+  const totalUnread = useAppStore((s) => totalUnreadOf(s.conversations));
   const composer = useComposerPanel();
   const [draft, setDraft] = useState('');
   const draftRef = useRef(draft);
@@ -686,18 +685,22 @@ export function ChatPage() {
         // A wordless round: the sticker IS the reply. Deliberately NOT routed
         // through the engine — no prompt, no tokens, no typing indicator; just
         // the beat of someone scrolling for the right card.
-        setTimeout(() => {
-          void appendMessage({
-            convId,
-            senderId: peer.id,
-            type: 'sticker',
-            content: reply.content,
-            status: 'sent',
-            createdAt: Date.now(),
-          })
-            .then(() => playMessageSound(Date.now()))
-            .catch((e) => logError('chat.stickerBattle', e));
-        }, reply.delayMs);
+        //
+        // The BEAT rides scheduled_actions (铁律 5), not a setTimeout. This
+        // produces a real message, so a bare timer was a second time-evolution
+        // path with the usual consequence: back out of the chat inside those
+        // 0.8–2.5s and the reply evaporated, while `stickerStreak` had already
+        // counted the round. The decision above is seeded and complete, so the
+        // queued row carries the finished move and can land whenever the queue
+        // next drains. `sticker_reply` is a FAST_KIND — the beat is the point.
+        const fireAt = Date.now() + reply.delayMs;
+        await enqueue({
+          kind: 'sticker_reply',
+          fireAt,
+          payload: { convId, contactId: peer.id, content: reply.content, at: fireAt },
+          now: Date.now(),
+          id: `stkbattle_${convId}_${saved.id}`,
+        });
         return;
       }
       await replyToLatest(convId, peer, persona, globalTier, hooks);

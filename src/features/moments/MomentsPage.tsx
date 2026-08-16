@@ -12,7 +12,7 @@
  * badge, and cards gain 转发 / #话题# / author-album navigation.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMedia } from '../../components/useMedia';
 import { useAppStore } from '../../store/appStore';
 import { Avatar } from '../../components/Avatar';
@@ -127,6 +127,37 @@ export function MomentsPage() {
     useMemo(() => [coverRef, ...visible.flatMap((m) => m.imageRefs ?? [])], [coverRef, visible]),
   );
   const coverUrl = coverRef ? resolveImageRef(coverRef).url : undefined;
+
+  /**
+   * 通知/深链锚定 (M-I18): `?at=<momentId>` — scroll that post into view and
+   * flash it once, the same convention (and the same one-pulse treatment) the
+   * chat page uses for a search hit.
+   *
+   * The feed mounts `INITIAL_CARDS` at a time, so a post further down is not in
+   * the DOM yet; `shown` is grown to cover the target's index before looking
+   * for the node. Keyed so a re-render does not re-run the jump, while a NEW
+   * notification for a different post does.
+   */
+  const [searchParams] = useSearchParams();
+  const atParam = searchParams.get('at');
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const anchoredKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!atParam || anchoredKey.current === atParam) return;
+    const idx = moments.findIndex((m) => m.id === atParam);
+    // Not in this page of the feed (deleted, or older than the 60-row cap):
+    // leave the user at the top rather than scrolling to nothing.
+    if (idx < 0) return;
+    anchoredKey.current = atParam;
+    if (idx >= shown) setShown(idx + INITIAL_CARDS);
+    // One frame for the newly-mounted cards to land.
+    requestAnimationFrame(() => {
+      const el = scrollRef.current?.querySelector(`[data-moment-id="${CSS.escape(atParam)}"]`);
+      if (!el) return;
+      (el as HTMLElement).scrollIntoView({ block: 'center' });
+      setFlashId(atParam);
+    });
+  }, [atParam, moments, shown]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -253,7 +284,19 @@ export function MomentsPage() {
               const likes = likesFor(m.id);
               const enter = stagger(cardIdx);
               return (
-                <div key={m.id} className={enter?.className} style={enter?.style}>
+                <div
+                  key={m.id}
+                  data-moment-id={m.id}
+                  className={[enter?.className, flashId === m.id && 'moment-anchor-flash']
+                    .filter(Boolean)
+                    .join(' ')}
+                  style={enter?.style}
+                  // Cleared on animation end so a later notification for the
+                  // same post can flash it again (chat.tsx does the same).
+                  onAnimationEnd={(e) =>
+                    e.animationName === 'moment-anchor-flash' && setFlashId(null)
+                  }
+                >
                   <MomentCard
                     moment={m}
                     author={m.authorId === 'self' ? self : byId.get(m.authorId)}

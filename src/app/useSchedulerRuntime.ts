@@ -17,7 +17,7 @@ import {
   enqueue,
   actionExists,
 } from '../ai/scheduler';
-import { claimRedPacket, acceptTransfer } from '../ai/money-service';
+import { claimRedPacket, acceptTransfer, returnTransfer } from '../ai/money-service';
 import {
   runGift,
   considerGift,
@@ -57,6 +57,8 @@ import {
   type HandlerDeps,
   handleRpGrab,
   handleTransferAccept,
+  handleTransferReturn,
+  handleStickerReply,
   handleRecall,
   handleGroupMsg,
   handleMemExtract,
@@ -141,6 +143,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
 
       claimRedPacket: (rpId, contactId, name, h) => claimRedPacket(rpId, contactId, name, h),
       acceptTransfer: (transferId, h) => acceptTransfer(transferId, h),
+      returnTransfer: (transferId, h, at) => returnTransfer(transferId, h, at),
       sendProactiveMessage,
       sendGroupProactiveMessage,
       runMemExtract,
@@ -222,6 +225,10 @@ export function useSchedulerRuntime(enabled: boolean): void {
 
     registerHandler('rp_grab', (p) => handleRpGrab(deps, p));
     registerHandler('transfer_accept', (p) => handleTransferAccept(deps, p));
+    registerHandler('transfer_return', (p) => handleTransferReturn(deps, p));
+    // 斗图 (M-I18): the seeded comeback, delivered off the queue rather than a
+    // bare setTimeout — leaving the chat mid-window used to eat the reply.
+    registerHandler('sticker_reply', (p) => handleStickerReply(deps, p));
     registerHandler('recall', (p) => handleRecall(deps, p));
     registerHandler('group_msg', (p, a) => handleGroupMsg(deps, p, a));
     registerHandler('mem_extract', (p) => handleMemExtract(deps, p));
