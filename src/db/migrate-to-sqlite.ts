@@ -42,9 +42,10 @@ import { SQLITE_MIGRATE_PROGRESS_KEY } from '../lib/device-local';
 
 /**
  * Where the resumable progress lives (an IndexedDB settings row). Device-local,
- * so the one exclusion list in src/lib/device-local.ts owns the name.
+ * so the one exclusion list in src/lib/device-local.ts owns the name — and it
+ * travels under that SAME name, never as a local alias: one key, one name.
  */
-export const MIGRATE_PROGRESS_KEY = SQLITE_MIGRATE_PROGRESS_KEY;
+export { SQLITE_MIGRATE_PROGRESS_KEY };
 
 /** Stores never copied, with the reason the settings page shows. */
 export const MIGRATE_SKIPPED: Record<string, string> = {
@@ -79,7 +80,7 @@ export interface MigrateResult {
 }
 
 /** Settings rows that describe THIS migration/driver, not the data. */
-const DRIVER_STATE_KEYS = new Set([SQLITE_MIGRATED_AT_KEY, MIGRATE_PROGRESS_KEY]);
+const DRIVER_STATE_KEYS = new Set([SQLITE_MIGRATED_AT_KEY, SQLITE_MIGRATE_PROGRESS_KEY]);
 
 /**
  * A settings row that must stay in IndexedDB: the live CryptoKey master key
@@ -95,13 +96,13 @@ function isDeviceLocalRow(store: string, row: unknown): boolean {
 }
 
 async function readProgress(): Promise<ProgressRow> {
-  const row = await idbGet<{ key: string; value: ProgressRow }>('settings', MIGRATE_PROGRESS_KEY);
+  const row = await idbGet<{ key: string; value: ProgressRow }>('settings', SQLITE_MIGRATE_PROGRESS_KEY);
   const v = row?.value;
   return v && Array.isArray(v.done) ? v : { done: [] };
 }
 
 async function writeProgress(p: ProgressRow): Promise<void> {
-  await idbPut('settings', { key: MIGRATE_PROGRESS_KEY, value: p });
+  await idbPut('settings', { key: SQLITE_MIGRATE_PROGRESS_KEY, value: p });
 }
 
 /**
@@ -221,7 +222,7 @@ export async function migrateToSqlite(
 
     // Only now does the flag flip — and the resume marker is retired.
     await idbPut('settings', { key: SQLITE_MIGRATED_AT_KEY, value: opts.now() });
-    await idbDelete('settings', MIGRATE_PROGRESS_KEY);
+    await idbDelete('settings', SQLITE_MIGRATE_PROGRESS_KEY);
     return { ok: true, aborted: false, counts, excluded };
   } catch (e) {
     return {

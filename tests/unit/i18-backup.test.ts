@@ -36,7 +36,7 @@ import {
   NOTIFY_GRANTED_KEY,
 } from '../../src/lib/device-local';
 import { SQLITE_MIGRATED_AT_KEY } from '../../src/db/driver';
-import { MIGRATE_PROGRESS_KEY } from '../../src/db/migrate-to-sqlite';
+import { SQLITE_MIGRATE_PROGRESS_KEY } from '../../src/db/migrate-to-sqlite';
 import { BACKUP_HISTORY_KEY as HISTORY_KEY_FROM_SHELF } from '../../src/lib/backup-history';
 import {
   AUTO_BACKUP_COUNTER_KEY as COUNTER_KEY_FROM_AUTO,
@@ -505,7 +505,7 @@ describe('⑥ 设备本地行：一份显式清单（守卫）', () => {
     // rather than trusted to review.
     for (const key of [
       SQLITE_MIGRATED_AT_KEY,
-      MIGRATE_PROGRESS_KEY,
+      SQLITE_MIGRATE_PROGRESS_KEY,
       HISTORY_KEY_FROM_SHELF,
       COUNTER_KEY_FROM_AUTO,
       WATERMARKS_KEY_FROM_AUTO,

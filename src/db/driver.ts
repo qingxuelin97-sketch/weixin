@@ -30,14 +30,16 @@ import {
   sqliteDeleteRow,
   type SqlDb,
 } from './sqlite';
-import { SQLITE_MIGRATED_AT_KEY as DEVICE_LOCAL_SQLITE_MIGRATED_AT_KEY } from '../lib/device-local';
+import { SQLITE_MIGRATED_AT_KEY } from '../lib/device-local';
 
 /**
  * Settings row (in IndexedDB) that marks the migration as completed. It is
  * device-local — see src/lib/device-local.ts, which owns the one list a backup
- * filters against; this re-export keeps the existing import sites working.
+ * filters against. Re-exported under the SAME name so existing import sites
+ * keep working: an alias (`export const X = Y`) would be a second name for one
+ * key, and the settings-key ledger guard follows imports, not aliases.
  */
-export const SQLITE_MIGRATED_AT_KEY = DEVICE_LOCAL_SQLITE_MIGRATED_AT_KEY;
+export { SQLITE_MIGRATED_AT_KEY };
 
 const DB_FILE = 'weixin-ai';
 

@@ -14,7 +14,7 @@ import {
 } from '../../src/db/idb';
 import {
   migrateToSqlite,
-  MIGRATE_PROGRESS_KEY,
+  SQLITE_MIGRATE_PROGRESS_KEY,
   MIGRATE_SKIPPED,
 } from '../../src/db/migrate-to-sqlite';
 import { SQLITE_MIGRATED_AT_KEY } from '../../src/db/driver';
@@ -127,7 +127,7 @@ describe('migrateToSqlite round trip (转红 ①)', () => {
           (r) =>
             !(r.value instanceof CryptoKey) &&
             r.key !== SQLITE_MIGRATED_AT_KEY &&
-            r.key !== MIGRATE_PROGRESS_KEY,
+            r.key !== SQLITE_MIGRATE_PROGRESS_KEY,
         );
         expect(dst).toEqual(portable);
         expect(dst.some((r) => r.key === '__crypto_master')).toBe(false);
@@ -151,7 +151,7 @@ describe('migrateToSqlite round trip (转红 ①)', () => {
     // Completion flag set with the injected clock; progress row retired.
     const flag = await idbGet<{ key: string; value: number }>('settings', SQLITE_MIGRATED_AT_KEY);
     expect(flag?.value).toBe(T0 + 999);
-    expect(await idbGet('settings', MIGRATE_PROGRESS_KEY)).toBeUndefined();
+    expect(await idbGet('settings', SQLITE_MIGRATE_PROGRESS_KEY)).toBeUndefined();
 
     // The master key never moved: still in IDB, still a live CryptoKey.
     const master = await idbGet<{ key: string; value: unknown }>('settings', '__crypto_master');
@@ -173,7 +173,7 @@ describe('migrateToSqlite round trip (转红 ①)', () => {
     expect(first.aborted).toBe(true);
     expect(await idbGet('settings', SQLITE_MIGRATED_AT_KEY)).toBeUndefined();
     // Progress survived, so the next run continues rather than starting over.
-    expect(await idbGet('settings', MIGRATE_PROGRESS_KEY)).toBeDefined();
+    expect(await idbGet('settings', SQLITE_MIGRATE_PROGRESS_KEY)).toBeDefined();
 
     const second = await migrateToSqlite(db, { now: () => T0 + 1, batchSize: 2 });
     expect(second.error).toBeUndefined();

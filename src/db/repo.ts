@@ -304,6 +304,16 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
   autoBackupFreq: { scope: 'global', row: 'exempt', why: '备份配置' },
   autoBackupCounter: { scope: 'global', row: 'exempt', why: '备份计数器' },
   backupWatermarks: { scope: 'global', row: 'exempt', why: '按 store 名索引的增量水位，不含 id' },
+  backupRowDigest: {
+    scope: 'global',
+    row: 'exempt',
+    // It DOES contain this contact's row ids, but pruning them would be the
+    // wrong move: the digest is the baseline of the last package, and a
+    // missing id is exactly how the next increment says 「这行被删了」. Prune
+    // it and the deletion never reaches the backup — the contact comes back
+    // on the next restore. See specs/backup.md.
+    why: '上个备份包的逐行哈希基准；缺 id 正是墓碑的表达方式，删掉反而会让删除丢失',
+  },
   backupHistory: { scope: 'global', row: 'exempt', why: '备份文件清单' },
   groupBuildActive: {
     scope: 'global',
