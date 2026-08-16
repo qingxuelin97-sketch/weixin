@@ -25,6 +25,11 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      # Build in CI too (M-I18). Until now only the screenshot job built, so a
+      # broken production build could reach the branch while `check` stayed
+      # green — and nothing measured startup weight at all.
+      - run: pnpm build
+      - run: pnpm check:size
 
   screenshot:
     name: golden screenshots

@@ -15,6 +15,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "lint": "eslint . && node scripts/check-no-hardcoded-colors.mjs",
+    "check:size": "node scripts/check-bundle-size.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:screenshot": "playwright test",
