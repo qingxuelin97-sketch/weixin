@@ -84,6 +84,38 @@ const settingRow = (dump: Record<string, unknown[]>, key: string) =>
     (r) => r.key === key,
   );
 
+/**
+ * Plant a marker shelf row straight into IndexedDB.
+ *
+ * It has to be planted AFTER the wipe. The obvious version of this check —
+ * "the entry the export wrote is still there afterwards" — is a race, because
+ * `CLEAR_ALL` nukes every store including that very row, and whether it
+ * survives depends on whether `recordBackup`'s async write landed before or
+ * after the wipe. (It usually lands after, which is why that version passed
+ * locally and on one CI run before failing on the next.) Planting the row
+ * ourselves makes the question exact: does the RESTORE overwrite this device's
+ * shelf with the package's?
+ */
+const plantShelf = (key: string, marker: string) => `
+  new Promise((resolve, reject) => {
+    const req = indexedDB.open('weixin-ai');
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('settings', 'readwrite');
+      tx.objectStore('settings').put({
+        key: ${JSON.stringify(key)},
+        value: [{ id: ${JSON.stringify(marker)}, name: ${JSON.stringify(marker)} + '.aiwx',
+                  createdAt: 1, mode: 'full', source: 'manual', counts: {} }],
+      });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    };
+  })
+`;
+
+const SHELF_MARKER = 'mb_planted_by_e2e';
+
 test('export → wipe → restore round-trips the real database', async ({ page }) => {
   await page.goto('/#/chats');
   await page.waitForTimeout(800); // hydrate() seeds on first run
@@ -110,6 +142,9 @@ test('export → wipe → restore round-trips the real database', async ({ page 
   expect(wiped.messages).toEqual([]);
   expect(wiped.conversations).toEqual([]);
 
+  // Stand in for "this device already had a backup shelf" — see plantShelf.
+  await page.evaluate(plantShelf(BACKUP_HISTORY_KEY, SHELF_MARKER));
+
   // Restore through the UI: pick the file, then confirm.
   await page.goto('/#/settings/backup');
   await page.waitForTimeout(200);
@@ -129,16 +164,13 @@ test('export → wipe → restore round-trips the real database', async ({ page 
 
   // …and the other half of the contract (M-I18): the rows excluded above are
   // excluded because the restore PRESERVES this device's copy, not because
-  // nobody checks them. The shelf entry the export just wrote must still be
-  // there — if a restore rewound it, the shelf would list files that no longer
-  // exist and would have lost the very entry the restore came from.
+  // nobody checks them. The shelf planted before the restore must survive it —
+  // if a restore rewound the shelf, it would list files that no longer exist
+  // and would have lost the very entry the restore came from.
   const shelf = settingRow(afterRaw, BACKUP_HISTORY_KEY)?.value as
-    | { entries?: Array<{ name?: string }> }
-    | Array<{ name?: string }>
+    | Array<{ id?: string }>
     | undefined;
-  const entries = Array.isArray(shelf) ? shelf : (shelf?.entries ?? []);
-  expect(entries.length).toBeGreaterThan(0);
-  expect(entries.some((e) => e.name === download.suggestedFilename())).toBe(true);
+  expect(shelf?.map((e) => e.id)).toEqual([SHELF_MARKER]);
 });
 
 test('a restore confirmation states what it is about to replace', async ({ page }) => {
