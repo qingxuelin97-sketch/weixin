@@ -835,7 +835,7 @@
    WeChat renders these WHITE on both sides (a card, not speech) — so the base
    bubble background and the tail color are overridden together. */
 .loc-card,
-.contact-card,
+.namecard,
 .file-card,
 .link-card,
 .invite-card {
@@ -846,7 +846,7 @@
   width: 232px;
 }
 .loc-card::before,
-.contact-card::before,
+.namecard::before,
 .file-card::before,
 .link-card::before,
 .invite-card::before {
@@ -921,28 +921,28 @@
 }
 
 /* 名片：avatar + name, hairline, footer. */
-.contact-card__main {
+.namecard__main {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 12px;
 }
-.contact-card__lines {
+.namecard__lines {
   min-width: 0;
 }
-.contact-card__name {
+.namecard__name {
   font-size: var(--fs-cell-title);
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.contact-card__wxid {
+.namecard__wxid {
   margin-top: 2px;
   font-size: var(--fs-small-gray);
   color: var(--color-text-secondary);
 }
-.contact-card__footer,
+.namecard__footer,
 .file-card__footer {
   margin: 0 12px;
   padding: 5px 0 6px;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import { SCHEDULED_ACTION_KINDS } from '../../src/db/schema';
 import { STORES } from '../../src/db/idb';
 
@@ -23,6 +23,16 @@ import { STORES } from '../../src/db/idb';
 
 const root = resolve(__dirname, '../..');
 const read = (p: string) => readFileSync(resolve(root, p), 'utf8');
+
+/** Every .ts/.tsx under a directory, recursively. */
+function srcFiles(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) srcFiles(p, out);
+    else if (p.endsWith('.ts') || p.endsWith('.tsx')) out.push(p);
+  }
+  return out;
+}
 
 const runtime = read('src/app/useSchedulerRuntime.ts');
 
@@ -406,11 +416,28 @@ describe('backup v2 and the SQLite driver are actually reachable', () => {
  * and both are worth a red test.
  */
 describe('every declared index has a reader', () => {
-  const src = [
-    read('src/db/repo.ts'),
-    read('src/db/idb.ts'),
-    read('src/ai/scheduler.ts'),
-  ].join('\n');
+  // The corpus is ALL of src/ except `src/db/idb.ts` (M-I18).
+  //
+  // It used to be three hand-picked files, one of which was idb.ts — the very
+  // place the index names are declared as string literals. So
+  // `src.includes("'byFireAt'")` was true for every declared index whether or
+  // not anything read it: the assertion could not fail. It was decoration
+  // shaped like a guard, and it hid `story_saves.byScript`, which had zero
+  // queries from the day it shipped (`listSaves` did getAll-then-filter, the
+  // exact pattern M-G1 caught `bySubject`/`byStatus`/`byRp` in).
+  //
+  // Hand-picking was also wrong on its own: `story-gm.ts` reads its store
+  // directly rather than through the Repo, so a correct reader there would
+  // still have read as "no reader". Scan everything, exclude only the
+  // declaration.
+  const src = srcFiles(join(__dirname, '..', '..', 'src'))
+    .filter((f) => !f.endsWith(join('src', 'db', 'idb.ts')))
+    .map((f) => readFileSync(f, 'utf8'))
+    .join('\n');
+
+  it('the corpus excludes the declaration site — otherwise this whole block is a tautology', () => {
+    expect(src).not.toContain('indexes: [');
+  });
 
   for (const store of STORES) {
     for (const idx of store.indexes ?? []) {

@@ -462,19 +462,19 @@ function BubbleContent({
       const name = (msg.meta?.name as string | undefined) ?? msg.content ?? '';
       const wxid = msg.meta?.wxid as string | undefined;
       return (
-        <div className={`bubble bubble--${side} contact-card`}>
-          <div className="contact-card__main">
+        <div className={`bubble bubble--${side} namecard`}>
+          <div className="namecard__main">
             <Avatar
               color={(msg.meta?.avatarColor as string | undefined) ?? 'var(--color-brand)'}
               text={(msg.meta?.avatarText as string | undefined) ?? name.slice(0, 1)}
               size={40}
             />
-            <div className="contact-card__lines">
-              <div className="contact-card__name">{name}</div>
-              {wxid && <div className="contact-card__wxid">微信号：{wxid}</div>}
+            <div className="namecard__lines">
+              <div className="namecard__name">{name}</div>
+              {wxid && <div className="namecard__wxid">微信号：{wxid}</div>}
             </div>
           </div>
-          <div className="contact-card__footer">个人名片</div>
+          <div className="namecard__footer">个人名片</div>
         </div>
       );
     }

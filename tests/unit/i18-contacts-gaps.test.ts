@@ -108,3 +108,45 @@ describe('联系人资料页', () => {
     expect(src).toMatch(/moments\/album\/\$\{contactId\}/);
   });
 });
+
+/**
+ * 收藏闸门与收藏页渲染器必须同口径 (M-I18).
+ *
+ * The favorites page is a SECOND message renderer, and it only ever grew the
+ * types someone remembered to add. I18 widened the long-press menu to open for
+ * every message type — correct on its own — and 收藏 rode along, so a red
+ * packet could be favourited and the favorites page rendered its `default`
+ * branch: the literal string 「[rp]」, an internal enum name on screen. Real
+ * WeChat does not offer 收藏 on 红包 / 转账 / 通话记录 either.
+ *
+ * Two lists in two files with no link between them is the shape that produced
+ * it, so this is the link.
+ */
+describe('收藏的闸门与收藏页的渲染器同口径', () => {
+  const chat = read('src/features/chat/ChatPage.tsx');
+  const favs = read('src/features/favorites/FavoritesPage.tsx');
+
+  /** Types FavoriteBody has a real `case` for. */
+  const rendered = new Set(
+    [...favs.matchAll(/^\s*case '([a-z_]+)':/gm)].map((m) => m[1]),
+  );
+  /** Types the 收藏 menu item is offered for. */
+  const offered = new Set(
+    [...(/const FAVORITABLE[^=]*=\s*\[([^\]]*)\]/s.exec(chat)?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map(
+      (m) => m[1],
+    ),
+  );
+
+  it('the scan found both lists — a broken regex must not pass by finding nothing', () => {
+    expect(rendered.size).toBeGreaterThan(5);
+    expect(offered.size).toBeGreaterThan(5);
+  });
+
+  it('offers 收藏 for exactly what the favorites page can draw', () => {
+    expect([...offered].sort()).toEqual([...rendered].sort());
+  });
+
+  it('never offers it for ledger events (红包/转账/通话记录)', () => {
+    for (const t of ['rp', 'transfer', 'call']) expect(offered.has(t)).toBe(false);
+  });
+});

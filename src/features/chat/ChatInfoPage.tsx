@@ -75,7 +75,14 @@ export function ChatInfoPage() {
     void repo.getSetting<Record<string, string>>(`groupNick:${convId}`).then((n) => setNicks(n ?? {}));
   }, [convId, isGroupConv]);
 
-  if (!conv) {
+  // `isHidden` is checked here for the same reason ChatPage checks it, and it
+  // has to be checked in BOTH: a96c0e8 gated the chat route and stopped there,
+  // leaving `/chat/<hidden-dm-id>/info` open. That page names both AI↔AI
+  // participants, their group nicknames and the member grid — a hand-typed URL
+  // would have shown the user a private chat they must never learn exists.
+  // The wording stays 「会话不存在」 rather than 「不可查看」 for the same reason
+  // as there: admitting a hidden thread exists is itself the leak.
+  if (!conv || conv.isHidden) {
     return (
       <>
         <SubNav title="聊天信息" />

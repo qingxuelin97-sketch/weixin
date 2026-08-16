@@ -49,6 +49,24 @@ import './chat.css';
 import '../settings/settings.css';
 import { useNow } from '../../lib/useNow';
 
+/**
+ * Message types the 收藏 menu item is offered for — exactly the ones
+ * `FavoriteBody` (features/favorites/FavoritesPage.tsx) knows how to draw.
+ * A guard test keeps the two in step; see tests/unit/i18-contacts-gaps.test.ts.
+ */
+const FAVORITABLE: readonly MessageVM['type'][] = [
+  'text',
+  'sticker',
+  'image',
+  'voice',
+  'location',
+  'contact_card',
+  'file',
+  'link',
+  'merged',
+  'game',
+];
+
 export function ChatPage() {
   const guard = useGuard();
   const NOW = useNow();
@@ -899,7 +917,15 @@ export function ChatPage() {
     ) {
       items.push({ label: '转发', onSelect: () => setForwarding(m) });
     }
-    if (m.type !== 'system' && !m.isRecalled) {
+    // 收藏 is offered for everything the FAVORITES PAGE can actually render.
+    // Real WeChat does not offer it on a red packet, a transfer or a call
+    // record either — they are ledger events, not content — so the narrower
+    // gate is also the more faithful one. Without it, favouriting a 红包 filed
+    // a row whose only renderer is the `default` branch, and the favorites
+    // page printed the internal enum: 「[rp]」 (M-I18). The long-press menu was
+    // deliberately widened in I18 to open for every type; the second renderer
+    // never grew to match, and nothing connected the two.
+    if (FAVORITABLE.includes(m.type) && !m.isRecalled) {
       items.push({ label: '收藏', onSelect: () => void favoriteMsg(m) });
     }
     items.push({

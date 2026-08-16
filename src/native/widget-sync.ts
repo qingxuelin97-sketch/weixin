@@ -15,6 +15,7 @@ import type { ContactVM, ConversationVM } from '../data/types';
 import { updateWidget, isNative } from './bridge';
 import { useAppStore } from '../store/appStore';
 import { logError } from '../lib/errlog';
+import { totalUnread } from '../lib/unread';
 
 export interface WidgetSummary {
   unread: number;
@@ -32,7 +33,13 @@ export function buildWidgetSummary(
 ): WidgetSummary {
   const visible = conversations.filter((c) => !c.isHidden);
   if (visible.length === 0) return EMPTY;
-  const unread = visible.reduce((sum, c) => sum + (c.unreadCount > 0 ? c.unreadCount : 0), 0);
+  // `totalUnread` rather than a fourth hand-rolled sum (M-I18): this one had
+  // the `isHidden` half and was missing the 免打扰 half, so a launcher widget
+  // could read 「5」 while the in-app 微信 badge read 「2」 — the header comment
+  // above promises they match. The preview below still spans muted threads,
+  // because a muted conversation does appear in the chat list; only its count
+  // is withheld.
+  const unread = totalUnread(visible);
   let latest: ConversationVM | undefined;
   for (const c of visible) {
     if (c.lastMsgAt > 0 && (!latest || c.lastMsgAt > latest.lastMsgAt)) latest = c;

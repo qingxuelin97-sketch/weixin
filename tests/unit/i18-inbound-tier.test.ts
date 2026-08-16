@@ -111,3 +111,46 @@ describe('隐藏会话不能被路由直接渲染', () => {
     expect(branch.slice(0, 400)).not.toMatch(/不可查看|无权|隐藏/);
   });
 });
+
+/**
+ * 隐藏会话闸门必须成对 (M-I18).
+ *
+ * `a96c0e8` gated `/chat/:convId` and stopped there. `/chat/:convId/info` names
+ * both AI↔AI participants, their group nicknames and the member grid — a
+ * hand-typed URL showed the user a private conversation they must never learn
+ * exists. A route pair that shares a `convId` shares the gate.
+ */
+describe('聊天路由的隐藏会话闸门', () => {
+  const repoRoot = join(__dirname, '..', '..');
+  const src = (p: string) => readFileSync(join(repoRoot, p), 'utf8');
+
+  for (const page of ['src/features/chat/ChatPage.tsx', 'src/features/chat/ChatInfoPage.tsx']) {
+    it(`${page} refuses a hidden conversation`, () => {
+      expect(src(page)).toMatch(/if \(!conv \|\| conv\.isHidden\)/);
+    });
+
+    it(`${page} says 会话不存在, never 「不可查看」`, () => {
+      // Admitting the thread exists is itself the leak, so the refusal must be
+      // indistinguishable from a bad id. Judged on CODE only: both files
+      // discuss the alternative wording in prose, and a guard that reads its
+      // own rationale as a violation is worse than no guard.
+      const code = src(page)
+        .split('\n')
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join('\n');
+      expect(code).toContain('会话不存在');
+      expect(code).not.toContain('不可查看');
+    });
+  }
+});
+
+/** 未读口径只有一份 (M-I18): the widget was a fourth copy, missing 免打扰. */
+describe('未读总数只有一个实现', () => {
+  it('the widget uses lib/unread rather than summing by hand', () => {
+    const w = readFileSync(join(__dirname, '..', '..', 'src/native/widget-sync.ts'), 'utf8');
+    expect(w).toContain("from '../lib/unread'");
+    expect(w).toContain('totalUnread(visible)');
+    // The hand-rolled reduce is what silently dropped the 免打扰 half.
+    expect(w).not.toMatch(/reduce\(\(sum, c\) => sum \+ \(c\.unreadCount/);
+  });
+});

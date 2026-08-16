@@ -228,10 +228,16 @@ export async function getSave(id: string): Promise<StorySaveRow | undefined> {
 }
 
 export async function listSaves(scriptId?: string): Promise<StorySaveRow[]> {
-  const rows = await idbGetAll<StorySaveRow>(SAVES);
-  return rows
-    .filter((r) => !scriptId || r.scriptId === scriptId)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  // Narrowed by `byScript` when a script is named (M-I18). The index shipped
+  // with the store in v6 and had ZERO readers until now — this call site did
+  // getAll-then-filter, the exact pattern `bySubject` / `byStatus` / `byRp`
+  // were caught in during M-G1. It stayed hidden because the guard meant to
+  // catch it searched a corpus that included the file DECLARING the index, so
+  // it matched the declaration and passed for everything.
+  const rows = scriptId
+    ? await idbGetAllByIndex<StorySaveRow>(SAVES, 'byScript', scriptId)
+    : await idbGetAll<StorySaveRow>(SAVES);
+  return rows.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function putSave(save: StorySaveRow): Promise<void> {
