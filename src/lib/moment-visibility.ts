@@ -1,5 +1,5 @@
 /**
- * 朋友圈可见范围 (M-I19) — who is allowed to see one post.
+ * 朋友圈可见范围 (M-I18) — who is allowed to see one post.
  *
  * WeChat has four audiences: 公开 / 私密（仅自己）/ 部分可见（白名单）/
  * 不给谁看（黑名单）. The rules themselves are three lines; everything
@@ -36,7 +36,7 @@ export type AudienceRow = Pick<MomentVM, 'authorId' | 'visibility'>;
 export function canSeeMoment(m: AudienceRow, viewerId: string): boolean {
   if (viewerId === m.authorId) return true;
   const v = m.visibility;
-  if (!v) return true; // no audience recorded = 公开 (every pre-M-I19 row)
+  if (!v) return true; // no audience recorded = 公开 (every pre-M-I18 row)
   switch (v.mode) {
     case 'public':
       return true;

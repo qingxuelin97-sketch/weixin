@@ -271,7 +271,7 @@ I3 首版留下三条"写了没接线"，现补：
 - **世界书近似匹配**：两档语义保持不变，只在「有关键词」那一档下叠 trigram/BM25。
   见 `specs/worldbook.md`。
 
-## M-I19 · 表情使用率联动 persona
+## M-I18 · 表情使用率联动 persona
 
 I15 的转红清单里写了「表情使用率联动 persona」，但只交付了斗图与表情收藏——
 **联动没做**：`battleUrge` 的曲线和 `AGENT_STICKER_SWAP_RATE` 是两个模块常数，
@@ -284,7 +284,7 @@ I15 的转红清单里写了「表情使用率联动 persona」，但只交付�
 - **中性点 = 默认值**：`STICKER_RATE_BASELINE = 0.35` 与 `PERSONA_DEFAULTS.stickerRate`
   是同一个常量（写在 `persona-defaults.ts`，两个必须相等的数只写一次）。
   `stickerScale(rate) = min(2, rate / baseline)`，所以未设值的人设行为**逐字节
-  等同 M-I19 之前**。
+  等同 M-I18 之前**。
 - 三个作用点，全部保持原曲线形状、只缩放：
   1. `battleUrge(streak, rate)` — 斗图。连发仍然是邀请、长战仍然衰减；
      `rate = 0` 各分支直接归零，没有下限漏出去。
@@ -306,5 +306,5 @@ I15 的转红清单里写了「表情使用率联动 persona」，但只交付�
   （斗图与收藏替换两条闸各测一遍，差值有下界，不是舍入噪声）
 - `makePersona` 回填默认值；`undefined`/`NaN`/负数一律读成中性档，**不读成 0**
 - `rate = 0` 两条闸都彻底不发
-- 默认档的 `battleUrge` 与 M-I19 前的常数一致
+- 默认档的 `battleUrge` 与 M-I18 前的常数一致
 - 人设层只在两端出提示词行

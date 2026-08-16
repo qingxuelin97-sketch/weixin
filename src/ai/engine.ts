@@ -158,7 +158,7 @@ export function toPersonaView(p: PersonaVM, name: string): PersonaView {
     fewShots: p.fewShots,
     catchphrases: p.catchphrases,
     nsfwStyleSamples: p.nsfwStyleSamples,
-    // 表情使用率 (M-I19). The single funnel every prompt goes through, so the
+    // 表情使用率 (M-I18). The single funnel every prompt goes through, so the
     // group engine and the Moments generators inherit it for free.
     stickerRate: p.stickerRate,
   };
@@ -691,7 +691,7 @@ async function generateAndPlayInner(
           ? maybeAgentSticker(
               (await prefetch.stickers) ?? [],
               `${convId}:${recent.at(-1)?.id ?? 0}:${i}`,
-              // 表情使用率 (M-I19): a sticker-happy character reaches for one of
+              // 表情使用率 (M-I18): a sticker-happy character reaches for one of
               // YOUR packs far oftener than a reserved one does.
               persona.stickerRate,
             )

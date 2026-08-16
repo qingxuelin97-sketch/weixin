@@ -98,7 +98,7 @@ export interface Repo {
   /**
    * Newest first. `before` paginates by createdAt for infinite scroll.
    *
-   * 可见范围 (M-I19): every driver applies `visibleMoments` before returning, so
+   * 可见范围 (M-I18): every driver applies `visibleMoments` before returning, so
    * a post the viewer may not see never leaves the data layer. `viewer` defaults
    * to 'self' — the user sees their own restricted posts, which is what makes
    * 私密 a diary rather than a hole; an agent-side read MUST pass its contactId.
@@ -544,7 +544,7 @@ export async function deleteContactCascade(
       await repo.putMoment({ ...rest, repostExcerpt: '原内容已删除' });
     }
   }
-  // 可见范围 (M-I19): the dead contact's id lingering in a 部分可见 whitelist or
+  // 可见范围 (M-I18): the dead contact's id lingering in a 部分可见 whitelist or
   // a 不给谁看 blacklist is a trace like any other. Surgical, like the
   // `rel_edges` / `groupNick:` rows — the OTHER people named in that audience
   // are alive, so the row is rewritten, never dropped. A whitelist emptied by
@@ -765,7 +765,7 @@ export class IdbRepo implements Repo {
       limit: opts.limit ?? DEFAULT_MOMENTS_PAGE,
       before: opts.before,
     });
-    // 可见范围 (M-I19) — inside the driver, so no reader can forget. The filter
+    // 可见范围 (M-I18) — inside the driver, so no reader can forget. The filter
     // runs AFTER the page is cut, which can hand back a short page to an agent
     // viewer; that is the right trade for the two agent-side readers (limit 8
     // and 10), and 'self' — the paginating reader — never loses a row.

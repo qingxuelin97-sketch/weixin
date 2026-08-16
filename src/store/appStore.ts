@@ -573,7 +573,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             const { repostAuthorId: _drop, ...rest } = m;
             return { ...rest, repostExcerpt: '原内容已删除' };
           })
-          // …and its 可见范围 surgery (M-I19), or the open feed keeps showing
+          // …and its 可见范围 surgery (M-I18), or the open feed keeps showing
           // 「部分可见·<死者>」until the next reload.
           .map((m) => withoutContact(m, id) ?? m),
         momentLikes,

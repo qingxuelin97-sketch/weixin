@@ -71,7 +71,7 @@ const MIN_COMMENT_DELAY = 3 * MINUTE;
  * A commenter always likes first if they were also going to like, and their
  * comment lands after that like, which is what real ordering looks like.
  *
- * 可见范围 (M-I19): anyone the post is not visible to is dropped BEFORE the dice
+ * 可见范围 (M-I18): anyone the post is not visible to is dropped BEFORE the dice
  * are rolled, so a restricted post plans exactly zero reactions for them. This
  * is the single most important consequence of the whole audience feature — a
  * like from someone you excluded is an instant, irreversible tell.
@@ -202,7 +202,7 @@ export const REPOST_MIN_AFFINITY = 55;
  * are produced later through `moment-repost.ts`'s storage-re-read path, so
  * this planner decides WHO and WHEN, never WHAT.
  *
- * 可见范围 (M-I19): a repost puts your words on SOMEONE ELSE's wall, in front of
+ * 可见范围 (M-I18): a repost puts your words on SOMEONE ELSE's wall, in front of
  * an audience you never chose — so a restricted post is not merely unlikely to
  * be reposted, it is ineligible. Both the "can she see it" filter on candidates
  * and the outright refusal below matter: the second is what stops a 部分可见

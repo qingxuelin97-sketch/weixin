@@ -141,7 +141,7 @@ export interface PersonaVM {
   /** Base probability this persona comments on a given post. */
   commentRate: number;
   /**
-   * 表情使用率 (M-I19), 0..1 — how sticker-happy this character is.
+   * 表情使用率 (M-I18), 0..1 — how sticker-happy this character is.
    *
    * A persona trait exactly like `momentsPerDay` / `likeRate` / `commentRate`,
    * and for the same reason: 话痨爱斗图的 and 高冷的 must not share one global
@@ -310,7 +310,7 @@ export interface ProviderVM {
 /* ---- Moments (朋友圈) ---- */
 
 /**
- * WeChat's four audiences for a post (M-I19).
+ * WeChat's four audiences for a post (M-I18).
  *
  * `public`   公开        — everyone
  * `private`  私密        — the author only
@@ -320,7 +320,7 @@ export interface ProviderVM {
 export type MomentAudience = 'public' | 'private' | 'include' | 'exclude';
 
 /**
- * Who may see one post. Absent on a row = 公开 (every pre-M-I19 post, and every
+ * Who may see one post. Absent on a row = 公开 (every pre-M-I18 post, and every
  * post an AI writes — agents post to everyone).
  *
  * `ids` are contactIds and are only meaningful for include/exclude; the other
@@ -366,7 +366,7 @@ export interface MomentVM {
   /** Snapshot excerpt of the original's text (built by repostExcerpt, capped). */
   repostExcerpt?: string;
   /**
-   * 可见范围 (M-I19). Absent = 公开. Enforced in the DATA layer
+   * 可见范围 (M-I18). Absent = 公开. Enforced in the DATA layer
    * (`src/lib/moment-visibility.ts`, applied inside the Repo drivers and inside
    * the reaction planner) rather than by whoever renders the feed — the whole
    * point is that a caller who forgets cannot leak the post.

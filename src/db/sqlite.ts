@@ -448,7 +448,7 @@ export class SqliteRepo implements Repo {
             `SELECT data FROM moments WHERE json_extract(data,'$.createdAt') < ? ORDER BY json_extract(data,'$.createdAt') DESC LIMIT ?`,
             [opts.before, limit],
           );
-    // 可见范围 (M-I19) applied HERE, in the driver, exactly as the IDB one does
+    // 可见范围 (M-I18) applied HERE, in the driver, exactly as the IDB one does
     // — both drivers must enforce it or swapping storage would silently unmute
     // every restricted post.
     const rows = (res.values ?? []).map((r) => JSON.parse(String(r.data)) as MomentVM);

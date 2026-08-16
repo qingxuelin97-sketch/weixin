@@ -563,7 +563,7 @@ async function runForegroundPass(): Promise<void> {
     })),
   );
   // Posts that predate the absence, for belated 赞评 (M-I5). Newest few only.
-  // `visibility` rides along (M-I19) — simulate() is pure and cannot read it
+  // `visibility` rides along (M-I18) — simulate() is pure and cannot read it
   // back from storage, so dropping it here would make offline the one path
   // where a restricted post still draws reactions.
   const recentMoments = await repo

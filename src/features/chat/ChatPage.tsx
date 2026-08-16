@@ -675,7 +675,7 @@ export function ChatPage() {
       const tail = useAppStore.getState().messagesFor(convId);
       const streak = stickerStreak(tail.map((m) => m.type));
       const pool = await agentStickerPool(conv.peerId).catch(() => [] as string[]);
-      // 表情使用率 (M-I19) rides in from the persona: 高冷的人设 barely joins a
+      // 表情使用率 (M-I18) rides in from the persona: 高冷的人设 barely joins a
       // sticker war, 话痨爱斗图的 almost always does.
       const reply = battleReply(
         { seed: `${convId}:${saved.id}`, streak, rate: persona.stickerRate },

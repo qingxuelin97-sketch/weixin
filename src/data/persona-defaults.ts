@@ -34,7 +34,7 @@ export const PERSONA_LIMITS = {
 } as const;
 
 /**
- * The neutral 表情使用率 (M-I19).
+ * The neutral 表情使用率 (M-I18).
  *
  * Lives here, next to the default it equals, because it is the point at which
  * `stickerScale()` returns exactly 1 — every seeded sticker gate keeps the

@@ -1,5 +1,5 @@
 /**
- * 朋友圈可见范围 (M-I19).
+ * 朋友圈可见范围 (M-I18).
  *
  * The feature's whole value is negative — things that must NOT happen — so the
  * suite is written as leak tests. The one that matters most is「她评论了一条你
@@ -60,7 +60,7 @@ const contact = (id: string, type: ContactVM['type'] = 'ai'): ContactVM => ({
 /* ------------------------------ the predicate ------------------------------ */
 
 describe('canSeeMoment', () => {
-  it('treats a row with no audience as 公开 (every pre-M-I19 post)', () => {
+  it('treats a row with no audience as 公开 (every pre-M-I18 post)', () => {
     expect(canSeeMoment(post(), 'ai_a')).toBe(true);
   });
 
@@ -199,7 +199,7 @@ describe('planReactions honours 可见范围', () => {
     expect(planReactions(post({ visibility: vis('private') }), crowd, 's')).toEqual([]);
   });
 
-  it('leaves 公开 posts exactly as they were before M-I19', () => {
+  it('leaves 公开 posts exactly as they were before M-I18', () => {
     const before = planReactions(post(), crowd, 's');
     const after = planReactions(post({ visibility: vis('public') }), crowd, 's');
     expect(after).toEqual(before);

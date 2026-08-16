@@ -18,7 +18,7 @@ export interface PersonaView {
   catchphrases?: string[];
   nsfwStyleSamples?: string[];
   /**
-   * 表情使用率 (M-I19), 0..1. Only the two ENDS of the range say anything — see
+   * 表情使用率 (M-I18), 0..1. Only the two ENDS of the range say anything — see
    * `stickerHabitLine`. A middling character says nothing about stickers at
    * all, which keeps the default prompt byte-identical (prefix caching) and
    * keeps the persona layer from being diluted by a line that carries no

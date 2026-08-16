@@ -194,10 +194,10 @@ describe('custom sticker projection', () => {
   });
 });
 
-/* ------------------- 表情使用率联动 persona (M-I19) ------------------- */
+/* ------------------- 表情使用率联动 persona (M-I18) ------------------- */
 
 /**
- * Before M-I19 every character in the app shared two module constants, so the
+ * Before M-I18 every character in the app shared two module constants, so the
  * 话痨 who lives in her sticker drawer and the 高冷 one who has never sent a
  * sticker behaved identically. `stickerRate` is a persona field now, exactly
  * like `likeRate` / `commentRate` / `momentsPerDay`.
@@ -240,7 +240,7 @@ describe('battleUrge follows the persona', () => {
     }
   });
 
-  it('leaves the default identical to the pre-M-I19 constants', () => {
+  it('leaves the default identical to the pre-M-I18 constants', () => {
     expect(battleUrge(1)).toBeCloseTo(0.35, 10);
     expect(battleUrge(3)).toBeCloseTo(0.65, 10);
   });
@@ -291,7 +291,7 @@ describe('两个不同 stickerRate 的人设在同一种子下发表情次数不
 });
 
 describe('makePersona backfills stickerRate', () => {
-  it('fills the default so a pre-M-I19 row never reads as 从不发表情', () => {
+  it('fills the default so a pre-M-I18 row never reads as 从不发表情', () => {
     const p = makePersona({ contactId: 'x', core: 'c' });
     expect(p.stickerRate).toBe(STICKER_RATE_BASELINE);
   });

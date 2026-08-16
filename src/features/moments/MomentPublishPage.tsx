@@ -5,7 +5,7 @@
  * likes and comments trickle in over the following hours rather than appearing
  * all at once the moment you hit 发表.
  *
- * 可见范围 (M-I19) is chosen here but ENFORCED elsewhere — the row carries the
+ * 可见范围 (M-I18) is chosen here but ENFORCED elsewhere — the row carries the
  * audience and `src/lib/moment-visibility.ts` is applied inside the Repo
  * drivers and the reaction planner. This page only has to record the intent
  * correctly; it is structurally incapable of being the thing that leaks.

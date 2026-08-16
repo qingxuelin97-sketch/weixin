@@ -170,7 +170,7 @@ describe('repost leak rule (转红)', () => {
 /* ---------------------------- AI repost planner ---------------------------- */
 
 describe('planRepost (AI 转发)', () => {
-  /** M-I19: the planners take the post ROW so 可见范围 always travels with it. */
+  /** M-I18: the planners take the post ROW so 可见范围 always travels with it. */
   const post = (id: string, authorId: string, createdAt: number) => ({ id, authorId, createdAt });
   const reactor = (id: string, affinity = 80): ReactorInfo => ({
     contactId: id,

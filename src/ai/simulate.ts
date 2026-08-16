@@ -161,7 +161,7 @@ export interface SimInput {
     authorId: string;
     createdAt: number;
     /**
-     * 可见范围 (M-I19). Rides in with the row because the belated-reaction
+     * 可见范围 (M-I18). Rides in with the row because the belated-reaction
      * planner below must honour it — an offline absence that comes back with a
      * like from someone the post was hidden from is the same穿帮 as a live one,
      * and the backfill path is the one most likely to be forgotten.
@@ -322,7 +322,7 @@ export function simulate(t0: number, t1: number, input: SimInput, seed: string):
     for (const cand of candidates) {
       if (reacted >= reactBudget) break;
       if (cand.contactId === m.authorId) continue; // never self-react
-      if (!canSeeMoment(m, cand.contactId)) continue; // 可见范围 (M-I19)
+      if (!canSeeMoment(m, cand.contactId)) continue; // 可见范围 (M-I18)
       const r = seededRng(`react:${seed}:${from}:${m.id}:${cand.contactId}`);
       if (r() >= cand.persona.likeRate * 0.5) continue;
       const at = pickTimes(

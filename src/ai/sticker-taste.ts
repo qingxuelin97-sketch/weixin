@@ -23,7 +23,7 @@ import { STICKER_RATE_BASELINE } from '../data/persona-defaults';
 import { repo } from '../db/repo';
 
 /**
- * 表情使用率 → a multiplier on every seeded sticker gate (M-I19).
+ * 表情使用率 → a multiplier on every seeded sticker gate (M-I18).
  *
  * Until now "how often does she send stickers" was two module constants shared
  * by every character in the app, so the 话痨 who spams 斗图 and the 高冷 one who
@@ -82,9 +82,9 @@ export const AGENT_STICKER_SWAP_RATE = 0.3;
  * swap in one of the agent's collected customs? Returns the ref to send, or
  * null to keep the original content. Seeded per turn so replays agree.
  *
- * `rate` is the persona's 表情使用率 (M-I19): someone who lives in her sticker
+ * `rate` is the persona's 表情使用率 (M-I18): someone who lives in her sticker
  * drawer reaches for a collected one far more readily than someone who sends
- * three a month. Omitted = baseline = the pre-M-I19 constant, unchanged.
+ * three a month. Omitted = baseline = the pre-M-I18 constant, unchanged.
  */
 export function maybeAgentSticker(
   pool: readonly string[],

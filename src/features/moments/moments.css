@@ -509,7 +509,7 @@
   color: var(--color-text-secondary);
 }
 
-/* ---- M-I19: 可见范围 (publish page audience row + person picker) ---- */
+/* ---- M-I18: 可见范围 (publish page audience row + person picker) ---- */
 
 /* The 谁可以看 row sits directly under the composer, so it needs the gap the
    settings group would otherwise get from a page body it isn't inside. */

@@ -148,15 +148,15 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
 - 自定义表情是 `idb:` ref，**收藏/斗图池要过 `startsWith('idb:')`**，词表
   label 混进池子会被当 ref 渲染成裂图。
 
-## M-I19 增补：可见范围（公开 / 私密 / 部分可见 / 不给谁看）
+## M-I18 增补：可见范围（公开 / 私密 / 部分可见 / 不给谁看）
 
-I6 把它列为「预列裁减位」并砍掉，M-I19 补上。微信的四档语义原样照搬。
+I6 把它列为「预列裁减位」并砍掉，M-I18 补上。微信的四档语义原样照搬。
 
 ### 数据
 
 `MomentVM.visibility?: { mode, ids }`（`src/data/types.ts`），schema 侧是
 `moments.visibility_json`——**JSON 列演进，两个驱动都存整行 JSON，不需要
-`DB_VERSION` +1**（没有新 store）。**缺失 = 公开**：M-I19 之前的所有行、以及
+`DB_VERSION` +1**（没有新 store）。**缺失 = 公开**：M-I18 之前的所有行、以及
 AI 发的每一条帖子都是这个状态，所以旧库零迁移。
 
 `ids` 只对 include/exclude 有意义，另两档存空数组——一列一个形状，解析侧不用
@@ -212,7 +212,7 @@ AI 发的每一条帖子都是这个状态，所以旧库零迁移。
 
 ### 转红测试（`tests/unit/moment-visibility.test.ts`）
 
-- 不可见帖对该联系人的赞评规划为零；公开帖行为与 M-I19 前逐字节相同
+- 不可见帖对该联系人的赞评规划为零；公开帖行为与 M-I18 前逐字节相同
 - 过滤在**驱动层**（IdbRepo + SqliteRepo 双跑，viewer 换人结果就换）
 - `visibleMoments` 只减不增（防止有人把过滤器改成取数器 = 泄漏）
 - 未知 mode **fail closed**

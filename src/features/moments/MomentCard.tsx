@@ -249,7 +249,7 @@ export function MomentCard({
         <div className="moment__meta">
           <span className="moment__time">
             {momentTimestamp(moment.createdAt, now)}
-            {/* 可见范围 tag (M-I19). WeChat shows it beside the timestamp on the
+            {/* 可见范围 tag (M-I18). WeChat shows it beside the timestamp on the
                 author's own restricted posts — without it, "did that actually
                 save as 私密?" has no answer anywhere in the app. Absent
                 visibility (公开, and every AI post) renders nothing. */}

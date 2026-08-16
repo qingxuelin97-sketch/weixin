@@ -12,7 +12,7 @@ import type { MomentVisibility } from '../../src/data/types';
 const NOON = new Date(2025, 7, 6, 12, 0, 0).getTime();
 const HOUR = 3_600_000;
 
-/** A plannable post row. M-I19 made the planners take the ROW, not a triple. */
+/** A plannable post row. M-I18 made the planners take the ROW, not a triple. */
 function post(id: string, authorId: string, createdAt: number, visibility?: MomentVisibility) {
   return { id, authorId, createdAt, ...(visibility ? { visibility } : {}) };
 }

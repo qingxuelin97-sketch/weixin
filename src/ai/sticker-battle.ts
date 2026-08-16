@@ -26,7 +26,7 @@ export interface BattleContext {
   /** How many consecutive sticker messages ended the transcript (yours+hers), ≥1. */
   streak: number;
   /**
-   * The persona's 表情使用率 (M-I19), 0..1. Omitted = baseline, i.e. exactly the
+   * The persona's 表情使用率 (M-I18), 0..1. Omitted = baseline, i.e. exactly the
    * curve this module shipped with. This is what stops 话痨爱斗图的 and 高冷的
    * from playing the same sticker war.
    */
@@ -40,7 +40,7 @@ export interface BattleContext {
  * play reads colder than playing. Past that the urge falls off; sticker wars
  * end because someone gets bored, and hers should too.
  *
- * `rate` (M-I19) scales the whole curve by the persona's 表情使用率, keeping its
+ * `rate` (M-I18) scales the whole curve by the persona's 表情使用率, keeping its
  * SHAPE — the streak still invites, the war still decays — while moving how
  * readily this particular character joins one at all. A rate of 0 means she
  * never答图: the multiplication zeroes every branch, so there is no floor to
