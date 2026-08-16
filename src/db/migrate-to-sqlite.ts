@@ -38,9 +38,13 @@ import {
   type SqlDb,
 } from './sqlite';
 import { SQLITE_MIGRATED_AT_KEY } from './driver';
+import { SQLITE_MIGRATE_PROGRESS_KEY } from '../lib/device-local';
 
-/** Where the resumable progress lives (an IndexedDB settings row). */
-export const MIGRATE_PROGRESS_KEY = 'sqliteMigrateProgress';
+/**
+ * Where the resumable progress lives (an IndexedDB settings row). Device-local,
+ * so the one exclusion list in src/lib/device-local.ts owns the name.
+ */
+export const MIGRATE_PROGRESS_KEY = SQLITE_MIGRATE_PROGRESS_KEY;
 
 /** Stores never copied, with the reason the settings page shows. */
 export const MIGRATE_SKIPPED: Record<string, string> = {

@@ -42,6 +42,8 @@ import {
 } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { chainAutoBackup, runAutoBackup, ensureAutoBackupScheduled } from '../ai/auto-backup';
+import { pendingRestoreAt, acknowledgePendingRestore } from '../lib/backup';
+import { showConfirm } from '../components/dialog';
 import { runAgentDm, planNextDm, participantsOf, type DmPlan } from '../ai/agent-dm';
 import { chainNextBeat, runStoryBeat, seedBuiltinScripts } from '../ai/story-service';
 import { judgePrompt, parseJudgement } from '../ai/story-gm';
@@ -347,6 +349,30 @@ export function useSchedulerRuntime(enabled: boolean): void {
     // natively (RemoteInput notification / bubble / occasional incoming call).
     const stopBackgroundNotify = startBackgroundNotify();
 
+    // Did the last restore die mid-write? The marker has existed since I17 and
+    // NOTHING read it, so a 60MB restore killed while writing `media` left a
+    // half-populated database that looked fine — the user would find out one
+    // missing conversation at a time. Announced once per launch, through the
+    // dialog host the rest of the app already uses (no second notification
+    // system); 「我已了解」 clears the marker, 「稍后再看」 leaves it standing
+    // on the backup page.
+    const restoreWarnTimer = setTimeout(() => {
+      void (async () => {
+        const at = await pendingRestoreAt();
+        if (at <= 0) return;
+        const ok = await showConfirm({
+          title: '上次恢复没有完成',
+          body:
+            `${new Date(at).toLocaleString('zh-CN', { hour12: false })} 开始的那次恢复中途被中断，` +
+            '当前数据可能是半截的。建议到「设置 → 备份与恢复」重新完整恢复一次。',
+          confirmText: '我已了解',
+          cancelText: '稍后再看',
+          danger: true,
+        });
+        if (ok) await acknowledgePendingRestore();
+      })().catch(() => {});
+    }, 1_500);
+
     // First-run notification ask (H1: requestPermission existed since M4 with
     // zero callers — Android 13+ notifications were fully inert). Delayed a few
     // seconds so the dialog doesn't collide with the launch moment; one-shot
@@ -363,6 +389,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
 
     return () => {
       clearTimeout(askTimer);
+      clearTimeout(restoreWarnTimer);
       stopBackgroundNotify();
       stopScheduler();
     };

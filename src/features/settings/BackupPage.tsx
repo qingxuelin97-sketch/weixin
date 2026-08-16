@@ -1,16 +1,23 @@
 /**
- * Backup & restore screen (v2, M-I17).
+ * Backup & restore screen (v3, M-I17 → M-I18). See specs/backup.md.
  *
  * Restore replaces everything, so this page is deliberately unhurried about it:
  * the file is parsed and its manifest summarized BEFORE anything is written, and
  * the user confirms against real row counts rather than a yes/no prompt.
  *
- * v2 adds three sections:
+ * Sections:
+ *   上次恢复没有完成 — only when the in-flight marker survived a launch, i.e.
+ *     a restore was killed mid-write. Standing until acknowledged (I18-4);
  *   自动备份 — 关/每日/每周 chained through scheduled_actions (`auto_backup`);
  *   备份历史 — the app-managed shelf: restore / share / delete per entry.
  *     Entries show aggregate counts only — never conversation content, so a
  *     hidden AI↔AI DM cannot leak through this page (CLAUDE.md rule);
  *   存储引擎 — native-only SQLite migration + the 回退到 IndexedDB switch.
+ *
+ * Two rules this screen must not lose sight of:
+ *   the base (watermarks + digest) advances ONLY after the package actually
+ *   reached the shelf (I18-7), and a chain restore hands ONE snapshot to every
+ *   increment so a failure halfway unwinds the whole chain (I18-5).
  */
 import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
@@ -18,11 +25,14 @@ import { SubNav } from '../../components/SubNav';
 import { saveTextFile } from '../../lib/save-file';
 import { repo } from '../../db/repo';
 import {
-  exportBackup,
+  exportBackupWithState,
   serializeBackup,
   parseBackup,
   restoreBackup,
   applyIncrementalBackup,
+  commitBackupState,
+  pendingRestoreAt,
+  acknowledgePendingRestore,
   backupMode,
   backupFilename,
   type BackupFile,
@@ -36,12 +46,7 @@ import {
   resolveRestoreChain,
   type BackupHistoryEntry,
 } from '../../lib/backup-history';
-import {
-  getAutoBackupFreq,
-  setAutoBackupFreq,
-  BACKUP_WATERMARKS_KEY,
-  type AutoBackupFreq,
-} from '../../ai/auto-backup';
+import { getAutoBackupFreq, setAutoBackupFreq, type AutoBackupFreq } from '../../ai/auto-backup';
 import {
   isSqliteActive,
   sqliteMigratedAt,
@@ -98,6 +103,10 @@ export function BackupPage() {
   const [engine, setEngine] = useState<'idb' | 'sqlite'>('idb');
   const [migratedAt, setMigratedAt] = useState(0);
   const [migrateProgress, setMigrateProgress] = useState<MigrateProgressEvent | null>(null);
+  // Non-zero ⇒ a previous restore never reached its last store. Announced here
+  // as a standing warning (the launch pass announces it once); the marker is
+  // only cleared when the user says he has seen it.
+  const [interruptedAt, setInterruptedAt] = useState(0);
   const isNative = Capacitor.isNativePlatform();
 
   const refresh = async () => {
@@ -105,6 +114,7 @@ export function BackupPage() {
     setHistory(await listBackupHistory());
     setEngine(isSqliteActive() ? 'sqlite' : 'idb');
     setMigratedAt(await sqliteMigratedAt());
+    setInterruptedAt(await pendingRestoreAt());
   };
   useEffect(() => {
     void refresh().catch(() => {});
@@ -122,30 +132,41 @@ export function BackupPage() {
     setStatus(null);
     try {
       const now = Date.now();
-      const file = await exportBackup(now, undefined, { includeMedia });
+      const { file, watermarks, digest } = await exportBackupWithState(now, undefined, {
+        includeMedia,
+      });
       const json = serializeBackup(file);
       const name = backupFilename(now);
 
       await saveTextFile(name, json, 'application/json', '保存备份文件');
       // Freshness marker for the "该备份了" nudge on the settings page.
       await repo.putSetting('lastBackupAt', now);
-      // Manual fulls join the history shelf and advance the watermarks, so
-      // later auto increments chain onto a full the shelf actually holds.
-      await recordBackup(
-        {
-          id: `mb_${now}`,
-          name,
-          createdAt: now,
-          bytes: json.length,
-          mode: 'full',
-          source: 'manual',
-          counts: file.manifest.counts,
-        },
-        json,
-      ).catch(() => {}); // shelf is a bonus; the shared file already left
-      await repo.putSetting(BACKUP_WATERMARKS_KEY, file.manifest.watermarks ?? {});
+      // Manual fulls join the history shelf and advance the base, so later auto
+      // increments chain onto a full the shelf actually holds. If the shelf
+      // write fails, the base MUST NOT move: an increment cut against a full
+      // that is not on the shelf can never be resolved into a restore chain,
+      // and the span it covered would be missing without anything saying so.
+      const shelved = await commitBackupState({ watermarks, digest }, () =>
+        recordBackup(
+          {
+            id: `mb_${now}`,
+            name,
+            createdAt: now,
+            bytes: json.length,
+            mode: 'full',
+            source: 'manual',
+            counts: file.manifest.counts,
+          },
+          json,
+        ),
+      );
       await refresh();
-      setStatus(`已导出：${summarize(file.manifest.counts)}`);
+      setStatus(
+        shelved
+          ? `已导出：${summarize(file.manifest.counts)}`
+          : `已导出文件：${summarize(file.manifest.counts)}。` +
+            '但未能存入备份历史，后续自动备份会重新做一次全量。',
+      );
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       // Backing out of the share sheet isn't a failure — the file is written.
@@ -191,11 +212,17 @@ export function BackupPage() {
           : '';
         setStatus(`恢复完成：${summarize(res.restored)}${unknown}。请重启 App 以重新加载。`);
       }
+      await refresh();
     } catch (e) {
       setStatus(`恢复失败：${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
+  };
+
+  const dismissInterrupted = async () => {
+    await acknowledgePendingRestore();
+    setInterruptedAt(0);
   };
 
   const changeFreq = async (next: AutoBackupFreq) => {
@@ -223,15 +250,29 @@ export function BackupPage() {
     try {
       const now = Date.now();
       const [base, ...incs] = chain;
-      await restoreBackup(parseBackup(await readBackupContent(base)), now);
-      for (const inc of incs) {
-        await applyIncrementalBackup(parseBackup(await readBackupContent(inc)), now);
+      // The base full's own snapshot is the true pre-chain state. Handing it to
+      // every increment means a package that fails halfway unwinds the WHOLE
+      // chain rather than leaving the user between two versions of his
+      // history — and the media library is re-encoded once, not once per link.
+      const { snapshot } = await restoreBackup(parseBackup(await readBackupContent(base)), now);
+      for (let i = 0; i < incs.length; i++) {
+        try {
+          await applyIncrementalBackup(parseBackup(await readBackupContent(incs[i])), now, {
+            snapshot,
+          });
+        } catch (e) {
+          throw new Error(
+            `第 ${i + 1}/${incs.length} 个增量包应用失败（${(e as Error).message}）` +
+              '——已回滚到恢复前的状态，数据没有丢。',
+          );
+        }
       }
       setStatus('恢复完成。请重启 App 以重新加载。');
     } catch (e) {
       setStatus(`恢复失败：${(e as Error).message}`);
     } finally {
       setBusy(false);
+      await refresh();
     }
   };
 
@@ -302,6 +343,21 @@ export function BackupPage() {
     <>
       <SubNav title="备份与恢复" />
       <div className="page-body settings">
+        {interruptedAt > 0 && (
+          <div className="settings__group">
+            <div className="settings__group-title">上次恢复没有完成</div>
+            <p className="settings__hint settings__hint--warn">
+              {fmtTime(interruptedAt)} 开始的那次恢复中途被中断（App 被系统回收或断电），
+              当前数据可能是半截的。建议重新完整恢复一次同一个备份。
+            </p>
+            <div className="settings__actions">
+              <button className="settings__btn" onClick={() => void dismissInterrupted()}>
+                我已了解
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="settings__group">
           <button className="settings__row settings__row--divided" disabled={busy} onClick={() => void doExport()}>
             <span className="settings__label">导出备份</span>

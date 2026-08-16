@@ -22,18 +22,27 @@ import {
   cancelPendingWhere,
 } from './scheduler';
 import { repo } from '../db/repo';
-import { exportBackup, serializeBackup, backupFilename, type BackupMode } from '../lib/backup';
+import {
+  exportBackupWithState,
+  serializeBackup,
+  backupFilename,
+  loadBackupState,
+  saveBackupState,
+  type BackupMode,
+} from '../lib/backup';
 import {
   recordBackup,
   pruneSupersededAutoBackups,
   type BackupHistoryEntry,
 } from '../lib/backup-history';
+import { AUTO_BACKUP_COUNTER_KEY, BACKUP_WATERMARKS_KEY } from '../lib/device-local';
 
 export type AutoBackupFreq = 'off' | 'daily' | 'weekly';
 
+/** The frequency is a user PREFERENCE, so it travels in the backup. */
 export const AUTO_BACKUP_FREQ_KEY = 'autoBackupFreq';
-export const AUTO_BACKUP_COUNTER_KEY = 'autoBackupCounter';
-export const BACKUP_WATERMARKS_KEY = 'backupWatermarks';
+/** The counter and the watermarks are device-local bookkeeping; they do not. */
+export { AUTO_BACKUP_COUNTER_KEY, BACKUP_WATERMARKS_KEY };
 
 /** Every N-th auto run is a full snapshot; the rest are increments on it. */
 export const FULL_EVERY = 7;
@@ -103,14 +112,17 @@ export async function runAutoBackup(now: number): Promise<BackupHistoryEntry | n
   if (freq === 'off') return null; // stale row that outlived the setting
 
   const counter = (await repo.getSetting<number>(AUTO_BACKUP_COUNTER_KEY)) ?? 0;
-  const since = await repo.getSetting<Record<string, number>>(BACKUP_WATERMARKS_KEY);
-  // The first run — or any run with no watermark base — must be full: an
-  // increment with nothing under it restores to nothing.
-  const mode: BackupMode = counter % FULL_EVERY === 0 || !since ? 'full' : 'incremental';
+  const { watermarks: since, digest: sinceDigest } = await loadBackupState();
+  // The first run — or any run with no base — must be full: an increment with
+  // nothing under it restores to nothing. Both halves of the base are required:
+  // a watermark without its digest cannot see in-place edits or deletions, and
+  // producing such an increment is precisely the I18 data-loss bug.
+  const mode: BackupMode =
+    counter % FULL_EVERY === 0 || !since || !sinceDigest ? 'full' : 'incremental';
 
-  const file = await exportBackup(now, undefined, {
+  const { file, watermarks, digest } = await exportBackupWithState(now, undefined, {
     mode,
-    ...(mode === 'incremental' ? { since } : {}),
+    ...(mode === 'incremental' ? { since, sinceDigest } : {}),
   });
   const json = serializeBackup(file);
   const entry: BackupHistoryEntry = {
@@ -125,8 +137,9 @@ export async function runAutoBackup(now: number): Promise<BackupHistoryEntry | n
   await recordBackup(entry, json);
 
   // Bookkeeping only AFTER the file landed — a failed write must not advance
-  // the watermarks, or the rows it covered would never be backed up again.
-  await repo.putSetting(BACKUP_WATERMARKS_KEY, file.manifest.watermarks ?? {});
+  // the base, or the rows it covered would never be backed up again. The
+  // watermarks and the digest move together or not at all.
+  await saveBackupState({ watermarks, digest });
   await repo.putSetting(AUTO_BACKUP_COUNTER_KEY, counter + 1);
   await repo.putSetting('lastBackupAt', now);
 

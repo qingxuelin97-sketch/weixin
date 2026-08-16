@@ -170,8 +170,9 @@ src/
 
 改动某 feature 前，读 `specs/<feature>.md`（验收清单 + 设计要点 + 已知坑）。新增 feature
 先写 spec 再写码。现有：design-tokens / data-schema / llm-provider / composer / nsfw /
-chat-engine / group-director / money / moments / backfill / build-distribution /
-story-gm（V3 预埋设计）/ native-android（M-I10 重原生）。
+chat-engine / group-director / money / moments / backfill / backup（.aiwx 导出恢复，
+M-I18 起自成一块）/ build-distribution / story-gm（V3 预埋设计）/
+native-android（M-I10 重原生）。
 
 ## 5. 工程护栏
 

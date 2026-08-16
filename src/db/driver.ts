@@ -27,11 +27,17 @@ import {
   sqliteReadAll,
   sqliteWriteRow,
   sqliteClearStore,
+  sqliteDeleteRow,
   type SqlDb,
 } from './sqlite';
+import { SQLITE_MIGRATED_AT_KEY as DEVICE_LOCAL_SQLITE_MIGRATED_AT_KEY } from '../lib/device-local';
 
-/** Settings row (in IndexedDB) that marks the migration as completed. */
-export const SQLITE_MIGRATED_AT_KEY = 'sqliteMigratedAt';
+/**
+ * Settings row (in IndexedDB) that marks the migration as completed. It is
+ * device-local — see src/lib/device-local.ts, which owns the one list a backup
+ * filters against; this re-export keeps the existing import sites working.
+ */
+export const SQLITE_MIGRATED_AT_KEY = DEVICE_LOCAL_SQLITE_MIGRATED_AT_KEY;
 
 const DB_FILE = 'weixin-ai';
 
@@ -150,6 +156,17 @@ export async function writeStoreRows(store: string, rows: unknown[]): Promise<vo
     return;
   }
   await idbBulkPut(store, rows);
+}
+
+/**
+ * Delete ONE row from a store's live home. Only the incremental-restore
+ * tombstone path uses this: an increment must be able to say "this row is
+ * gone" or a deleted message resurrects on every restore.
+ */
+export async function deleteStoreRow(store: string, key: string | number): Promise<void> {
+  const db = sqliteHome(store);
+  if (db) return void (await sqliteDeleteRow(db, store, key));
+  await idbDelete(store, key);
 }
 
 /** Clear a store's live home (restore = replace, never merge). */

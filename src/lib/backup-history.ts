@@ -22,8 +22,15 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { repo } from '../db/repo';
 import { saveTextFile } from './save-file';
 import type { BackupMode } from './backup';
+import { BACKUP_HISTORY_KEY } from './device-local';
 
-export const BACKUP_HISTORY_KEY = 'backupHistory';
+/**
+ * Re-exported from the device-local list, which owns the name: the shelf's
+ * metadata points at files under THIS device's `backups/`, so a backup that
+ * carried it would, on restore, list files that do not exist and drop the very
+ * entry the restore came from (I18-3).
+ */
+export { BACKUP_HISTORY_KEY };
 const DIR = Directory.Data;
 
 export interface BackupHistoryEntry {
