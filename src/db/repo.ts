@@ -172,7 +172,13 @@ export const DELETE_CONTACT_CASCADE: Record<string, 'cascade' | 'exempt'> = {
   tts_cache: 'exempt', // content-addressed by text hash; harmless orphans, GC'd by size
   media: 'exempt', // the user's own library — avatars are assigned, not owned
   story_scripts: 'exempt', // scripts reference roles, not contact ids
-  story_saves: 'exempt',
+  // Saves are NOT like scripts (M-I18). Since M-I7 gave story mode explicit
+  // casting, a save row's `bindings` maps script charId → a REAL contactId, so
+  // the old "roles, not contact ids" rationale stopped being true the day
+  // casting shipped. Deleting a cast member used to leave the run bound to a
+  // ghost: the GM would keep building a directive for a persona that no longer
+  // exists and hand it to nobody.
+  story_saves: 'cascade',
   worldbook: 'cascade', // persona-scoped entries die with their contact
   favorites: 'cascade', // snapshots FROM the contact (or their dead threads) go too
 };
@@ -197,8 +203,24 @@ export interface CascadeStoreOps {
   allComments(): Promise<MomentCommentVM[]>;
   /** RAW rows — repo.getFavorites filters hidden convs, the cascade must not. */
   allFavorites(): Promise<FavoriteVM[]>;
+  /**
+   * Story saves, structurally typed. `src/db` must not import `src/ai` (the
+   * dependency direction is one-way), and the cascade only needs the cast
+   * binding — the index signature is what keeps the rest of the row intact on
+   * write-back instead of truncating it to the three fields named here.
+   */
+  allStorySaves(): Promise<CascadeStoryRow[]>;
+  putStorySave(row: CascadeStoryRow): Promise<void>;
   deletePersonaRow(contactId: string): Promise<void>;
   deleteContactRow(id: string): Promise<void>;
+}
+
+/** See `CascadeStoreOps.allStorySaves`. Mirrors `StorySaveRow` in src/ai/story-gm.ts. */
+export interface CascadeStoryRow {
+  id: string;
+  bindings: Record<string, string>;
+  isActive: boolean;
+  [key: string]: unknown;
 }
 
 /**
@@ -302,6 +324,19 @@ export async function deleteContactCascade(
     if (f.senderId === id || deadIds.has(f.convId)) await repo.deleteFavorite(f.id);
   }
 
+  // 7.8) Story runs they were CAST in (M-I18). Deliberately not deleted: a
+  //      save is hours of the user's play, and losing an actor is not losing
+  //      the story. Unbind the dead contact and stop the run — `missingBindings`
+  //      then reports the empty role, which is I7's own "this run cannot start"
+  //      path, so the user is offered re-casting instead of a ghost.
+  for (const save of await ops.allStorySaves()) {
+    if (!Object.values(save.bindings).includes(id)) continue;
+    const bindings = Object.fromEntries(
+      Object.entries(save.bindings).filter(([, cid]) => cid !== id),
+    );
+    await ops.putStorySave({ ...save, bindings, isActive: false });
+  }
+
   // 8) Moments traces: their posts (with all social rows on them), and
   //    their likes/comments on everyone else's posts.
   const moments = await ops.allMoments();
@@ -354,6 +389,10 @@ export class IdbRepo implements Repo {
       allLikes: () => idbGetAll<MomentLikeVM>('moment_likes'),
       allComments: () => idbGetAll<MomentCommentVM>('moment_comments'),
       allFavorites: () => idbGetAll<FavoriteVM>('favorites'),
+      allStorySaves: () => idbGetAll<CascadeStoryRow>('story_saves'),
+      putStorySave: async (row) => {
+        await idbPut('story_saves', row);
+      },
       deletePersonaRow: (cid) => idbDelete('personas', cid),
       deleteContactRow: (cid) => idbDelete('contacts', cid),
     }, id);

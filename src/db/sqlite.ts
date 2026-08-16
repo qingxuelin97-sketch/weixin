@@ -44,8 +44,8 @@ import type {
   ConvSummaryVM,
   FavoriteVM,
 } from '../data/types';
-import { STORES, idbGetAll, idbDelete } from './idb';
-import { deleteContactCascade, type Repo } from './repo';
+import { STORES, idbGetAll, idbDelete, idbPut } from './idb';
+import { deleteContactCascade, type Repo, type CascadeStoryRow } from './repo';
 
 /**
  * The slice of @capacitor-community/sqlite's SQLiteDBConnection this driver
@@ -271,6 +271,12 @@ export class SqliteRepo implements Repo {
       allLikes: () => this.kvAll<MomentLikeVM>('moment_likes'),
       allComments: () => this.kvAll<MomentCommentVM>('moment_comments'),
       allFavorites: () => this.kvAll<FavoriteVM>('favorites'),
+      // Story saves live in IndexedDB under BOTH drivers — story-gm.ts talks to
+      // idb directly, the same reason scheduled_actions does above.
+      allStorySaves: () => idbGetAll<CascadeStoryRow>('story_saves'),
+      putStorySave: async (row) => {
+        await idbPut('story_saves', row);
+      },
       deletePersonaRow: (cid) => this.kvDelete('personas', cid),
       deleteContactRow: (cid) => this.kvDelete('contacts', cid),
     }, id);

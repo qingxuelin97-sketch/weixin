@@ -445,6 +445,18 @@ describe('deleteContact cascade', () => {
     await repo.putWalletTx({
       id: 'tx_v', kind: 'rp_out', amountFen: 100, peerId: VICTIM, createdAt: T0,
     } as never);
+    // A story run with the victim CAST in it (M-I7 casting × M-I18 cascade).
+    const { putSave } = await import('../../src/ai/story-gm');
+    await putSave({
+      id: 'save_cast', scriptId: 'sc1', nodeId: 'n1', vars: {}, seq: 3, turnsInNode: 0,
+      convId: 'conv_g', bindings: { hero: VICTIM, sidekick: FRIEND },
+      effectiveLevel: 0, isActive: true, createdAt: T0, updatedAt: T0, history: [],
+    } as never);
+    await putSave({
+      id: 'save_other', scriptId: 'sc1', nodeId: 'n1', vars: {}, seq: 1, turnsInNode: 0,
+      convId: 'conv_g', bindings: { hero: FRIEND },
+      effectiveLevel: 0, isActive: true, createdAt: T0, updatedAt: T0, history: [],
+    } as never);
   });
 
   it('leaves zero residue in every cascade store', async () => {
@@ -490,5 +502,28 @@ describe('deleteContact cascade', () => {
     // Exempt stores: the money ledger keeps its history.
     const txs = await repo.getWalletTxs();
     expect(txs.some((t) => t.id === 'tx_v')).toBe(true);
+  });
+
+  /**
+   * The story save is the one cascade store that must NOT be emptied: a run is
+   * hours of play, and losing an actor is not losing the story. Unbind + stop,
+   * so I7's own `missingBindings` gate offers re-casting instead of letting the
+   * GM write directives for a persona that no longer exists.
+   */
+  it('unbinds the victim from story runs and stops them, without destroying the save', async () => {
+    await repo.deleteContact(VICTIM);
+    const { getSave } = await import('../../src/ai/story-gm');
+
+    const cast = (await getSave('save_cast'))!;
+    expect(cast).toBeDefined(); // progress survives
+    expect(Object.values(cast.bindings)).not.toContain(VICTIM);
+    expect(cast.bindings.sidekick).toBe(FRIEND); // co-star untouched
+    expect(cast.isActive).toBe(false);
+    expect(cast.seq).toBe(3); // the rest of the row survived the write-back
+
+    // A run they were never in keeps playing.
+    const other = (await getSave('save_other'))!;
+    expect(other.isActive).toBe(true);
+    expect(other.bindings.hero).toBe(FRIEND);
   });
 });
