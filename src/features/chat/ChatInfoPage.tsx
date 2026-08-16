@@ -13,7 +13,7 @@ import { showConfirm, showPrompt, showActionSheet } from '../../components/dialo
 import { getGroupCfg, putGroupCfg, type GroupCfg } from '../../ai/group-config';
 import { repo } from '../../db/repo';
 import { humanizePersona } from '../../ai/humanize';
-import { applyPersonaPatch } from '../../data/persona-patch';
+import { applyPersonaPatch, strippedNote } from '../../data/persona-patch';
 import { HumanizeDiffSheet } from '../settings/HumanizeDiffSheet';
 import { getRouter } from '../../llm/service';
 import { globalTier } from '../../lib/nsfw-tier';
@@ -459,7 +459,12 @@ export function ChatInfoPage() {
             patch={cur.patch}
             onClose={advanceBatch}
             onApply={(accepted) => {
-              const { persona } = applyPersonaPatch(orig, accepted);
+              const { persona, stripped } = applyPersonaPatch(orig, accepted);
+              // What the lock refused belongs in the diagnostics page: a
+              // silently-dropped `relations` rewrite is indistinguishable from
+              // one that never happened (M-I2).
+              const note = strippedNote(stripped, `拟人化·${cur.name}`);
+              if (note) logError('persona.patch', note);
               void putPersona(persona).then(() => {
                 showToast(`已更新「${cur.name}」（${batch.idx + 1}/${batch.items.length}）`);
               });

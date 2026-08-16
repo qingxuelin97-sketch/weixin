@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { prefilter, parseDecision, findMentions, type GroupMember } from '../../src/ai/director';
+import { prefilterKnobs } from '../../src/ai/group-config';
 import type { MessageVM, PersonaVM } from '../../src/data/types';
 import { makePersona } from '../../src/data/persona-defaults';
 
@@ -90,6 +93,81 @@ describe('prefilter', () => {
 
   it('returns silence for an empty group', () => {
     expect(prefilter([], [msg('self', 'hi')], NOW, 's').mode).toBe('silence');
+  });
+});
+
+/**
+ * The activity knob reaches the prefilter (M-I1, wired in I18).
+ *
+ * `groupCfg:<convId>.activity` shipped reading into the offline planner and the
+ * prompt only — so a room set to 冷清 was exactly as chatty as 热闹 while you
+ * were looking at it. The prefilter is where "how alive is this room" actually
+ * decides things, and these tests pin the mapping in BOTH directions: a quiet
+ * room holds people on cooldown longer and answers less readily, a lively one
+ * does the reverse, and level 2 is byte-for-byte the pre-knob behaviour.
+ */
+describe('the activity knob shapes the prefilter', () => {
+  const spokeRecently = [msg('ai_lin', '我刚说过', NOW - 60_000), msg('self', '嗯嗯')];
+
+  it('level 2 reproduces the module defaults exactly', () => {
+    const k = prefilterKnobs({ activity: 2 });
+    expect(k.cooldownMs).toBe(45_000);
+    expect(k.maxStreak).toBe(3);
+    // …and passing them changes nothing about the outcome.
+    const withKnobs = prefilter([lin, chen, ada], spokeRecently, NOW, 's', k);
+    const without = prefilter([lin, chen, ada], spokeRecently, NOW, 's');
+    expect(withKnobs.candidates.map((c) => c.contactId)).toEqual(
+      without.candidates.map((c) => c.contactId),
+    );
+    expect(withKnobs.mode).toBe(without.mode);
+  });
+
+  it('a quiet room keeps a recent speaker on cooldown that a lively one lets back in', () => {
+    // 60s ago: past the default 45s cooldown, inside 冷清's, outside 热闹's.
+    const quiet = prefilter([lin, chen, ada], spokeRecently, NOW, 's', prefilterKnobs({ activity: 0 }));
+    const lively = prefilter([lin, chen, ada], spokeRecently, NOW, 's', prefilterKnobs({ activity: 3 }));
+    expect(quiet.candidates.map((c) => c.contactId)).not.toContain('ai_lin');
+    expect(lively.candidates.map((c) => c.contactId)).toContain('ai_lin');
+  });
+
+  it('a quiet room forces the floor to change hands sooner', () => {
+    const recent = [
+      msg('ai_chen', 'a', NOW - 9 * min),
+      msg('ai_chen', 'b', NOW - 8 * min),
+    ];
+    const quiet = prefilter([chen, lin], recent, NOW, 's', prefilterKnobs({ activity: 0 }));
+    const lively = prefilter([chen, lin], recent, NOW, 's', prefilterKnobs({ activity: 3 }));
+    expect(quiet.candidates.map((c) => c.contactId)).not.toContain('ai_chen');
+    expect(lively.candidates.map((c) => c.contactId)).toContain('ai_chen');
+  });
+
+  it('the lone-candidate roll follows the knob, and stays seeded', () => {
+    // Same seed, same members, same clock — only the knob differs. A 冷清 room
+    // declines where a 热闹 one speaks; both are replayable (rule #4).
+    const shy = prefilter([lin], [msg('self', '在吗')], NOW, 'seed-0', prefilterKnobs({ activity: 0 }));
+    const loud = prefilter([lin], [msg('self', '在吗')], NOW, 'seed-0', prefilterKnobs({ activity: 3 }));
+    expect(shy.mode).toBe('silence');
+    expect(loud.mode).toBe('direct');
+    expect(prefilter([lin], [msg('self', '在吗')], NOW, 'seed-0', prefilterKnobs({ activity: 0 })).mode)
+      .toBe(shy.mode);
+  });
+
+  it('the knobs are monotonic across the four levels', () => {
+    const ks = [0, 1, 2, 3].map((a) => prefilterKnobs({ activity: a as 0 | 1 | 2 | 3 }));
+    for (let i = 1; i < ks.length; i++) {
+      expect(ks[i].cooldownMs).toBeLessThan(ks[i - 1].cooldownMs);
+      expect(ks[i].maxStreak).toBeGreaterThanOrEqual(ks[i - 1].maxStreak);
+      expect(ks[i].speakBias).toBeGreaterThan(ks[i - 1].speakBias);
+    }
+    // Quiet is quiet, not dead: a 冷清 room still answers sometimes.
+    expect(ks[0].speakBias).toBeGreaterThan(0);
+  });
+
+  it('the group engine actually passes them (写了没接线 = 没做)', () => {
+    const src = readFileSync(resolve(__dirname, '../../src/ai/group-engine.ts'), 'utf8');
+    // Non-empty options at the call site, derived from the room's own row.
+    expect(src).toMatch(/prefilter\([^)]*prefilterKnobs\(cfg\)\)/);
+    expect(src).toContain('getGroupCfg(convId)');
   });
 });
 

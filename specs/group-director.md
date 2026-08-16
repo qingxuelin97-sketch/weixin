@@ -36,10 +36,18 @@
 ## M-I1 · 一键群聊配置
 
 - **每群旋钮**：settings KV `groupCfg:<convId>`（activity 0-3 / spice 0-3 / topics ≤5）。
-  缺行 = 默认 = 旋钮出现前的行为。读点三处：群引擎每轮拼一次 `groupCfgDirective`
-  （spice 语气行 + 话题行，附加在 scene 层之后）；前台回填把 `activityMultiplier`
-  挂到 `SimGroup.activity`（simulate 是纯函数，不读存储）；activity 只放大**预算**，
-  间隔不动——「15 分钟 ≤2 条」的完成标准在任何档位都成立（测试锁定）。
+  缺行 = 默认 = 旋钮出现前的行为。读点**四处**：
+  ① 群引擎每轮拼一次 `groupCfgDirective`（spice 语气行 + 话题行，附加在 scene 层之后）；
+  ② 前台回填把 `activityMultiplier` 挂到 `SimGroup.activity`（simulate 是纯函数，不读
+  存储）；activity 只放大**预算**，间隔不动——「15 分钟 ≤2 条」的完成标准在任何档位
+  都成立（测试锁定）；
+  ③ **导演预筛**（I18 补接）：`prefilterKnobs(cfg)` 把 activity 映射成
+  `{cooldownMs, maxStreak, speakBias}` 传给 `prefilter`——冷清=冷却更久/更早让位/
+  独苗更可能不接话，热闹反之。**档位 2 与 director.ts 的默认值逐字节相同**
+  （45s / 3 / 0.35），所以没有 groupCfg 行的群行为一字不变；
+  ④ 同一轮**只读一次**：`sendGroupMessage` 开头 `getGroupCfg` 一次，预筛用它、
+  提示词行也用它（`groupCfgLine(cfg)`），不做第二次 settings 往返。
+  掷骰仍是 `seededRng`（铁律 4），旋钮只挪动被比较的那个阈值。
 - **重配置既有群**：`rebuildState(blueprint, convId, existingByName)` 绑定既有
   convId；名字匹配的现有成员直接沿用（不重复付费），关系二遍**逐边合并**（群外
   关系边不丢），名册取并集（蓝图没提到的现有成员留下），补历史时间戳以会话最新
@@ -48,7 +56,9 @@
 - **成员管理**：ChatInfoPage 的「＋」改为从现有 AI 联系人拉人（原来错跳新建群）；
   「－」进入移出模式（移出=离开本群，联系人保留）；「一键重新配置本群」入口带
   `?rebuild=<convId>` 进生成页；7 个模板（`group-templates.ts`）填 brief/规模/
-  旋钮，建成后旋钮落到 `groupCfg`。
+  旋钮，建成后旋钮落到 `groupCfg`。模板在**重配置路径上同样可用**（I18 补）：
+  此时语义是「用这套气质重配」——brief 与旋钮照套，**规模不套**（群里现有多少人就是
+  多少人，否则「重新配置」会把 12 人群悄悄缩成模板的 4 人）。
 - **deleteContact 级联**（资料卡「删除联系人」）：顺序 = 中止在飞 → 调度队列 →
   隐藏私信双向 → 1:1 会话 → 群名册 → 记忆 → 他人卡逐边遗忘（绝不重建 relations
   整表）→ settings 定向键 → 朋友圈痕迹 → 人设+联系人。钱相关 store 明确豁免

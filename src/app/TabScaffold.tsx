@@ -1,5 +1,6 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { IconChats, IconContacts, IconDiscover, IconMe } from '../components/icons';
+import { Badge } from '../components/Badge';
 import { useAppStore } from '../store/appStore';
 
 const TABS = [
@@ -42,9 +43,7 @@ export function TabScaffold() {
                 <Icon active={active} />
               </span>
               {showBadge && (
-                <span className="tabbar__badge badge-roll" key={`b${totalUnread}`}>
-                  {totalUnread > 99 ? '99+' : totalUnread}
-                </span>
+                <Badge key={`b${totalUnread}`} className="tabbar__badge badge-roll" count={totalUnread} />
               )}
               <span className="tabbar__label">{label}</span>
             </button>

@@ -193,8 +193,8 @@
 
   /* ---- Overlay z scale (M-I0): pick a NAMED layer, never a number. ---- */
   --z-shell: 10;
-  --z-msg-menu: 30;
-  --z-list-overlay: 50; /* chat-list ＋ dropdown & row long-press */
+  --z-msg-menu: 30; /* the shared long-press menu, in every list that has one */
+  --z-list-overlay: 50; /* chat-list ＋ dropdown */
   --z-picker: 60; /* media picker */
   --z-sheet: 70; /* generic bottom sheet (forward picker, member picker…) */
   --z-viewer: 80; /* full-screen image viewer */

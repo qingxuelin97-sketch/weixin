@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
+import { Badge } from '../../components/Badge';
 import { IconPlus, IconSearch } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
 import './discover.css';
@@ -204,7 +205,7 @@ export function DiscoverPage() {
                 <DIcon kind={entry.key} />
                 <span className="discover__label">{entry.label}</span>
                 {entry.extra === 'badge' && entry.badge != null && (
-                  <span className="discover__num-badge">{entry.badge}</span>
+                  <Badge className="discover__num-badge" count={entry.badge} />
                 )}
                 {entry.extra === 'avatar-dot' && momentsNews.count > 0 && (
                   // WeChat's idiom: the ACTOR's face plus a red dot — the row
@@ -222,7 +223,8 @@ export function DiscoverPage() {
                       ) : (
                         <span className="discover__mini-avatar" />
                       )}
-                      <span className="discover__reddot" />
+                      {/* The 「有新消息」 text above already names it. */}
+                      <Badge className="discover__reddot" dot />
                     </span>
                   </span>
                 )}

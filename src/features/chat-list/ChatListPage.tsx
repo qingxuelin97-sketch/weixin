@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
+import { Badge } from '../../components/Badge';
 import { IconPlus, IconSearch } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
 import { listTimestamp } from '../../lib/time';
@@ -11,6 +12,7 @@ import './chat-list.css';
 import { useNow } from '../../lib/useNow';
 import { useSwipeRow } from '../../components/useSwipeRow';
 import { useLongPress } from '../../components/useLongPress';
+import { LongPressMenu } from '../../components/LongPressMenu';
 import { useDismissable } from '../../app/useDismissable';
 import { showConfirm } from '../../components/dialog';
 
@@ -25,10 +27,10 @@ export function ChatListPage() {
   const totalUnread = conversations.reduce((n, c) => n + (c.isMuted ? 0 : c.unreadCount), 0);
 
   const [plusOpen, setPlusOpen] = useState(false);
-  const [menu, setMenu] = useState<{ conv: ConversationVM; y: number } | null>(null);
-  // Hardware back closes the ＋ dropdown / row menu before popping the page.
+  const [menu, setMenu] = useState<{ conv: ConversationVM; x: number; y: number } | null>(null);
+  // Hardware back closes the ＋ dropdown before popping the page. The row menu
+  // registers itself — <LongPressMenu/> owns that now, in both places it is used.
   useDismissable(plusOpen, () => setPlusOpen(false));
-  useDismissable(!!menu, () => setMenu(null));
 
   const act = (fn: () => Promise<void>) => {
     setMenu(null);
@@ -88,7 +90,7 @@ export function ChatListPage() {
             <ConversationRow
               conv={conv}
               onOpen={() => navigate(`/chat/${conv.id}`)}
-              onLongPress={(y) => setMenu({ conv, y })}
+              onLongPress={(x, y) => setMenu({ conv, x, y })}
               onRead={() =>
                 act(() =>
                   patchConversation(
@@ -103,28 +105,25 @@ export function ChatListPage() {
         />
       </div>
       {menu && (
-        <div className="chatlist-overlay" onClick={() => setMenu(null)}>
-          <div
-            className="conv-menu"
-            role="menu"
-            style={{ top: Math.min(menu.y, window.innerHeight - 230) }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              role="menuitem"
-              onClick={() => act(() => patchConversation(menu.conv.id, { isPinned: !menu.conv.isPinned }))}
-            >
-              {menu.conv.isPinned ? '取消置顶' : '置顶'}
-            </button>
-            <button
-              role="menuitem"
-              onClick={() => act(() => patchConversation(menu.conv.id, { isMuted: !menu.conv.isMuted }))}
-            >
-              {menu.conv.isMuted ? '开启新消息通知' : '消息免打扰'}
-            </button>
-            <button
-              role="menuitem"
-              onClick={() =>
+        <LongPressMenu
+          layout="column"
+          at={{ x: menu.x, y: menu.y }}
+          label="会话操作"
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: menu.conv.isPinned ? '取消置顶' : '置顶',
+              onSelect: () =>
+                act(() => patchConversation(menu.conv.id, { isPinned: !menu.conv.isPinned })),
+            },
+            {
+              label: menu.conv.isMuted ? '开启新消息通知' : '消息免打扰',
+              onSelect: () =>
+                act(() => patchConversation(menu.conv.id, { isMuted: !menu.conv.isMuted })),
+            },
+            {
+              label: menu.conv.unreadCount > 0 ? '标为已读' : '标为未读',
+              onSelect: () =>
                 act(() =>
                   patchConversation(
                     menu.conv.id,
@@ -132,20 +131,11 @@ export function ChatListPage() {
                       ? { unreadCount: 0, mentionMe: false }
                       : { unreadCount: 1 },
                   ),
-                )
-              }
-            >
-              {menu.conv.unreadCount > 0 ? '标为已读' : '标为未读'}
-            </button>
-            <button
-              role="menuitem"
-              className="conv-menu__danger"
-              onClick={() => confirmDelete(menu.conv)}
-            >
-              删除该聊天
-            </button>
-          </div>
-        </div>
+                ),
+            },
+            { label: '删除该聊天', onSelect: () => confirmDelete(menu.conv) },
+          ]}
+        />
       )}
     </>
   );
@@ -163,7 +153,7 @@ function ConversationRow({
 }: {
   conv: ConversationVM;
   onOpen: () => void;
-  onLongPress: (y: number) => void;
+  onLongPress: (x: number, y: number) => void;
   onRead: () => void;
   onDelete: () => void;
 }) {
@@ -182,7 +172,7 @@ function ConversationRow({
 
   // Shared long-press physics (M-I0) — this copy used to cancel on ANY pointer
   // movement, which made the press nearly impossible to land on a touchscreen.
-  const lp = useLongPress((_x, y) => onLongPress(y));
+  const lp = useLongPress((x, y) => onLongPress(x, y));
   // A completed horizontal swipe must not ALSO open the chat on release.
   const swipeDragged = useRef(false);
   // The gesture WeChat actually uses for these two actions (M-H3). The long
@@ -257,12 +247,12 @@ function ConversationRow({
         {badge && (
           // Keyed on the count so a changed number rolls in rather than
           // swapping in place (M-H3).
-          <span
+          <Badge
             key={`n${conv.unreadCount}`}
             className={`conv-row__badge badge-roll${dotOnly ? ' conv-row__badge--dot' : ''}`}
-          >
-            {dotOnly ? '' : conv.unreadCount > 99 ? '99+' : conv.unreadCount}
-          </span>
+            count={conv.unreadCount}
+            dot={dotOnly}
+          />
         )}
       </div>
       <div className="conv-row__main">

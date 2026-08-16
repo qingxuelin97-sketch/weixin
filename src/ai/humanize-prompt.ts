@@ -11,25 +11,35 @@
  * input. `humanize.ts` owns the chain; this file owns the words.
  */
 import type { PersonaVM } from '../data/types';
+import { serializeChainInput, type ChainInput } from './generate-chain';
 
 export type HumanizeLevel = 'light' | 'medium' | 'heavy';
 
 /**
- * Deterministic prose snapshot of the rewritable text fields. Serialized by
- * hand (not JSON.stringify) so field order is fixed and the model reads a
- * card, not a data structure.
+ * The rewritable text fields as a STRUCTURED chain input.
+ *
+ * The card used to be assembled one template literal at a time right here,
+ * which is how "deterministic serialization" ends up reimplemented once per
+ * generator. The order of these sections is the card's reading order and is
+ * load-bearing (the model reads a card, not a data structure) — the serializer
+ * preserves it exactly and never sorts.
  */
+export function personaCardInput(p: PersonaVM, name: string): ChainInput {
+  return {
+    sections: [
+      { label: '名字', value: name },
+      { label: '核心人设', value: p.core, fallback: '（空）' },
+      { label: '说话风格', value: p.speechStyle, fallback: '（未写）' },
+      { label: '口头禅', value: p.catchphrases.join('、'), fallback: '（没有）' },
+      { label: '示例消息', value: p.fewShots, fallback: '（没有）' },
+      { label: '开场白', value: p.greeting, fallback: '（未写）' },
+    ],
+  };
+}
+
+/** The same card as text, for the prose steps that are not a runChain call. */
 export function describePersona(p: PersonaVM, name: string): string {
-  const lines = [
-    `名字：${name}`,
-    `核心人设：${p.core || '（空）'}`,
-    `说话风格：${p.speechStyle || '（未写）'}`,
-    `口头禅：${p.catchphrases.length ? p.catchphrases.join('、') : '（没有）'}`,
-    `示例消息：`,
-    ...(p.fewShots.length ? p.fewShots.map((s) => `  - ${s}`) : ['  （没有）']),
-    `开场白：${p.greeting || '（未写）'}`,
-  ];
-  return lines.join('\n');
+  return serializeChainInput(personaCardInput(p, name));
 }
 
 /** The texture instructions shared by every level. */

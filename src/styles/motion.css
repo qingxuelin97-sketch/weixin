@@ -183,7 +183,7 @@
 }
 
 /* ---- Long-press menu pops from where the finger is. */
-.msg-menu {
+.lp-menu {
   animation: menu-pop var(--dur-fast) var(--ease-standard);
   transform-origin: center bottom;
 }
@@ -195,6 +195,22 @@
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+/* The column variant is centered with translateX(-50%), and an animation's
+   transform REPLACES it — without carrying the offset through every frame the
+   menu would jump half its width left for the duration of the pop. */
+.lp-menu--column {
+  animation-name: menu-pop-center;
+}
+@keyframes menu-pop-center {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
   }
 }
 
@@ -369,7 +385,7 @@
   .composer-panel,
   .msg--enter,
   .typing-bubble__dot,
-  .msg-menu,
+  .lp-menu,
   .toast,
   .page-stack__page,
   .like-burst,

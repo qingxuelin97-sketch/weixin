@@ -24,7 +24,7 @@ import { importStCard, exportStCard } from '../../ai/sillytavern';
 import { saveTextFile } from '../../lib/save-file';
 import { logError } from '../../lib/errlog';
 import { humanizePersona, HUMANIZE_LEVEL_LABELS, type HumanizeLevel } from '../../ai/humanize';
-import { applyPersonaPatch } from '../../data/persona-patch';
+import { applyPersonaPatch, strippedNote } from '../../data/persona-patch';
 import { HumanizeDiffSheet } from './HumanizeDiffSheet';
 import { showActionSheet, showConfirm } from '../../components/dialog';
 import { getRouter } from '../../llm/service';
@@ -627,8 +627,14 @@ export function PersonaEditPage() {
           onApply={(accepted) => {
             // Patch semantics end to end: only accepted fields move, locked
             // fields can't move even if the model tried (applyPersonaPatch
-            // strips them again as the last line of defense).
-            const { persona } = applyPersonaPatch(p, accepted);
+            // strips them again as the last line of defense) — and what it
+            // stripped is written down, or the defense is unobservable.
+            const { persona, stripped } = applyPersonaPatch(p, accepted);
+            const note = strippedNote(
+              stripped,
+              `拟人化·${contact?.remark ?? contact?.name ?? p.contactId}`,
+            );
+            if (note) logError('persona.patch', note);
             setP(persona);
             setHPatch(null);
             showToast('已应用，确认后记得保存');

@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { humanizePersona, validateHumanizePatch, HUMANIZE_LEVEL_LABELS } from '../../src/ai/humanize';
-import { humanizeSystem, describePersona, fieldsFor } from '../../src/ai/humanize-prompt';
-import { applyPersonaPatch } from '../../src/data/persona-patch';
+import { humanizeSystem, describePersona, personaCardInput, fieldsFor } from '../../src/ai/humanize-prompt';
+import { runChain, serializeChainInput, type ChainInput } from '../../src/ai/generate-chain';
+import { applyPersonaPatch, strippedNote } from '../../src/data/persona-patch';
 import { makePersona } from '../../src/data/persona-defaults';
 
 /**
@@ -99,6 +100,45 @@ describe('the patch discipline', () => {
     expect(validateHumanizePatch({ fewShots: ['只有一条'] }, 'light').ok).toBe(false);
   });
 
+  it('what the lock strips is written down, not swallowed', () => {
+    // Half of "the validator strips them and reports it" shipped: `stripped`
+    // came back from every call and NOTHING read it, so a model quietly
+    // rewriting `relations` looked exactly like a model that never tried.
+    const out = applyPersonaPatch(persona, {
+      speechStyle: '新风格',
+      relations: { hacked: 'x' },
+      modelChat: 'evil:model',
+      greeting: undefined,
+    });
+    expect(out.stripped).toContain('relations');
+    const note = strippedNote(out.stripped, '拟人化·小雨');
+    expect(note).toContain('拟人化·小雨');
+    expect(note).toContain('锁定字段被剥除');
+    expect(note).toContain('relations');
+    expect(note).toContain('modelChat');
+    // Undefined-valued keys are a different story and say so.
+    expect(note).toContain('空值字段被忽略');
+    expect(note).toContain('greeting');
+    // Deterministic: the diagnostics page must read the same way twice.
+    expect(note).toBe(strippedNote(out.stripped, '拟人化·小雨'));
+    // Nothing stripped = nothing logged; a no-op must not fill the log.
+    expect(strippedNote([], '拟人化·小雨')).toBe('');
+  });
+
+  it('both apply sites route the stripped list into the error log', () => {
+    for (const f of [
+      'src/features/settings/PersonaEditPage.tsx',
+      'src/features/chat/ChatInfoPage.tsx',
+    ]) {
+      const src = readFileSync(resolve(__dirname, '../..', f), 'utf8');
+      expect(src, `${f} drops the stripped list on the floor`).toMatch(
+        /const \{ persona, stripped \} = applyPersonaPatch/,
+      );
+      expect(src).toContain('strippedNote');
+      expect(src).toContain("logError('persona.patch'");
+    }
+  });
+
   it('batch distinctiveness: a sibling-taken catchphrase is rejected', () => {
     const out = validateHumanizePatch(
       { speechStyle: 's', catchphrases: ['要得', '新词'], fewShots: ['a', 'b', 'c'] },
@@ -187,5 +227,91 @@ describe('the chain', () => {
     expect(out.ok).toBe(true);
     expect(n).toBe(2);
     expect(out.attempts.length).toBe(1);
+  });
+});
+
+/**
+ * Structured chain input (the other half of I2's plan).
+ *
+ * `runChain` only ever took a string, so every caller with FIELDS rather than a
+ * sentence wrote its own serializer — `describePersona` assembled the card one
+ * template literal at a time. The overload moves that job into the chain, and
+ * these tests hold the property that makes sharing it safe: same input, same
+ * bytes, field order exactly as the caller declared it.
+ */
+describe('structured chain input', () => {
+  const card: ChainInput = {
+    sections: [
+      { label: '名字', value: '小雨' },
+      { label: '核心人设', value: '', fallback: '（空）' },
+      { label: '示例消息', value: ['在画了在画了', '你吃了吗'], fallback: '（没有）' },
+    ],
+  };
+
+  it("is deterministic and never reorders the caller's fields", () => {
+    const once = serializeChainInput(card);
+    expect(serializeChainInput(card)).toBe(once);
+    expect(once).toBe(
+      ['名字：小雨', '核心人设：（空）', '示例消息：', '  - 在画了在画了', '  - 你吃了吗'].join('\n'),
+    );
+    // Declaration order is the whole contract: the same sections in another
+    // order must serialize in THAT order, never sorted behind the caller's back.
+    const flipped = serializeChainInput({ sections: [...card.sections].reverse() });
+    expect(flipped.split('\n')[0]).toBe('示例消息：');
+    expect(flipped).not.toBe(once);
+  });
+
+  it('an empty field prints its placeholder instead of a dangling label', () => {
+    expect(serializeChainInput({ sections: [{ label: '开场白', value: '   ' }] })).toBe(
+      '开场白：（空）',
+    );
+    expect(
+      serializeChainInput({ sections: [{ label: '示例消息', value: [], fallback: '（没有）' }] }),
+    ).toBe('示例消息：\n  （没有）');
+  });
+
+  it('the persona card serializes byte-for-byte as the hand-rolled version did', () => {
+    // The prompt IS the product here — a "harmless refactor" that moves a
+    // colon changes what every rewrite sees.
+    expect(serializeChainInput(personaCardInput(persona, '小雨'))).toBe(
+      describePersona(persona, '小雨'),
+    );
+    expect(describePersona(persona, '小雨')).toBe(
+      [
+        '名字：小雨',
+        '核心人设：川妹子插画师，嘴硬心软',
+        '说话风格：短句',
+        '口头禅：要得',
+        '示例消息：',
+        '  - 在画了在画了',
+        '  - 你吃了吗',
+        '开场白：（未写）',
+      ].join('\n'),
+    );
+  });
+
+  it('runChain takes either form, and the string signature is untouched', async () => {
+    const seen: string[] = [];
+    const deps = {
+      complete: async (messages: Array<{ role: 'system' | 'user'; content: string }>) => {
+        seen.push(messages[1].content);
+        return JSON.stringify({ ok: true });
+      },
+    };
+    const spec = {
+      label: 't',
+      jsonSystem: 's',
+      validate: (raw: unknown) => ({ ok: true, value: raw as { ok: boolean }, issues: [] }),
+    };
+    await runChain('一句话', spec, deps);
+    await runChain(card, spec, deps);
+    expect(seen[0]).toBe('一句话');
+    expect(seen[1]).toBe(serializeChainInput(card));
+  });
+
+  it('humanize hands the chain fields, not a pre-baked string', () => {
+    const src = readFileSync(resolve(__dirname, '../../src/ai/humanize.ts'), 'utf8');
+    expect(src).toContain('personaCardInput');
+    expect(src).toMatch(/runChain<[^(]*\(\s*card,/);
   });
 });
