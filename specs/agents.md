@@ -206,3 +206,28 @@ DM = 正式 `conversations` 行，id = `dm_<a>_<b>`（a/b 按字典序，保证�
 重放不复制）；group_event/agent_invite 由前台 pass 播种。规划模块
 （social-plans/agent-forward/group-events/agent-invite）全部禁 Date.now/
 Math.random（铁律 4，源码级测试）。
+
+## M-I13~I17 · 智能体新增能力（并行波交付）
+
+- **目标与长期叙事**（`goals.ts`，I14）：每个 agent 持有跨周目标（考证/攒钱/减肥/换工作…），
+  `goalStateAt(contactId, t, epoch)` 是**纯函数**——里程碑与挫折由种子推导，不落库、
+  不排队。注入顺序：生活线（arcLine）之后追加 `goalDirective`，仍在 scene 之后（层序不动）。
+  终结事件（达成/放弃）经 `goalShareDirective` 变成她**主动跟你说**的一条消息，
+  用 `goal_told:<contactId>` 台账保证一辈子只说一次；`goalMomentMaterial` 让进展成为
+  朋友圈素材（I15 的连续剧式发帖据此串成系列）。
+- **表情接梗**（`game-react.ts`，I13）：你掷骰子/出拳后给她一条指令层，
+  **禁止剧透**——石头剪刀布在她自己那手落定前，指令里不含结果；两手齐了才给
+  「得意/耍赖」的判定权。过 4 条消息即失效，不复读。
+- **气泡物化**（`bubble-materialize.ts`，I13）：新消息类型（位置/名片/文件/链接/游戏）
+  从 Bubble 落成消息行的唯一路径，被单聊/群聊轮/群主动**三条播放路径共用**——
+  三处各写一遍就是三种不一致。名片按备注/本名解析，解析不到降级为文本。
+- **表情包口味**（`sticker-taste.ts` + `sticker-battle.ts`，I15）：你发过的表情进
+  `stickerSent` 台账（上限 30），每个 agent 按种子"收藏"其中一部分
+  （`collectedStickers`），回消息时 `AGENT_STICKER_SWAP_RATE` 概率改用收藏款——
+  这才是"她学会了你的梗"。斗图 `battleReply` 命中时**零 LLM**：直接回一张，
+  带 0.8~2.5s 的种子延迟（人在翻表情包），连战有衰减，不复读。
+- **通话中的她**（`call-script.ts`，I16）：见 `specs/call.md`。对 agent 层的意义是
+  第一次出现「不落聊天记录的对话」——通话轮次只在内存，落库的只有纪要与承诺。
+
+上述模块**全部禁 `Date.now()` / `Math.random()`**（铁律 4，源码级测试看守），
+时间由调用方注入、随机由 `seededRng` 提供；因此离线回填与重放里它们表现一致。
