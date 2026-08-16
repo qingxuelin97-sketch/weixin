@@ -33,7 +33,14 @@ ck() {
 # (1) 消息通知（带内联回复）：真的发出来了吗？
 adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.NOTIFY || true
 sleep 3
-adb shell dumpsys notification > notif-dump.txt || true
+# `dumpsys notification` REDACTS fields on newer images — the record shows up
+# but its channel id does not, which is why the two channel assertions failed
+# on the first run that ever executed them while the feature itself was fine
+# (notify-record-posted passed, and the ids in Notifier.kt are exactly these).
+# --noredact prints the full record; append the plain dump too so the evidence
+# file is still useful if the flag is unsupported.
+adb shell dumpsys notification --noredact > notif-dump.txt 2>/dev/null || true
+adb shell dumpsys notification >> notif-dump.txt || true
 ck notify-record-posted FAIL grep -q 'com.personal.weixinai' notif-dump.txt
 ck notify-channel-messages FAIL grep -q 'aiwx_messages' notif-dump.txt
 # dumpsys 常把 action 标题脱敏，这项只作参考。
@@ -51,7 +58,8 @@ sleep 12
 # (3) 来电全屏通知走自己的 channel。
 adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.CALL || true
 sleep 3
-adb shell dumpsys notification > notif-dump2.txt || true
+adb shell dumpsys notification --noredact > notif-dump2.txt 2>/dev/null || true
+adb shell dumpsys notification >> notif-dump2.txt || true
 ck call-channel-posted FAIL grep -q 'aiwx_calls' notif-dump2.txt
 
 # (4) 悬浮气泡：像用户在设置里那样授予 appop，再要一个气泡，看窗口列表。
