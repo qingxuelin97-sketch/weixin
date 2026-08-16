@@ -203,8 +203,12 @@ describe('anti-AI-tone v2 runs on the output, not just in the prompt', () => {
       // finally LOOKS at what came back. A version wired into only one of the
       // two engines would leave the group — where repetition is most visible,
       // because the lines are short and stacked — exactly as it was.
+      // Since M-I5 both engines play progressively, so the scrub is the
+      // incremental form (`makeScrubber`) — same decisions, one whole bubble at
+      // a time. Either name satisfies "something looks at the output"; neither
+      // being present would mean the scrub silently fell out of an engine again.
       const src = read(file);
-      expect(src.includes('scrubBubbles(')).toBe(true);
+      expect(/(makeScrubber|scrubBubbles)(<[^>]*>)?\(/.test(src)).toBe(true);
       expect(src.includes('styleNote(')).toBe(true);
     });
   }

@@ -34,7 +34,8 @@ import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { arcAwareness, freshArc, arcOpener, type PeerRef } from './rel-arcs';
-import { ownLines, styleNote, scrubBubbles } from './anti-ai';
+import { ownLines, styleNote, makeScrubber } from './anti-ai';
+import { playbackFeed } from './bubble-feed';
 import { noteDrift } from './drift';
 import { voiceDirective } from './voice-send';
 import { agentStickerPool, maybeAgentSticker } from './sticker-taste';
@@ -170,6 +171,23 @@ export function effectiveTier(global: NsfwTierVM, personaPermit: boolean): NsfwT
 function personaRefusalBubbles(persona: PersonaVM): Bubble[] {
   const line = persona.catchphrases[0] ? `${persona.catchphrases[0]}…信号好像不太好，等下回你哈` : '信号不太好，等下回你哈';
   return [{ type: 'text', content: line }];
+}
+
+/** 收尾的几种说法；具体选哪句由种子决定。 */
+const TRUNCATION_LINES = ['先不说了，这边有点事', '我这边有点事，回头说', '先这样，我一会儿再说'];
+
+/**
+ * 被打断时的收尾话（M-I5）——和 `personaRefusalBubbles` 同源，语气不同。
+ *
+ * 拒答是「我现在不想聊这个」，截断是「说到一半这边有事」：她本来正说得好好的，
+ * 流断了。用拒答那套文案会读成「说到一半突然翻脸」，比没有还糟。
+ *
+ * 种子化（铁律 4）：同一轮重放选到同一句，不用 Math.random。
+ */
+function personaTruncationBubbles(persona: PersonaVM, seed: string): Bubble[] {
+  const pick = TRUNCATION_LINES[Math.floor(seededRng(`cutoff:${seed}`)() * TRUNCATION_LINES.length)];
+  const head = persona.catchphrases[0] ?? '…';
+  return [{ type: 'text', content: `${head}…${pick}` }];
 }
 
 /**
@@ -517,52 +535,64 @@ async function generateAndPlayInner(
   const tGenStart = hooks.now();
   const ctx: GenerateContext = {
     personaRefusal: () => personaRefusalBubbles(persona),
+    // 首气泡已上屏后流断了：不重试、不换链，但也不能就这么没了下文。
+    personaTruncation: () => personaTruncationBubbles(persona, `${convId}:${recent.at(-1)?.id ?? 0}`),
     prefixPrefill: tier !== 'off' ? '嗯' : undefined,
   };
 
+  // Bubbles actually put on screen this turn. Hoisted out of the try because
+  // the catch below has to know whether the user already saw something: after
+  // M-I5 a turn can fail HALFWAY, and appending the persona's "信号不太好" on
+  // top of three bubbles she already sent reads as her having a stroke.
+  let played = 0;
   try {
     const router = await getRouter();
     // What she can actually SEE this turn. Rides the same message list, the
     // same router and the same tier — a photo is conversation content, and
     // constitution rule #6 covers it exactly as it covers text.
     const images = await collectTurnImages(recent);
-    const bubbles: Bubble[] = [];
-    for await (const b of router.generate(
-      { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
-      { messages, signal: ctrl.signal, ...(images.length ? { images } : {}) },
-      ctx,
-      convId,
-    )) {
-      bubbles.push(b);
-    }
-    if (ctrl.signal.aborted) return;
 
-    // Drop what she has effectively already said, plus any assistant-speak the
-    // rules failed to prevent. Deterministic and free — the alternative is a
-    // second model call to judge the first one. Never empties the turn: a
-    // missing reply reads as a broken app, a repetitive one only reads as her.
-    const scrubbed = scrubBubbles(bubbles, ownRecent);
-    bubbles.length = 0;
-    bubbles.push(...scrubbed);
+    // 渐进上屏 (M-I5): every bubble is played as it ARRIVES, not after the whole
+    // turn has been drained. On a streaming provider the first line lands while
+    // the model is still writing the third; on a non-streaming one the whole set
+    // is already queued before the first typing delay elapses, so the pacing is
+    // byte-for-byte what it was.
+    //
+    // The scrub still runs on WHOLE bubbles, one at a time and in playback
+    // order — same decisions as the batch form, never half a sentence.
+    const scrubber = makeScrubber<Bubble>(ownRecent);
+    const prefetch: { stickers?: Promise<string[]> } = {};
+    const feed = playbackFeed(
+      router.generate(
+        { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
+        { messages, signal: ctrl.signal, ...(images.length ? { images } : {}) },
+        ctx,
+        convId,
+      ),
+      {
+        signal: ctrl.signal,
+        keepLast: true, // scrubBubbles' "never empty" invariant
+        accept: (b) => {
+          if (!scrubber.accept(b)) return false;
+          // Voice synthesis starts the moment the bubble arrives, so it overlaps
+          // the earlier bubbles' playback; the awaited voiceMeta at append time
+          // then hits the content-addressed cache instead of serializing a TTS
+          // round-trip into the gap.
+          if (b.type === 'voice') void voiceMeta(b.content, persona, b.emotion, tier).catch(() => {});
+          // 她也用你的表情包 (M-I15): one storage read, started on the first
+          // sticker of the turn and awaited only where it is used.
+          if (b.type === 'sticker') {
+            prefetch.stickers ??= agentStickerPool(peer.id).catch(() => [] as string[]);
+          }
+          return true;
+        },
+      },
+    );
 
-    // Prefetch voice synthesis in parallel while earlier bubbles play — the
-    // awaited voiceMeta at append time then hits the content-addressed cache
-    // instead of serializing a TTS round-trip into every gap.
-    for (const b of bubbles) {
-      if (b.type === 'voice') void voiceMeta(b.content, persona, b.emotion, tier).catch(() => {});
-    }
-
-    // 她也用你的表情包 (M-I15): when the model already chose to send a sticker,
-    // a seeded minority of those turns swaps the vocab glyph for one of the
-    // customs she has "collected" from what you send her. Riding the model's
-    // own sticker decision keeps the emotional timing right for free; one
-    // storage read, only on turns that actually contain a sticker.
-    const stickerPool = bubbles.some((b) => b.type === 'sticker')
-      ? await agentStickerPool(peer.id).catch(() => [] as string[])
-      : [];
-
-    for (let i = 0; i < bubbles.length; i++) {
-      const b = bubbles[i];
+    for (;;) {
+      const b = await feed.next();
+      if (b === null) break;
+      const i = played;
       // Budgeted pacing: the LLM's real latency (2-8s on free reasoning models)
       // already elapsed behind the typing indicator. The first bubble only pays
       // the REMAINDER of its typing delay, so total wait ≈ max(real, simulated)
@@ -574,6 +604,7 @@ async function generateAndPlayInner(
       const delay = i === 0 ? Math.max(250, full - (hooks.now() - tGenStart)) : full;
       await sleep(delay, ctrl.signal);
       if (ctrl.signal.aborted) return;
+      played++;
 
       if (b.type === 'recall') {
         // Send-then-recall for a human touch: post it, then queue the flip.
@@ -599,8 +630,11 @@ async function generateAndPlayInner(
         continue;
       }
 
-      // Hide typing just before the last bubble lands.
-      if (i === bubbles.length - 1) hooks.setTyping(convId, false);
+      // Hide typing just before the last bubble lands. "Last" is now a question
+      // the feed answers (nothing buffered, source exhausted) instead of an
+      // index into a finished array — and while more is still streaming in, the
+      // indicator staying up is not a leftover, it is the truth.
+      if (feed.finished) hooks.setTyping(convId, false);
 
       // M-I13 rich types (location / contact / file / link / dice / rps) ride
       // ONE shared materializer with the group engine. Everything seeded in it
@@ -651,7 +685,10 @@ async function generateAndPlayInner(
       // Seeded per (turn, bubble index) so a replayed turn swaps identically.
       const customSticker =
         b.type === 'sticker'
-          ? maybeAgentSticker(stickerPool, `${convId}:${recent.at(-1)?.id ?? 0}:${i}`)
+          ? maybeAgentSticker(
+              (await prefetch.stickers) ?? [],
+              `${convId}:${recent.at(-1)?.id ?? 0}:${i}`,
+            )
           : null;
 
       await hooks.appendMessage({
@@ -670,12 +707,15 @@ async function generateAndPlayInner(
     }
     // The reply landed with these facts in context — count the reference
     // (pending→confirmed on first use). Fire-and-forget bookkeeping.
-    if (bubbles.length > 0 && memory.ids.length > 0) {
+    if (played > 0 && memory.ids.length > 0) {
       void touchFacts(peer.id, memory.ids, hooks.now()).catch(() => {});
     }
   } catch {
-    // Router threw past its own ladder — emit the persona refusal so the thread never breaks.
-    if (!ctrl.signal.aborted) {
+    // Router threw past its own ladder — emit the persona refusal so the thread
+    // never breaks. Only when NOTHING was shown: a turn that already put lines
+    // on screen was closed by the router's own cut-off line, and a second
+    // apology under it is one bubble too many.
+    if (!ctrl.signal.aborted && played === 0) {
       for (const b of personaRefusalBubbles(persona)) {
         await hooks.appendMessage({
           convId,

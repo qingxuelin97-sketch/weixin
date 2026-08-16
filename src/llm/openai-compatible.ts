@@ -249,9 +249,13 @@ export class OpenAiCompatibleProvider implements ChatProvider {
    * reasons about whole bubbles, and half a sentence on screen is worse than
    * a short wait. Reasoning models' <think> spans are dropped in-stream.
    *
-   * Errors THROW only before the first yield (the router then falls back to
-   * the one-shot ladder). After a bubble is out, a broken stream ends the
-   * turn quietly — what is on screen cannot be recalled.
+   * A failure BEFORE the first yield throws its own kind, and the router falls
+   * back to the one-shot ladder. A break AFTER output is reported as
+   * `LlmError('truncated')`: the bubbles already yielded stand (what is on
+   * screen cannot be recalled) but the turn did NOT finish, and the caller has
+   * to know the difference — swallowing it is exactly how a reply ends in
+   * mid-air with no explanation, which is what M-I5 shipped and users saw.
+   * Abnormal `finish_reason`s (length / content_filter) count as the same thing.
    */
   async *generateStream(opts: GenerateOptions): AsyncIterable<Bubble> {
     const key = await this.cfg.getKey();
@@ -279,6 +283,10 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     let emitted = 0;
     const t0 = Date.now();
     let fullText = '';
+    /** Last `finish_reason` the stream declared; anything but 'stop' cut it short. */
+    let finishReason: string | null = null;
+    /** Set when the stream broke after output — thrown once the reader is closed. */
+    let truncation: unknown = null;
 
     /** Consume completed lines in `acc`, yielding whole bubbles. */
     const drainLines = function* (self: OpenAiCompatibleProvider): Generator<Bubble> {
@@ -307,9 +315,13 @@ export class OpenAiCompatibleProvider implements ChatProvider {
           let delta = '';
           try {
             const j = JSON.parse(payload) as {
-              choices?: Array<{ delta?: { content?: string | null } }>;
+              choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>;
             };
             delta = j.choices?.[0]?.delta?.content ?? '';
+            // Read BEFORE the empty-delta skip: the frame that carries the
+            // finish reason usually carries no content at all, so skipping
+            // first is how "被截断" became indistinguishable from "说完了".
+            finishReason = j.choices?.[0]?.finish_reason ?? finishReason;
           } catch {
             continue; // partial frame or keepalive — never fatal
           }
@@ -359,11 +371,27 @@ export class OpenAiCompatibleProvider implements ChatProvider {
         latencyMs: Date.now() - t0,
         request: opts.messages.map((m) => ({ role: m.role, content: m.content })),
         text: fullText,
-        finishReason: 'stream',
+        finishReason: finishReason ?? 'stream',
       });
+      // Cut short by the model's own accounting (max_tokens hit, output audit):
+      // the bubbles that landed are real, the turn is not finished.
+      if (emitted > 0 && finishReason && finishReason !== 'stop') {
+        truncation = new LlmError(
+          'truncated',
+          `stream finish_reason=${finishReason}`,
+          undefined,
+          this.id,
+        );
+      }
     } catch (e) {
       if (emitted === 0) throw e; // router falls back to the one-shot ladder
-      // Mid-stream break after output: end quietly; the shown bubbles stand.
+      // The USER interrupting is not the model being cut off: a new send aborts
+      // this turn on purpose, and reporting that as truncation would make her
+      // tack "先不说了" onto a reply the user already walked away from.
+      if (opts.signal?.aborted) return;
+      // Mid-stream break AFTER output: the shown bubbles stand, but the caller
+      // is told the turn was cut off so it can close it in character.
+      truncation = new LlmError('truncated', `stream broke: ${String(e)}`, undefined, this.id, e);
     } finally {
       try {
         await reader.cancel();
@@ -371,6 +399,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
         /* already closed */
       }
     }
+    if (truncation) throw truncation;
   }
 
   /**
