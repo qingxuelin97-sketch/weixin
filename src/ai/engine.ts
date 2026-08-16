@@ -13,7 +13,7 @@ import { typingDelay } from '../llm/bubbles';
 import { getEdge, effectiveAffinity, relationTier, tierDirective, recordRelEvent } from './relationship';
 import { noteUserReplied } from './agent-state';
 import { assembleSystemPrompt, promptStats, relationsForPrompt, type PersonaView } from './prompt';
-import { selectFactsForInjection, touchFacts } from './memory';
+import { selectFactsForInjection, touchFacts, withConvSummary } from './memory';
 import { getRouter } from '../llm/service';
 import type { GenerateContext, NsfwTier } from '../llm/router';
 import { playMessageSound } from '../lib/sound';
@@ -363,7 +363,7 @@ async function generateAndPlayInner(
   // Rolling summary from the memory loop — "上次聊到哪" survives the 30-message
   // context window. (Was a settings read that nothing ever wrote, M2–M-D1.)
   const summaryRow = await repo.getConvSummary(convId);
-  if (summaryRow?.summary) memory.topK = [`上次你们聊到：${summaryRow.summary}`, ...memory.topK];
+  memory.topK = withConvSummary(memory.topK, summaryRow?.summary, 'single');
   // Worldbook (M-I4): user-decreed lore, matched on the same query, capped by
   // its own budget, injected inside the memory layer.
   memory.world = await worldLinesFor({ query, contactId: persona.contactId, convId, tier });

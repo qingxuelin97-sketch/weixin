@@ -48,7 +48,9 @@ export function StatusPage() {
 
   // The affect pulse and the drift ledger are the two stored inputs; read
   // them once per minute tick. Drift here is the MAIN drift system (M-H1,
-  // event-driven and bounded), the same one the persona editor explains.
+  // event-driven and bounded), the same one the persona editor explains —
+  // and since M-I18 `getDrift` layers the unstored goal linkage on top, which
+  // is where the per-dimension `reason` below comes from.
   const [affect, setAffect] = useState<AffectState | null>(null);
   const [drifted, setDrifted] = useState<DriftExplanation[]>([]);
   useEffect(() => {
@@ -203,6 +205,9 @@ function DriftCard({ drifted }: { drifted: DriftExplanation[] }) {
       {drifted.map((d) => (
         <div key={d.dim} className="status__dim">
           <CenteredMeter label={d.label} value={d.delta} left="−" right="+" />
+          {/* Why, when there is a why: a goal she just finished or gave up on
+              (M-I14/I18). "她变了，不知道为什么" is a bug you cannot file. */}
+          {d.reason && <div className="status__dim-reason">{d.reason}</div>}
         </div>
       ))}
     </div>

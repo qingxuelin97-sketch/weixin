@@ -231,3 +231,15 @@ Math.random（铁律 4，源码级测试）。
 
 上述模块**全部禁 `Date.now()` / `Math.random()`**（铁律 4，源码级测试看守），
 时间由调用方注入、随机由 `seededRng` 提供；因此离线回填与重放里它们表现一致。
+
+## M-I18 · 四条兑现（计划核查后补齐）
+
+- **目标 ↔ 漂移联动回归**：I14 交付过、被合并丢掉。见 `specs/goals-status.md`
+  「M-I18 修复」。要点：`getDrift` = 存储层 + 纯函数目标层，行为仍只走
+  `driftedPersona → proactMul` 一条通道。
+- **群聊读 `conv_summaries`**：写入侧从来覆盖群，读取侧只有 1:1——群摘要被生成、
+  被备份、被级联删除，唯独不进 prompt。现由 `memory.withConvSummary()` 一份实现
+  供两个引擎共用（层序不动，摘要在记忆层内部、事实之前）。
+- **离线窗口补 gift 与 I3 社交 kind**：见 `specs/backfill.md`「M-I18」。
+- **世界书近似匹配**：两档语义保持不变，只在「有关键词」那一档下叠 trigram/BM25。
+  见 `specs/worldbook.md`。

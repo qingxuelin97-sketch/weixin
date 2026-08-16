@@ -38,6 +38,26 @@ proactivity 短期上扬（衰减回落），并且**可解释**（`explainDrift
 - [ ] engine / moments-engine / useSchedulerRuntime 真有 import（wiring grep 转红）。
 - [ ] 主动分享一辈子一次：`goal_told` 记账在生成前落盘。
 
+## M-I18 修复：联动被合并丢过一次
+
+I14 分支交付的 `src/ai/drift.ts` 里有完整的目标联动；落地的合并提交解冲突时取了
+HEAD 那侧（M-H1 的事件驱动版），整块联动随之消失——`grep goal src/ai/drift.ts`
+零命中，而**测试全绿**，因为那条测试的注释把「drift 不读 goals」写成了有意为之。
+
+现按当前实现移植回去，导出签名不变：
+
+- `getDrift()` = 存储层（M-H1 事件驱动、可 reset）**＋** 目标层
+  （`applyGoalDrift`，纯函数、不落库、`GOAL_DRIFT_WINDOW_MS = 14d` 外恒为 0）。
+  行为侧因此仍只走 `driftedPersona` → heartbeat 的 `proactMul` 这一条既有通道。
+- 有界：目标层自身封顶 `GOAL_DRIFT_CAP`，合并后封顶 `DRIFT_CAP + GOAL_DRIFT_CAP`，
+  `applyDrift` 再把旋钮夹回 0..1。
+- 可解释：`DriftExplanation.reason` 出现「她刚做成了「…」，所以最近更爱主动来找你」，
+  状态页与人设页都显示。
+- 可回滚：目标层**没有行可删**——`resetDrift` 清的是存储层，目标层自己在窗口内衰减
+  到零。人设页的「恢复到卡片」因此改成重读后再渲染，不再假装清空。
+- 转红测试在 `goals-drift.test.ts`「目标 ↔ 漂移联动」：窗口内抬高、逐日单调回落、
+  窗口外归零、叠加不覆盖存储层、explainDrift 说出目标名。
+
 ## 已知坑
 
 - 未到达的里程碑文案是剧透，状态页只显示已达成文案，未来的显示为锁定点。

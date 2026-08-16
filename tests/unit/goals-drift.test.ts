@@ -12,6 +12,14 @@ import {
   GOAL_TEMPLATES,
   type GoalEvent,
 } from '../../src/ai/goals';
+import {
+  applyGoalDrift,
+  explainDrift,
+  DRIFT_CAP,
+  GOAL_DRIFT_CAP,
+  GOAL_DRIFT_WINDOW_MS,
+  type Drift,
+} from '../../src/ai/drift';
 import { seededRng } from '../../src/lib/money';
 
 /**
@@ -208,17 +216,121 @@ describe('prompt material', () => {
   });
 });
 
+/**
+ * 目标 ↔ 漂移联动 (M-I14, restored in M-I18).
+ *
+ * The plan's contract in one line: 目标达成 → proactivity 短期上扬，之后衰减
+ * 回落. It was delivered on the I14 branch and then LOST — the merge that
+ * landed I14 resolved `src/ai/drift.ts` to the other side, and the test that
+ * should have caught it instead described the absence as intentional. These
+ * assertions are the replacement: they fail if the linkage ever goes away
+ * again, and they fail if it stops being bounded or stops decaying.
+ */
+describe('目标 ↔ 漂移联动', () => {
+  const EMPTY_DRIFT: Drift = { d: {}, at: 0, why: [] };
+  const pro = (id: string, t: number, epoch: number) =>
+    applyGoalDrift(EMPTY_DRIFT, id, t, epoch).d.proactivity ?? 0;
+
+  /**
+   * A terminal event with nothing else happening for a full drift window after
+   * it — so "the window has passed" can be asserted against zero rather than
+   * against whatever the next cycle's first milestone happens to contribute.
+   */
+  function isolatedTerminal(kind: 'completed' | 'abandoned'): { e: GoalEvent; id: string; epoch: number } {
+    for (const id of ['ai_goal_test', 'g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8']) {
+      const epoch = agentEpoch(id);
+      const all = goalEventsBetween(id, epoch, epoch + 900 * DAY, epoch);
+      for (const e of all) {
+        if (e.kind !== kind) continue;
+        const after = all.some(
+          (o) => o.id !== e.id && o.at > e.at && o.at <= e.at + GOAL_DRIFT_WINDOW_MS + 2 * DAY,
+        );
+        if (!after) return { e, id, epoch };
+      }
+    }
+    throw new Error(`no isolated ${kind} event in the fixture space`);
+  }
+
+  it('a completed goal lifts proactivity, then decays back to nothing', () => {
+    const { e, id, epoch } = isolatedTerminal('completed');
+    const before = pro(id, e.at - HOUR, epoch);
+    const just = pro(id, e.at + HOUR, epoch);
+    const days = [1, 3, 7].map((d) => pro(id, e.at + d * DAY, epoch));
+    const past = pro(id, e.at + GOAL_DRIFT_WINDOW_MS + DAY, epoch);
+
+    // 上扬: the completion itself is worth an order more than the ambient.
+    expect(just - before).toBeGreaterThan(0.1);
+    // 衰减回落: strictly monotonic down, never flipping sign on the way.
+    expect(days[0]).toBeLessThan(just);
+    expect(days[1]).toBeLessThan(days[0]);
+    expect(days[2]).toBeLessThan(days[1]);
+    expect(days[2]).toBeGreaterThan(0);
+    // …and out the far side of the window there is nothing left at all.
+    expect(past).toBe(0);
+  });
+
+  it('an abandoned goal makes her quieter, and that fades too', () => {
+    const { e, id, epoch } = isolatedTerminal('abandoned');
+    const before = pro(id, e.at - HOUR, epoch);
+    const just = pro(id, e.at + HOUR, epoch);
+    expect(just).toBeLessThan(before);
+    expect(just).toBeLessThan(0);
+    expect(Math.abs(pro(id, e.at + 8 * DAY, epoch))).toBeLessThan(Math.abs(just));
+    expect(pro(id, e.at + GOAL_DRIFT_WINDOW_MS + DAY, epoch)).toBe(0);
+  });
+
+  it('bounded and replayable: same inputs, same delta, never past the cap', () => {
+    const { e, id, epoch } = isolatedTerminal('completed');
+    for (const dt of [0, HOUR, DAY, 5 * DAY, 13 * DAY]) {
+      const a = applyGoalDrift(EMPTY_DRIFT, id, e.at + dt, epoch);
+      const b = applyGoalDrift(EMPTY_DRIFT, id, e.at + dt, epoch);
+      expect(b.d).toEqual(a.d);
+      for (const v of Object.values(a.d)) {
+        expect(Math.abs(v)).toBeLessThanOrEqual(DRIFT_CAP + GOAL_DRIFT_CAP);
+      }
+    }
+  });
+
+  it('adds to the stored layer instead of replacing it, and never writes it back', () => {
+    const { e, id, epoch } = isolatedTerminal('completed');
+    const stored: Drift = { d: { proactivity: 0.1 }, at: e.at, why: [{ text: '你常跟她说软话', at: e.at }] };
+    const merged = applyGoalDrift(stored, id, e.at + HOUR, epoch);
+    expect(merged.d.proactivity!).toBeGreaterThan(0.1); // stacked, not overwritten
+    expect(stored.d.proactivity).toBe(0.1); // the input is untouched…
+    expect(stored.why).toHaveLength(1); // …reasons included
+    expect(merged.why.some((w) => w.text === '你常跟她说软话')).toBe(true);
+  });
+
+  it('explainDrift says WHY in words, naming the goal', () => {
+    const { e, id, epoch } = isolatedTerminal('completed');
+    const rows = explainDrift(applyGoalDrift(EMPTY_DRIFT, id, e.at + HOUR, epoch));
+    const row = rows.find((r) => r.dim === 'proactivity');
+    expect(row).toBeDefined();
+    expect(row!.reason).toContain(e.title);
+    expect(row!.reason).toContain('主动');
+  });
+});
+
 describe('constitution rule #4 + wiring (deliberately red if violated)', () => {
   const src = (rel: string) =>
     readFileSync(fileURLToPath(new URL(`../../src/${rel}`, import.meta.url)), 'utf8');
 
   it('goals.ts never touches Date.now, Math.random, or storage', () => {
-    // (drift.ts is the MAIN event-driven drift — storage-backed by design;
-    // goals is the pure layer and must stay that way.)
     const code = src('ai/goals.ts');
     expect(code).not.toMatch(/Date\.now/);
     expect(code).not.toMatch(/Math\.random/);
     expect(code).not.toMatch(/from '\.\.\/db\/repo'/);
+  });
+
+  it('drift actually consumes goals — the linkage the I14 merge dropped', () => {
+    // The I14 branch shipped a drift.ts with this linkage; resolving the merge
+    // took the other side and it vanished, leaving `grep goal src/ai/drift.ts`
+    // empty while every test stayed green. The behavioural assertions above
+    // are the real gate; this one names the file so a future resolution that
+    // drops it again fails on the spot.
+    const code = src('ai/drift.ts');
+    expect(code).toMatch(/goalEventsBetween/);
+    expect(code).toMatch(/GOAL_IMPULSES/);
   });
 
   it('written AND wired: engine, moments-engine and the scheduler runtime consume goals/drift', () => {
