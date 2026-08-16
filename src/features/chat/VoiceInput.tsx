@@ -42,9 +42,15 @@ type Phase = 'idle' | 'starting' | 'recording' | 'transcribing';
 export interface VoiceInputButtonProps {
   /** Receives the recognized text; the caller appends it to the draft. */
   onText: (text: string) => void;
+  /**
+   * NSFW tier of THIS conversation (M-I18). Forwarded to `transcribe`, which
+   * refuses to upload full-tier speech to an endpoint the user has not marked
+   * permissive — 铁律 6 applies to what goes out of the microphone too.
+   */
+  tier?: 'off' | 'ambiguous' | 'full';
 }
 
-export function VoiceInputButton({ onText }: VoiceInputButtonProps) {
+export function VoiceInputButton({ onText, tier }: VoiceInputButtonProps) {
   const showToast = useAppStore((s) => s.showToast);
   const [phase, setPhase] = useState<Phase>('idle');
   const [cancelArmed, setCancelArmed] = useState(false);
@@ -198,7 +204,7 @@ export function VoiceInputButton({ onText }: VoiceInputButtonProps) {
     try {
       const clip = await p.handle.stop();
       if (p.cancelled) return;
-      const text = await transcribe(clip, { signal: abort.signal });
+      const text = await transcribe(clip, { signal: abort.signal, tier });
       if (p.cancelled) return;
       if (text) onText(text);
       else showToast('没有听清，再试一次？');

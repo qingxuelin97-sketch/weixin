@@ -272,7 +272,10 @@ export function CallPage() {
     setTranscribing(true);
     try {
       const clip = await handle.stop();
-      const text = await transcribe(clip);
+      // 铁律 6 入站面 (M-I18): this call's tier decides whether the user's
+      // own speech may be uploaded at all. Full tier + an endpoint the user
+      // has not marked permissive → refuse, and the toast says to type.
+      const text = await transcribe(clip, { tier: sessionRef.current?.tier ?? 'off' });
       setTranscribing(false);
       if (text) void sessionRef.current?.userSaid(text).catch(() => {});
       else showToast('没有听清');

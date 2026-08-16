@@ -29,7 +29,7 @@ import { regenerateLastTurn } from '../../ai/engine';
 import { useGuard } from '../../app/useGuard';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
 import { hasUsableProvider } from '../../llm/service';
-import { sendUserMessage, replyToLatest } from '../../ai/engine';
+import { sendUserMessage, replyToLatest, effectiveTier } from '../../ai/engine';
 import { maybeScheduleMemExtract } from '../../ai/memory-service';
 import { sendGroupMessage, replyToLatestInGroup } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
@@ -153,6 +153,25 @@ export function ChatPage() {
       alive = false;
     };
   }, [convId]);
+
+  // Tier of THIS conversation, for the microphone (M-I18). Derived exactly
+  // like the send path does it (global setting × this persona's permit), so
+  // 铁律 6 covers speech going OUT the same way it covers prompts.
+  const [micTier, setMicTier] = useState<'off' | 'ambiguous' | 'full'>('off');
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+      const c = useAppStore.getState().conversationById(convId);
+      const permit = c?.type === 'single' && c.peerId
+        ? (useAppStore.getState().personaFor(c.peerId)?.nsfwPermit ?? false)
+        : false;
+      if (alive) setMicTier(effectiveTier(globalTier, permit));
+    })().catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [convId, hydrated]);
 
   /** Long-press context menu: which message, anchored where. */
   const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
@@ -787,7 +806,22 @@ export function ChatPage() {
     }
   };
 
-  if (!conv) {
+  // A hidden conversation renders EXACTLY like a missing one (M-I18).
+  //
+  // Hidden AI↔AI DMs were filtered everywhere they could be listed — the chat
+  // list, search, favorites, notifications, the widget — but never at the one
+  // surface that renders a thread from a raw id in the URL. `/chat/dm_a_b` is
+  // reachable: the deep-link allowlist passes `^/chat/[^/]+$` by design (it is
+  // a pure parser with no store access), so any app on the device firing
+  // `aiwx://chat/dm_ai_ada_ai_lin` — or the user simply typing the hash route —
+  // used to render the entire private thread between two agents.
+  //
+  // Guarding HERE and not in the parser is deliberate: this is the choke point
+  // every entry path funnels through (deep link, widget tap, notification tap,
+  // manual URL, an anchored search jump), so one check covers all of them.
+  // Saying "会话不存在" rather than "不可查看" matters too — acknowledging that
+  // the thread exists is itself the tell.
+  if (!conv || conv.isHidden) {
     return (
       <div className="chat-page">
         <div className="chat-page__missing">会话不存在</div>
@@ -1208,7 +1242,7 @@ export function ChatPage() {
               }}
               placeholder=""
             />
-            <VoiceInputButton onText={(t) => setDraft((d) => (d ? d + t : t))} />
+            <VoiceInputButton tier={micTier} onText={(t) => setDraft((d) => (d ? d + t : t))} />
           </div>
           <button className="composer__icon" aria-label="表情" onClick={composer.toggleEmoji}>
             <IconEmoji />

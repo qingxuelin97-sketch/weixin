@@ -76,6 +76,20 @@ export interface AsrConfigVM {
   keyAlias: string;
   /** ISO-639-1 hint ('zh'…); empty = provider auto-detect. */
   language?: string;
+  /**
+   * 铁律 6 的**入站**面 (M-I18): may this endpoint receive 全开档 speech?
+   *
+   * The rule has always been enforced outbound — the router refuses to send
+   * full-tier prompts to a domestic official endpoint. Speech is the same
+   * context travelling the other way: what the user says out loud in a
+   * full-tier call is uploaded verbatim, and ASR does not go through the
+   * router, so nothing was checking it.
+   *
+   * Undeclared means NO. The user marks a transcription endpoint as permissive
+   * the same way they choose a permissive LLM channel — it is their key and
+   * their endpoint, but the safe answer has to be the default.
+   */
+  nsfwSafe?: boolean;
 }
 
 /** Build a fresh config from a preset kind (parallel to presetToVm). */
@@ -145,7 +159,8 @@ export type AsrErrorKind =
   | 'network'
   | 'server' // 5xx
   | 'bad_response' // 2xx but unparseable, or 4xx protocol errors
-  | 'aborted';
+  | 'aborted'
+  | 'tier_blocked'; // 铁律 6: 全开档语音不许上传到未声明的转写端点
 
 export class AsrError extends Error {
   constructor(
@@ -176,6 +191,8 @@ export function friendlyAsrError(e: unknown): string {
         return '识别服务出错了（5xx），稍后再试';
       case 'aborted':
         return '已取消';
+      case 'tier_blocked':
+        return '全开档下这个转写服务没被标记为可用——改用打字，或去 设置 → 语音输入 换一家并勾选';
       default:
         return `转写失败：${e.message}`;
     }
@@ -192,6 +209,12 @@ export interface TranscribeOptions {
   timeoutMs?: number;
   /** Override the config's language hint for one call. */
   language?: string;
+  /**
+   * NSFW tier of the surface this speech belongs to (M-I18). 'full' uploads
+   * only to an endpoint the user marked `nsfwSafe`; omit for surfaces that
+   * carry no graded content. See `AsrConfigVM.nsfwSafe`.
+   */
+  tier?: 'off' | 'ambiguous' | 'full';
 }
 
 /** Uploads are small (<1MB for 60s opus) but ASR backends can be slow. */
@@ -221,6 +244,13 @@ export async function transcribe(audio: Blob, opts: TranscribeOptions = {}): Pro
   const cfg = await getAsrConfig();
   if (!cfg || !cfg.baseUrl.trim() || !cfg.model.trim()) {
     throw new AsrError('not_configured', '语音识别未配置');
+  }
+  // 铁律 6, inbound (M-I18). The caller passes the tier of the surface the
+  // speech belongs to; refusing here — in the one function every push-to-talk
+  // path goes through — is what makes the rule structural rather than a note
+  // in a spec. `undefined` tier means "not a graded surface" and passes.
+  if (opts.tier === 'full' && !cfg.nsfwSafe) {
+    throw new AsrError('tier_blocked', '全开档语音不上传到未声明可用的转写端点');
   }
   const key = await getSecret(cfg.keyAlias);
   if (!key) throw new AsrError('not_configured', '语音识别密钥未保存');

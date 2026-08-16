@@ -10,6 +10,7 @@
  */
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
+import { Switch } from '../../components/Switch';
 import {
   ASR_PRESETS,
   asrPresetToConfig,
@@ -192,6 +193,24 @@ export function AsrConfigPage() {
                   spellCheck={false}
                 />
               </div>
+              {/* 铁律 6 的入站面 (M-I18)。默认关：一个没被声明过的端点，
+                  不该在全开档下收到用户说出口的原话。 */}
+              <div className="settings__row settings__row--divided">
+                <span className="settings__label">允许上传全开档语音</span>
+                <Switch
+                  on={Boolean(cfg.nsfwSafe)}
+                  onChange={(next) => {
+                    patch({ nsfwSafe: next });
+                    void persist();
+                  }}
+                  label="允许上传全开档语音"
+                />
+              </div>
+              <p className="settings__hint">
+                关闭时（默认），全开档会话里的「按住说话」不会把录音传给这家转写服务，
+                会提示你改用打字。只有你确认这家端点适合承载这类内容时才打开——
+                与选择宽松通道的 LLM 是同一个判断。
+              </p>
               <div className="field">
                 <span className="field__label">API Key（加密存本机，不入库、不上传）</span>
                 <input
