@@ -4,6 +4,9 @@ on:
   push:
     branches: ['**']
   pull_request:
+  # Manual entry point for `regen-goldens` (M-I11). Baselines are minted by CI,
+  # never by a dev container — see that job for why.
+  workflow_dispatch:
 
 jobs:
   check:
@@ -26,10 +29,22 @@ jobs:
   screenshot:
     name: golden screenshots
     runs-on: ubuntu-latest
-    # BLOCKING since M-I11. The baselines are generated under fonts-noto-cjk —
-    # the same package this job installs — so CI pixels match the committed
-    # goldens. If you regenerate goldens, do it in an environment with
-    # fonts-noto-cjk installed (CLAUDE.md 陷阱清单), or this job goes red.
+    # Skipped on a manual dispatch: that run exists to REGENERATE baselines, so
+    # checking them first would just report the diff regen is about to erase.
+    if: github.event_name != 'workflow_dispatch'
+    # BLOCKING since M-I11.
+    #
+    # The baselines are minted BY THIS JOB (see the `regen-goldens` job below),
+    # never by a dev container. Two things differ between the two environments
+    # and both move glyph pixels: the CJK font package, and the Chromium build —
+    # playwright.config.ts points local runs at whatever PLAYWRIGHT_BROWSERS_PATH
+    # provides, while this job installs Playwright's own pinned build. Matching
+    # the font alone still left 30/52 shots red, which is what proved the browser
+    # is the other half of it.
+    #
+    # So: to update goldens after an intentional UI change, run the
+    # `regen-goldens` job (workflow_dispatch) on your branch and let it commit
+    # the PNGs back. Do not commit locally-generated baselines.
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -44,9 +59,54 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:screenshot
+      # `test-results/` holds the actual/diff PNGs — the only way to SEE why a
+      # shot moved. The html report is emitted alongside the github reporter
+      # (playwright.config.ts) precisely so this upload is not empty, which it
+      # silently was until M-I11.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 7
+
+  regen-goldens:
+    name: regenerate goldens (manual)
+    # Manual only — never on push, so it can never race a normal CI run or
+    # loop by triggering itself with its own commit.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:screenshot:update
+      # Twice: a baseline that is not reproducible in its OWN environment is a
+      # flake generator, and committing it would hand the gate a shot that goes
+      # red at random. The second pass must be clean against what pass one wrote.
+      - run: pnpm test:screenshot
+      - name: commit refreshed baselines
+        run: |
+          git config user.name 'qingxuelin97-sketch'
+          git config user.email 'mesakurax@gmail.com'
+          git add tests/screenshot
+          if git diff --cached --quiet; then
+            echo 'goldens already current — nothing to commit'
+          else
+            git commit -m 'chore(ci): 在 CI 环境重生成 golden 基线'
+            git push origin HEAD:${{ github.ref_name }}
+          fi

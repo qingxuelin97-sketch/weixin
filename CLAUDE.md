@@ -137,10 +137,14 @@ src/
 - **CryptoKey 经 JSON 序列化变 `{}`**：备份导出 settings 全表就会把主密钥导成空壳，
   恢复写回后 keystore 永久损坏。设备本地密钥行要行级排除（导出滤掉、恢复保本机），
   读取时用 `instanceof CryptoKey` 校验而不是 truthiness——空壳是 truthy 的。
-- **golden 必须在装有 `fonts-noto-cjk` 的环境里生成**：截图 CI job 自 M-I11 起是**阻塞**的，
-  它装的就是这个包。开发容器默认**没有** CJK 字体（Chromium 会用别的回退字体渲染，截图照样
-  "好看"——但每个字的像素都和 CI 不同，52 张全红）。新会话跑 `pnpm test:screenshot` 前先
-  `sudo apt-get install -y fonts-noto-cjk`；忘了装的症状是"本地全绿、重基线后 CI 全红"。
+- **golden 只能由 CI 生成，本地重基线一律作废**：截图 job 自 M-I11 起**阻塞**。本容器与 CI
+  有**两处**渲染差异，任一处都会移动字形像素：① CJK 字体（本容器默认没有，装
+  `fonts-noto-cjk` 可对齐）；② **Chromium 构建**——`playwright.config.ts` 本地走
+  `PLAYWRIGHT_BROWSERS_PATH` 提供的那个 build，CI 走 `playwright install` 钉住的另一个
+  build，两者抗锯齿不同。实测：只对齐字体后仍有 **30/52 张红**。所以 UI 有意变更后不要
+  在本地 `test:screenshot:update` 提交，改为在你的分支上手动触发 **`regen-goldens`**
+  workflow（workflow_dispatch），由 CI 生成并回推基线（它会连跑两次自检，不可复现的基线
+  不许进仓）。本地 `pnpm test:screenshot` 只当快速冒烟，不是门禁。
 - **不要为"截图稳定"冻结业务时钟**：组件里硬编码 NOW 常量意味着真机上所有相对时间戳
   永远错（diffDays 为负渲染成「星期六」）。确定性归测试侧：Playwright
   `page.clock.setFixedTime(种子纪元)`，业务代码用真实时钟（`useNow()` 分钟级 tick）。
