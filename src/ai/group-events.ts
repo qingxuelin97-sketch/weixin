@@ -113,6 +113,21 @@ export function parseRsvps(
   return out.length ? out : null;
 }
 
+/**
+ * How many pictures the aftermath post carries.
+ *
+ * People photograph the outing they just went on, so this leans toward having
+ * images where an ordinary post leans away (moments-engine rolls 0 images 45%
+ * of the time). Seeded off the event id — the same 聚会 always yields the same
+ * grid, replay included. The refs themselves come from the SAME `pickImages`
+ * pool as every other post, honouring the persona's `imageTags`; an empty pool
+ * simply returns no refs and the post degrades to text.
+ */
+export function aftermathImageCount(eventId: string): number {
+  const r = seededRng(`gevtimg:${eventId}`)();
+  return r < 0.2 ? 0 : r < 0.65 ? 1 : 3;
+}
+
 /** The aftermath moment: the initiator posts about how it went. One call. */
 export function aftermathSystem(activity: EventActivity, initiatorName: string): string {
   return `${initiatorName} 前几天在群里${EVENT_ACTIVITIES[activity]}，事情已经发生了。

@@ -35,7 +35,7 @@ import type { GroupMember } from './director';
 import { getConvState, putConvState, refineConvState } from './conv-state';
 import { logError } from '../lib/errlog';
 import { maxTier } from '../lib/nsfw-tier';
-import { dmConvId } from './agent-dm';
+import { dmConvId, participantsOf } from './agent-dm';
 import { extractJson } from './generate-chain';
 import type { ScheduledActionKind } from '../db/schema';
 import {
@@ -47,7 +47,8 @@ import {
   type JointKind,
 } from './social-plans';
 import { canForwardFrom, maybeForward, forwardLine } from './agent-forward';
-import { inviteLine } from './agent-invite';
+import { inviteLine, inviteCardGapMs } from './agent-invite';
+import { contactCardPayload } from './bubble-materialize';
 import {
   nextPhase,
   phaseDelayMs,
@@ -55,11 +56,13 @@ import {
   rsvpSystem,
   parseRsvps,
   aftermathSystem,
+  aftermathImageCount,
   EVENT_ACTIVITIES,
   RSVP_MAX,
   type EventActivity,
   type EventPhase,
 } from './group-events';
+import { pickImages } from '../data/moments-images';
 
 /**
  * Everything the handlers are allowed to touch. Narrow on purpose: adding a
@@ -358,9 +361,14 @@ export async function handleMemExtract(
 /* ------------------------------ agent DM ------------------------------ */
 
 export function dmPlanFrom(payload: Record<string, unknown>, fallbackNow: number): DmPlan | null {
+  // `c` is the optional third participant (M-I3 bounded trio). A payload that
+  // names the same person twice, or one the plan already has, collapses back to
+  // a pair — `participantsOf` dedupes and caps at MAX_DM_PARTICIPANTS.
+  const third = str(payload.c);
   const plan: DmPlan = {
     a: str(payload.a),
     b: str(payload.b),
+    ...(third ? { c: third } : {}),
     groupId: str(payload.groupId),
     fireAt: optNum(payload.fireAt) ?? fallbackNow,
   };
@@ -387,7 +395,7 @@ export async function handleAgentDm(
   // identity, and both enqueue with STABLE ids — replaying this handler
   // (backfill, retry) upserts the same rows instead of multiplying them.
   const now = d.now();
-  const dmId = dmConvId(plan.a, plan.b);
+  const dmId = dmConvId(...participantsOf(plan));
   try {
     const jp = maybeJointPlan(dmId, now);
     if (jp) {
@@ -630,11 +638,16 @@ export async function handleGroupEvent(
     );
     const text = raw.text.trim().slice(0, 80);
     if (!text) return;
+    // 聚会事后照片 (M-I3): the same seeded `pickImages` path an ordinary post
+    // uses — persona `imageTags` respected, and an empty material pool simply
+    // yields no refs, which degrades the post to text instead of throwing.
+    // Writing `imageRefs: []` unconditionally was the one thing that made this
+    // post read as generated: nobody comes back from 火锅 with zero pictures.
     await d.addMoment({
       id: `m_${eventId}`,
       authorId: initiator,
       text,
-      imageRefs: [],
+      imageRefs: pickImages(`gevt:${eventId}`, aftermathImageCount(eventId), pInit?.imageTags),
       isNsfw: false,
       createdAt: at,
     });
@@ -642,9 +655,17 @@ export async function handleGroupEvent(
 }
 
 /**
- * A group proposal fires: she suggests the trio in her own 1:1. The suggested
- * roster rides in `meta.suggestGroup`, so a later UI (I13's card types) can
- * make it tappable; the message itself is already a complete experience.
+ * A group proposal fires: she suggests the trio in her own 1:1, then hands you
+ * the two friends' 名片.
+ *
+ * The suggested roster rides in `meta.suggestGroup` — the chat UI turns that
+ * into a tappable 群聊邀请 card that opens 发起群聊 with those people ticked
+ * (`agent-invite.suggestGroupHref`). Creating the room is still the user's
+ * move, and ignoring the whole thing is a legal, cost-free outcome.
+ *
+ * The name cards are the introduction itself: "把 Ada 和陈叔拉一个群" means
+ * nothing if you cannot see who they are. They go through the same
+ * `contactCardPayload` the model's own 名片 bubbles use — one card shape.
  */
 export async function handleAgentInvite(
   d: HandlerDeps,
@@ -655,22 +676,47 @@ export async function handleAgentInvite(
   const f2 = str(payload.friend2);
   if (!contactId || !f1 || !f2) return;
   // Everyone involved must still exist — deletion since planning drops it.
-  if (!d.contactById(contactId) || !d.contactById(f1) || !d.contactById(f2)) return;
+  const her = d.contactById(contactId);
+  const friends = [d.contactById(f1), d.contactById(f2)];
+  if (!her || !friends.every(Boolean)) return;
   const conv = d.visibleConvWithUser(contactId);
   if (!conv) return;
-  const nameOf = (id: string) => {
-    const c = d.contactById(id);
-    return c?.remark ?? c?.name ?? id;
-  };
+  const nameOf = (c: ContactVM) => c.remark ?? c.name;
+  const at = optNum(payload.at) ?? d.now();
+  const inviteId = `${contactId}:${at}`;
+
   await d.hooks.appendMessage({
     convId: conv.id,
     senderId: contactId,
     type: 'text',
-    content: inviteLine(nameOf(f1), nameOf(f2)),
+    content: inviteLine(nameOf(friends[0]!), nameOf(friends[1]!)),
     status: 'sent',
-    createdAt: optNum(payload.at) ?? d.now(),
+    createdAt: at,
     meta: { suggestGroup: [contactId, f1, f2] },
   });
+
+  // …and then their cards, a few seconds apart (seeded — replay-identical).
+  let t = at;
+  for (let i = 0; i < friends.length; i++) {
+    const f = friends[i]!;
+    t += inviteCardGapMs(inviteId, i);
+    const card = contactCardPayload({
+      contactId: f.id,
+      name: nameOf(f),
+      wxid: f.wxid,
+      avatarColor: f.avatarColor,
+      avatarText: f.avatarText,
+    });
+    await d.hooks.appendMessage({
+      convId: conv.id,
+      senderId: contactId,
+      type: card.type,
+      content: card.content,
+      status: 'sent',
+      createdAt: t,
+      meta: card.meta,
+    });
+  }
 }
 
 /**

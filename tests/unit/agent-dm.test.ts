@@ -35,6 +35,12 @@ describe('dmConvId', () => {
   it('is order-independent', () => {
     expect(dmConvId('ai_lin', 'ai_ada')).toBe(dmConvId('ai_ada', 'ai_lin'));
   });
+
+  it('gives a trio its own stable id — never the pair inside it', () => {
+    const trio = dmConvId('ai_chen', 'ai_lin', 'ai_ada');
+    expect(trio).toBe(dmConvId('ai_ada', 'ai_chen', 'ai_lin'));
+    expect(trio).not.toBe(dmConvId('ai_lin', 'ai_ada'));
+  });
 });
 
 describe('planNextDm', () => {
@@ -121,6 +127,18 @@ describe('parseDmScript', () => {
     expect(s.lines.every((l) => l.who === 'a' || l.who === 'b')).toBe(true);
     expect(s.lines).toHaveLength(2);
   });
+
+  it('admits C only when the session actually has three participants', () => {
+    const raw = '{"speaker":"A","text":"a"}\n{"speaker":"B","text":"b"}\n{"speaker":"C","text":"c"}';
+    expect(parseDmScript(raw, 3)!.lines.map((l) => l.who)).toEqual(['a', 'b', 'c']);
+    // A trio gets a slightly longer ceiling, still bounded.
+    const many = Array.from(
+      { length: 20 },
+      (_, i) => `{"speaker":"${'ABC'[i % 3]}","text":"L${i}"}`,
+    ).join('\n');
+    expect(parseDmScript(many, 3)!.lines).toHaveLength(10);
+    expect(parseDmScript(many)!.lines).toHaveLength(8);
+  });
 });
 
 describe('dmTimestamps', () => {
@@ -141,22 +159,27 @@ describe('dmTimestamps', () => {
 });
 
 describe('gossipFacts', () => {
-  const plan = { a: 'ai_lin', b: 'ai_ada' };
+  const cast = [
+    { id: 'ai_lin', name: '小雨' },
+    { id: 'ai_ada', name: 'Ada' },
+  ];
   const exists = (id: string) => id === 'ai_lin' || id === 'ai_ada';
 
   it('writes one fact per participant with speaker/listener framing', () => {
-    const facts = gossipFacts(plan, '小雨', 'Ada', { about: 'user', fact: '他在准备面试' }, exists, NOON);
+    const facts = gossipFacts(cast, { about: 'user', fact: '他在准备面试' }, exists, NOON);
     expect(facts).toHaveLength(2);
     expect(facts.find((f) => f.subjectId === 'ai_lin')!.fact).toBe('和Ada聊到：他在准备面试');
     expect(facts.find((f) => f.subjectId === 'ai_ada')!.fact).toBe('听小雨说：他在准备面试');
   });
 
   it('drops gossip about anything outside the permitted vocabulary', () => {
-    expect(gossipFacts(plan, '小雨', 'Ada', { about: 'ai_ghost', fact: 'x' }, exists, NOON)).toEqual([]);
+    expect(gossipFacts(cast, { about: 'ai_ghost', fact: 'x' }, exists, NOON)).toEqual([]);
+    // "C" is a hallucinated third party in a two-person exchange.
+    expect(gossipFacts(cast, { about: 'C', fact: 'x' }, exists, NOON)).toEqual([]);
   });
 
   it('drops gossip when a participant no longer exists', () => {
-    expect(gossipFacts(plan, '小雨', 'Ada', { about: 'user', fact: 'x' }, () => false, NOON)).toEqual([]);
+    expect(gossipFacts(cast, { about: 'user', fact: 'x' }, () => false, NOON)).toEqual([]);
   });
 });
 
@@ -164,7 +187,13 @@ describe('DM prompt', () => {
   it('is unconditionally SFW and carries both personas and their relations', () => {
     const a = makePersona({ contactId: 'ai_lin', core: '插画师', relations: { ai_ada: '大学同学' } });
     const b = makePersona({ contactId: 'ai_ada', core: '程序员', nsfwPermit: true });
-    const sys = buildDmPrompt('小雨', a, 'Ada', b, '最近的展')[0].content;
+    const sys = buildDmPrompt(
+      [
+        { name: '小雨', persona: a },
+        { name: 'Ada', persona: b },
+      ],
+      '最近的展',
+    )[0].content;
     expect(sys).toContain('全年龄向');
     expect(sys).toContain('插画师');
     expect(sys).toContain('程序员');
@@ -236,8 +265,7 @@ describe('runAgentDm (scripted end-to-end, no real API)', () => {
 describe('SAFETY: hidden DM conversations never reach search', () => {
   it('excludes both the conversation and its messages, even when the caller forgets to pre-filter', () => {
     const dm: ConversationVM = makeDmConversation(
-      contact('ai_lin', '小雨'),
-      contact('ai_ada', 'Ada'),
+      [contact('ai_lin', '小雨'), contact('ai_ada', 'Ada')],
       NOON,
     );
     const hits = search(

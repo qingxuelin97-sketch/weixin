@@ -126,6 +126,39 @@ export function rebuildState(
 }
 
 /**
+ * A build state for a NEW room whose members ALREADY EXIST (M-I3).
+ *
+ * Two callers need this: 发起群聊 (the user hand-picks friends) and the AI's
+ * 拉群提议 card, which lands on that same screen with its roster pre-ticked.
+ * Neither has anything to generate — so every member is pre-marked `made`, the
+ * same ledger `rebuildState` uses, and `buildGroup` writes zero persona cards
+ * and costs zero calls.
+ *
+ * This exists so those flows go through THE build path instead of assembling a
+ * conversation row of their own: one path means "what does creating a group
+ * do" has one answer, and a later addition to it lands everywhere.
+ */
+export function presetState(
+  members: Array<{ contactId: string; name: string }>,
+  title: string,
+  now: number,
+): BuildState {
+  const blueprint: GroupBlueprint = {
+    title,
+    topics: [],
+    // No briefs and no relations: these people already have lives. Inventing
+    // either here would overwrite what the user (or an earlier build) wrote.
+    members: members.map((m, i) => ({ key: `p${i}`, name: m.name, brief: '' })),
+    relations: [],
+  };
+  const state = newBuildState(blueprint, now);
+  members.forEach((m, i) => {
+    state.made[`p${i}`] = m.contactId;
+  });
+  return state;
+}
+
+/**
  * A distinct avatar colour per member.
  *
  * Twelve identical grey squares is the fastest way to make a generated group

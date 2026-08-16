@@ -42,7 +42,7 @@ import {
 } from '../ai/moments-service';
 import { runBackfill } from '../ai/backfill';
 import { chainAutoBackup, runAutoBackup, ensureAutoBackupScheduled } from '../ai/auto-backup';
-import { runAgentDm, planNextDm, type DmPlan } from '../ai/agent-dm';
+import { runAgentDm, planNextDm, participantsOf, type DmPlan } from '../ai/agent-dm';
 import { chainNextBeat, runStoryBeat, seedBuiltinScripts } from '../ai/story-service';
 import { judgePrompt, parseJudgement } from '../ai/story-gm';
 import {
@@ -772,6 +772,8 @@ async function scheduleNextAgentDm(): Promise<void> {
     fireAt: plan.fireAt,
     payload: { ...plan },
     now,
-    id: `dm_${plan.a}_${plan.b}_${plan.fireAt}`,
+    // The cast is part of the identity: a trio and the pair inside it are
+    // different sessions and must not upsert over each other.
+    id: `dm_${participantsOf(plan).join('_')}_${plan.fireAt}`,
   });
 }

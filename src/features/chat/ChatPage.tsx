@@ -37,6 +37,7 @@ import { acceptTransfer } from '../../ai/money-service';
 import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
 import { renderMessageBody } from '../../ai/render-msg';
+import { suggestGroupHref } from '../../ai/agent-invite';
 import { canRecall } from '../../lib/recall';
 import { gameSeed, rollDice, rollRps, type GameKind } from '../../lib/game';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
@@ -970,6 +971,21 @@ export function ChatPage() {
                     const cid = m.meta?.contactId as string | undefined;
                     if (cid && contactById(cid)) navigate(`/contact/${cid}`);
                     else showToast('该联系人已不存在');
+                  }}
+                  nameOf={(cid) => {
+                    const c = contactById(cid);
+                    return c ? (c.remark ?? c.name) : undefined;
+                  }}
+                  // 拉群提议 (M-I3): hand the roster to 发起群聊 pre-ticked. The
+                  // AI proposes; the group is only born when the USER taps 完成
+                  // on that screen — so this navigates, it never creates a room.
+                  onSuggestGroupTap={(_m, memberIds) => {
+                    const alive = memberIds.filter((id) => contactById(id));
+                    if (alive.length < 2) {
+                      showToast('提议里的好友已不存在');
+                      return;
+                    }
+                    navigate(suggestGroupHref(alive));
                   }}
                   onLongPress={(m, x, y) => {
                     if (selecting) return;

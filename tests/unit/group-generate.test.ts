@@ -8,6 +8,7 @@ import {
 import {
   buildGroup,
   newBuildState,
+  presetState,
   isBuildComplete,
   avatarColor,
   type BuildDeps,
@@ -278,6 +279,59 @@ describe('building the group', () => {
     // Twelve identical squares is the fastest way to make a generated group
     // feel generated.
     expect(seen.size).toBe(4);
+  });
+
+  /**
+   * 预置成员 (M-I3): 发起群聊 and the AI's 拉群提议 card both create rooms out
+   * of people who ALREADY exist. They go through this same build — a second,
+   * hand-rolled conversation writer is exactly the drift this module exists to
+   * prevent — and, because every member is pre-`made`, they must cost nothing.
+   */
+  it('builds a room from existing members without generating (or paying for) anyone', async () => {
+    personas.clear();
+    let cardCalls = 0;
+    let historyCalls = 0;
+    let contactWrites = 0;
+    const rooms: Array<{ id: string; memberIds?: string[]; title: string }> = [];
+    const state = presetState(
+      [
+        { contactId: 'ai_lin', name: '小雨' },
+        { contactId: 'ai_ada', name: 'Ada' },
+        { contactId: 'ai_chen', name: '陈叔' },
+      ],
+      '小雨、Ada、陈叔',
+      T0,
+    );
+    const out = await buildGroup(
+      state,
+      deps({
+        generateCard: async () => {
+          cardCalls++;
+          return null;
+        },
+        generateHistory: async () => {
+          historyCalls++;
+          return [];
+        },
+        putContact: async () => void contactWrites++,
+        addConversation: async (c) =>
+          void rooms.push({ id: c.id, memberIds: c.memberIds, title: c.title }),
+      }),
+    );
+    // THE cost gate for this path: nobody is written, nobody is generated.
+    expect(cardCalls).toBe(0);
+    expect(contactWrites).toBe(0);
+    expect(out.skipped).toEqual([]);
+    // The room holds exactly the people handed in, in order.
+    expect(out.created).toEqual(['ai_lin', 'ai_ada', 'ai_chen']);
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0].memberIds).toEqual(['ai_lin', 'ai_ada', 'ai_chen']);
+    expect(rooms[0].title).toBe('小雨、Ada、陈叔');
+    expect(out.convId).toBe(rooms[0].id);
+    // A backlog is asked for once and comes back empty — these people have a
+    // real shared past, so faking one would put words in their mouths.
+    expect(historyCalls).toBe(1);
+    expect(isBuildComplete(state)).toBe(true);
   });
 });
 

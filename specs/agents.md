@@ -199,13 +199,40 @@ DM = 正式 `conversations` 行，id = `dm_<a>_<b>`（a/b 按字典序，保证�
   （名字白名单、每人一条、上限 `RSVP_MAX`）。前台 pass 每群每周种子化掷骰 +
   stable id + `actionExists` 守卫（enqueue 按 id upsert 的坑）。
 - **agent_invite**：有两个共同 AI 好友、且三人没有共同群时，每周种子化低概率
-  在 1:1 里提议拉群；建议名单进 `meta.suggestGroup`（I13 卡片化）。建群永远
-  是用户的动作，AI 只提议。
+  在 1:1 里提议拉群；建议名单进 `meta.suggestGroup`。建群永远是用户的动作，
+  AI 只提议。
 
 孵化点：joint_plan/agent_forward 挂在 `handleAgentDm` 成功之后（stable id 上插，
 重放不复制）；group_event/agent_invite 由前台 pass 播种。规划模块
 （social-plans/agent-forward/group-events/agent-invite）全部禁 Date.now/
-Math.random（铁律 4，源码级测试）。
+Math.random（铁律 4，源码级测试**逐个文件列名**看守）。
+
+### M-I3 补齐（拉群提议闭环 / 聚会照片 / 有界三人）
+
+I3 首版留下三条"写了没接线"，现补：
+
+- **拉群提议是可操作的，不是死信**。`meta.suggestGroup` 之前只有写入方。现在：
+  `parseSuggestGroup`（纯函数，坏数据一律退化成普通文本气泡）→ MessageBubble
+  的「邀请你加入群聊」卡（双侧白底，同 I13 名片/链接卡的那套规则）→ 点击
+  `suggestGroupHref` 进 `/group-new?preset=a,b,c`，名单**预先勾好**、可改、
+  可直接返回。**建群仍然只发生在用户点「完成」那一刻**。
+  投影（`render-msg`）追加 `[附了一张拉群邀请卡片，等用户决定]`——模型要知道
+  有个提议悬着，但**永远看不到 contactId**（名字本来就在正文里）。
+- **她还会把人介绍给你**：提议之后隔几秒（种子化）跟上两张 `contact_card`。
+  这是 I13 名片类型的**第一个非模型产出的生产消费者**；卡片形状由
+  `bubble-materialize.contactCardPayload` 唯一提供，避免两份不一致的名片。
+- **建群只有一条路径**：`group-build.presetState()` 把"这些人已经存在"变成
+  一个所有成员预标 `made` 的 BuildState，`buildGroup` 因此零人设卡、零调用。
+  发起群聊页（M-D3 手选）与拉群提议卡都走它——那一页原本自己拼装
+  conversation 行，是第二份建群实现。
+- **有界三人私信**：`DmPlan.c?` + `participantsOf()`（唯一的"取名单"入口，
+  去重且截断到 `MAX_DM_PARTICIPANTS = 3`）。`planNextDm` 以 `TRIO_CHANCE`
+  种子化把配对升级成三人，第三人**必须来自同一个群**，且排期的醒着时段走查
+  三人全覆盖。成本闸 `DM_LLM_CALLS_PER_SESSION = 1`：三人**仍是一次导演式
+  分派调用**写出全部台词（同 RSVP 轮），单测锁死。会话 id `dm_<sorted ids>`
+  —— 三人局和其中的两人局是**不同**会话，不会互相 upsert。
+  隐藏性不变：`isHidden` 是唯一那道墙，搜索/转发/年度报告/小组件/通知五个面
+  都按它过滤（三人局的多面泄漏测试见 `tests/unit/social-fabric.test.ts`）。
 
 ## M-I13~I17 · 智能体新增能力（并行波交付）
 
