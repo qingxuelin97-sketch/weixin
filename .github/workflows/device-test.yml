@@ -103,63 +103,11 @@ jobs:
             grep -aE 'FATAL EXCEPTION|AndroidRuntime.*FATAL|E Capacitor' logcat.txt | head -20 || true
 
             # ---- M-I10 native surface assertions --------------------------
-            # Driven through the debug-only SelfTestReceiver because adb cannot
-            # operate the system RemoteInput UI or place a widget on a launcher.
-            # Each check appends PASS/FAIL/WARN to native-asserts.txt; the
-            # "Native surfaces verdict" step turns FAILs into a red job.
-            # POSIX sh (dash) — no bashisms.
-            NA=native-asserts.txt
-            : > "$NA"
-            RECV=com.personal.weixinai/.aiwx.SelfTestReceiver
-
-            # ck <name> <severity-on-fail> <cmd…> — the `if "$@"` keeps the
-            # probe inside a checked context, so `set -e` never aborts on it.
-            ck() { _n=$1; _s=$2; shift 2; if "$@"; then echo "PASS $_n" >> "$NA"; else echo "$_s $_n" >> "$NA"; fi; }
-
-            # (1) Message notification with inline reply: posted for real?
-            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.NOTIFY || true
-            sleep 3
-            adb shell dumpsys notification > notif-dump.txt || true
-            ck notify-record-posted FAIL grep -q 'com.personal.weixinai' notif-dump.txt
-            ck notify-channel-messages FAIL grep -q 'aiwx_messages' notif-dump.txt
-            # Action titles are often redacted in dumpsys — informational only.
-            ck notify-remoteinput-visible WARN grep -qi 'remoteinput\|remote_input' notif-dump.txt
-
-            # (2) RemoteInput loop, minus the system keyboard: synthetic reply →
-            # SharedPreferences queue → background/foreground bounce → JS drain
-            # through the normal send path (logs AIWX-REPLYQ drained=…).
-            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.REPLY --es text ci-hello || true
-            sleep 2
-            adb shell input keyevent 3
-            sleep 5
-            adb shell am start -n com.personal.weixinai/.MainActivity
-            sleep 12
-
-            # (3) Full-screen call notification on its own channel.
-            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.CALL || true
-            sleep 3
-            adb shell dumpsys notification > notif-dump2.txt || true
-            ck call-channel-posted FAIL grep -q 'aiwx_calls' notif-dump2.txt
-
-            # (4) Floating bubble: grant the appop the way a user would in
-            # settings, then ask for a bubble and look for the overlay window.
-            adb shell appops set com.personal.weixinai SYSTEM_ALERT_WINDOW allow || true
-            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.BUBBLE || true
-            sleep 3
-            adb shell dumpsys window windows > window-dump.txt || true
-            ck bubble-window-listed WARN grep -q 'com.personal.weixinai' window-dump.txt
-
-            # (5) Widget provider renders without crashing (no launcher host in
-            # the emulator, so ids may be 0 — the provider logs either way).
-            adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.WIDGET || true
-            sleep 2
-
-            adb logcat -d > logcat-native.txt
-            ck replyq-enqueued FAIL grep -aq 'AIWX-REPLYQ.*enqueued' logcat-native.txt
-            ck replyq-js-drained FAIL grep -aq 'AIWX-REPLYQ drained=' logcat-native.txt
-            ck bubble-shown FAIL grep -aq 'AIWX-BUBBLE.*shown' logcat-native.txt
-            ck widget-rendered FAIL grep -aq 'AIWX-WIDGET.*render' logcat-native.txt
-            cat "$NA"
+            # In a FILE, not inline: this action runs `script:` one line per
+            # `sh -c`, so variables and functions do not survive between lines —
+            # the inline version died on `: > "$NA"` with an empty $NA and the
+            # assertions never ran once. See scripts/device-native-asserts.sh.
+            sh scripts/device-native-asserts.sh
 
       - name: Verdict
         run: |
