@@ -17,6 +17,34 @@ export interface PersonaView {
   fewShots?: string[];
   catchphrases?: string[];
   nsfwStyleSamples?: string[];
+  /**
+   * 表情使用率 (M-I19), 0..1. Only the two ENDS of the range say anything — see
+   * `stickerHabitLine`. A middling character says nothing about stickers at
+   * all, which keeps the default prompt byte-identical (prefix caching) and
+   * keeps the persona layer from being diluted by a line that carries no
+   * information.
+   */
+  stickerRate?: number;
+}
+
+/** Clearly sticker-happy at or above this; clearly reserved at or below the other. */
+const STICKER_CHATTY = 0.6;
+const STICKER_RESERVED = 0.15;
+
+/**
+ * One line about her sticker habit, or nothing.
+ *
+ * The seeded gates in sticker-battle/sticker-taste control the stickers this
+ * app sends on her behalf; this controls the ones the MODEL decides to send.
+ * Both have to move together, or a 高冷 persona still emits sticker bubbles and
+ * the app just declines to answer them — the character would read as
+ * inconsistent rather than reserved.
+ */
+export function stickerHabitLine(rate: number | undefined): string {
+  if (typeof rate !== 'number' || !Number.isFinite(rate)) return '';
+  if (rate >= STICKER_CHATTY) return '你很爱发表情包，斗图能斗好几个回合，经常一张图代替一句话。';
+  if (rate <= STICKER_RESERVED) return '你几乎不发表情包，情绪基本靠文字表达，别人斗图你也很少接。';
+  return '';
 }
 
 export interface SceneContext {
@@ -180,6 +208,8 @@ function personaBlock(p: PersonaView): string {
   if (phrases.length) parts.push(`口头禅：${phrases.join('、')}`);
   const shots = clipList(p.fewShots, PROMPT_LIMITS.fewShots, PROMPT_LIMITS.fewShotChars);
   if (shots.length) parts.push(`你平时会这样说话：\n${shots.map((s) => `- ${s}`).join('\n')}`);
+  const sticker = stickerHabitLine(p.stickerRate);
+  if (sticker) parts.push(sticker);
   return parts.join('\n');
 }
 

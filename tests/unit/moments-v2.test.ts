@@ -170,6 +170,8 @@ describe('repost leak rule (转红)', () => {
 /* ---------------------------- AI repost planner ---------------------------- */
 
 describe('planRepost (AI 转发)', () => {
+  /** M-I19: the planners take the post ROW so 可见范围 always travels with it. */
+  const post = (id: string, authorId: string, createdAt: number) => ({ id, authorId, createdAt });
   const reactor = (id: string, affinity = 80): ReactorInfo => ({
     contactId: id,
     likeRate: 0.5,
@@ -180,21 +182,21 @@ describe('planRepost (AI 转发)', () => {
   const crowd = ['a', 'b', 'c'].map((id) => reactor(id));
 
   it('is deterministic', () => {
-    expect(planRepost('m1', 'self', NOW, crowd, 's')).toEqual(
-      planRepost('m1', 'self', NOW, crowd, 's'),
+    expect(planRepost(post('m1', 'self', NOW), crowd, 's')).toEqual(
+      planRepost(post('m1', 'self', NOW), crowd, 's'),
     );
   });
 
   it('only ever fires on USER posts — agents never boost each other', () => {
     for (let i = 0; i < 200; i++) {
-      expect(planRepost(`m${i}`, 'a', NOW, crowd, 's')).toBeNull();
+      expect(planRepost(post(`m${i}`, 'a', NOW), crowd, 's')).toBeNull();
     }
   });
 
   it('is rare, near the configured rate', () => {
     let hits = 0;
     const n = 800;
-    for (let i = 0; i < n; i++) if (planRepost(`m${i}`, 'self', NOW, crowd, 's')) hits++;
+    for (let i = 0; i < n; i++) if (planRepost(post(`m${i}`, 'self', NOW), crowd, 's')) hits++;
     expect(hits / n).toBeGreaterThan(REPOST_RATE - 0.05);
     expect(hits / n).toBeLessThan(REPOST_RATE + 0.05);
   });
@@ -202,13 +204,13 @@ describe('planRepost (AI 转发)', () => {
   it('only close friends repost', () => {
     const cold = ['a', 'b'].map((id) => reactor(id, REPOST_MIN_AFFINITY - 10));
     for (let i = 0; i < 300; i++) {
-      expect(planRepost(`m${i}`, 'self', NOW, cold, 's')).toBeNull();
+      expect(planRepost(post(`m${i}`, 'self', NOW), cold, 's')).toBeNull();
     }
   });
 
   it('lands after the post, later than a like would', () => {
     for (let i = 0; i < 300; i++) {
-      const p = planRepost(`m${i}`, 'self', NOW, crowd, 's');
+      const p = planRepost(post(`m${i}`, 'self', NOW), crowd, 's');
       if (!p) continue;
       expect(p.at).toBeGreaterThan(NOW + 29 * 60_000);
       expect(['a', 'b', 'c']).toContain(p.contactId);

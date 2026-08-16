@@ -33,6 +33,7 @@ import { abortConversation } from '../ai/engine';
 import { applyStoryStamp } from '../ai/story-stamp';
 import { collectMomentsNews, type MomentsNews } from '../ai/moments-news';
 import { logError } from '../lib/errlog';
+import { withoutContact } from '../lib/moment-visibility';
 
 /** A like warms the (liker, author) edge — fire-and-forget, never blocks UI. */
 async function relEventForLike(momentId: string, likerId: string, now: number): Promise<void> {
@@ -571,7 +572,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             if (m.repostAuthorId !== id) return m;
             const { repostAuthorId: _drop, ...rest } = m;
             return { ...rest, repostExcerpt: '原内容已删除' };
-          }),
+          })
+          // …and its 可见范围 surgery (M-I19), or the open feed keeps showing
+          // 「部分可见·<死者>」until the next reload.
+          .map((m) => withoutContact(m, id) ?? m),
         momentLikes,
         momentComments,
         activeConvId: s.activeConvId && deadIds.has(s.activeConvId) ? null : s.activeConvId,

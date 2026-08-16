@@ -13,6 +13,7 @@
  */
 import type { PersonaVM, ContactVM, MomentVM } from '../data/types';
 import { seededRng } from '../lib/money';
+import { canSeeMoment } from '../lib/moment-visibility';
 import { assembleSystemPrompt } from './prompt';
 import { toPersonaView, peersOf } from './engine';
 import { freshArc, arcMomentDirective, aboutYouDirective } from './rel-arcs';
@@ -35,6 +36,17 @@ export interface PlannedReaction {
   momentId: string;
   at: number;
 }
+
+/**
+ * The slice of a post the planners read.
+ *
+ * Deliberately an OBJECT rather than the loose `(id, authorId, postedAt)` triple
+ * these functions used to take: `visibility` has to travel with the post to
+ * every planner, and a fourth positional argument is a thing callers forget.
+ * With the row itself as the parameter, the type system carries the audience in
+ * and「她评论了一条你设置成不给她看的动态」stops being reachable by omission.
+ */
+export type PlannablePost = Pick<MomentVM, 'id' | 'authorId' | 'createdAt' | 'visibility'>;
 
 /** What the planner needs to know about a potential reactor. */
 export interface ReactorInfo {
@@ -59,19 +71,21 @@ const MIN_COMMENT_DELAY = 3 * MINUTE;
  * A commenter always likes first if they were also going to like, and their
  * comment lands after that like, which is what real ordering looks like.
  *
- * @param authorId who posted (never reacts to their own post)
- * @param postedAt when the moment was published
+ * 可见范围 (M-I19): anyone the post is not visible to is dropped BEFORE the dice
+ * are rolled, so a restricted post plans exactly zero reactions for them. This
+ * is the single most important consequence of the whole audience feature — a
+ * like from someone you excluded is an instant, irreversible tell.
  */
 export function planReactions(
-  momentId: string,
-  authorId: string,
-  postedAt: number,
+  post: PlannablePost,
   reactors: ReactorInfo[],
   seed: string,
 ): PlannedReaction[] {
+  const { id: momentId, authorId, createdAt: postedAt } = post;
   const out: PlannedReaction[] = [];
   for (const r of reactors) {
     if (r.contactId === authorId) continue;
+    if (!canSeeMoment(post, r.contactId)) continue;
     const rng = seededRng(`${seed}:${momentId}:${r.contactId}`);
     // Affinity 0→0.6x, 50→1.0x, 100→1.4x of the persona's base rate.
     const affinityScale = 0.6 + (r.affinity / 100) * 0.8;
@@ -187,19 +201,30 @@ export const REPOST_MIN_AFFINITY = 55;
  * is the moment the 转发 feature exists for. The reposter's text and quote
  * are produced later through `moment-repost.ts`'s storage-re-read path, so
  * this planner decides WHO and WHEN, never WHAT.
+ *
+ * 可见范围 (M-I19): a repost puts your words on SOMEONE ELSE's wall, in front of
+ * an audience you never chose — so a restricted post is not merely unlikely to
+ * be reposted, it is ineligible. Both the "can she see it" filter on candidates
+ * and the outright refusal below matter: the second is what stops a 部分可见
+ * post from being republished to everyone by the one person who could see it.
  */
 export function planRepost(
-  momentId: string,
-  authorId: string,
-  postedAt: number,
+  post: PlannablePost,
   reactors: ReactorInfo[],
   seed: string,
 ): PlannedRepost | null {
+  const { id: momentId, authorId, createdAt: postedAt } = post;
   if (authorId !== 'self') return null;
+  // Anything with an audience stays where the user put it. Republishing is the
+  // one reaction that cannot be un-seen.
+  if (post.visibility && post.visibility.mode !== 'public') return null;
   const rng = seededRng(`${seed}:repost:${momentId}`);
   if (rng() >= REPOST_RATE) return null;
   const eligible = reactors.filter(
-    (r) => r.contactId !== authorId && r.affinity >= REPOST_MIN_AFFINITY,
+    (r) =>
+      r.contactId !== authorId &&
+      r.affinity >= REPOST_MIN_AFFINITY &&
+      canSeeMoment(post, r.contactId),
   );
   if (eligible.length === 0) return null;
   const who = eligible[Math.floor(rng() * eligible.length)];

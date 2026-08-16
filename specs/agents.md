@@ -270,3 +270,41 @@ I3 首版留下三条"写了没接线"，现补：
 - **离线窗口补 gift 与 I3 社交 kind**：见 `specs/backfill.md`「M-I18」。
 - **世界书近似匹配**：两档语义保持不变，只在「有关键词」那一档下叠 trigram/BM25。
   见 `specs/worldbook.md`。
+
+## M-I19 · 表情使用率联动 persona
+
+I15 的转红清单里写了「表情使用率联动 persona」，但只交付了斗图与表情收藏——
+**联动没做**：`battleUrge` 的曲线和 `AGENT_STICKER_SWAP_RATE` 是两个模块常数，
+全 App 每个角色共用。结果是「话痨爱斗图的」和「高冷的」发表情的频率一模一样，
+而这两个词恰好就是人设卡上写着的东西。
+
+- `PersonaVM.stickerRate`（0..1），走 `makePersona()` 补默认值——宪法点名的陷阱：
+  漏了它，`undefined` 会被静默读成「从不发表情」，不报错、只是功能消失。
+  schema 侧 `personas.sticker_rate` 默认 0.35。
+- **中性点 = 默认值**：`STICKER_RATE_BASELINE = 0.35` 与 `PERSONA_DEFAULTS.stickerRate`
+  是同一个常量（写在 `persona-defaults.ts`，两个必须相等的数只写一次）。
+  `stickerScale(rate) = min(2, rate / baseline)`，所以未设值的人设行为**逐字节
+  等同 M-I19 之前**。
+- 三个作用点，全部保持原曲线形状、只缩放：
+  1. `battleUrge(streak, rate)` — 斗图。连发仍然是邀请、长战仍然衰减；
+     `rate = 0` 各分支直接归零，没有下限漏出去。
+  2. `maybeAgentSticker(pool, seed, rate)` — 用你的收藏表情替换词表 glyph 的概率。
+  3. `stickerHabitLine(rate)` — 人设层的一行提示词。**只在两端说话**
+     （≥0.6 / ≤0.15），中间档一律空串：尾层每多一句就稀释一分人设，而且默认
+     人设的 prompt 因此保持逐字节不变（前缀缓存）。前两个管「App 替她发的表情」，
+     第三个管「模型自己决定发的表情」——不一起动，高冷人设照样吐 sticker 气泡
+     而 App 只是不接话，角色会显得精神分裂而不是高冷。
+- 接线：`toPersonaView()`（唯一漏斗，群聊/朋友圈生成器免费继承）、
+  `engine.ts` 的贴纸播放点、`ChatPage` 的斗图闸。SillyTavern 卡的
+  `extensions.aiwx` 带走它；AI 写卡（`persona-generate`）也会按人设给值。
+- 种子人设按卡面文字对齐：陈叔 0.05（卡上就写着"很少用表情"）、Ada 0.15（高冷）、
+  小雨 0.5（爱用颜文字）、毛球 0.85（爱玩梗和发表情包）。
+
+### 转红测试（`tests/unit/sticker-v2.test.ts`）
+
+- 两个不同 `stickerRate` 的人设在**同一批种子**下发表情次数有可复现的差异
+  （斗图与收藏替换两条闸各测一遍，差值有下界，不是舍入噪声）
+- `makePersona` 回填默认值；`undefined`/`NaN`/负数一律读成中性档，**不读成 0**
+- `rate = 0` 两条闸都彻底不发
+- 默认档的 `battleUrge` 与 M-I19 前的常数一致
+- 人设层只在两端出提示词行

@@ -147,3 +147,74 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
 - `toNotifiable` 不带 `selfMomentIds` 时 moment_* 一律静默——旧调用方行为不变。
 - 自定义表情是 `idb:` ref，**收藏/斗图池要过 `startsWith('idb:')`**，词表
   label 混进池子会被当 ref 渲染成裂图。
+
+## M-I19 增补：可见范围（公开 / 私密 / 部分可见 / 不给谁看）
+
+I6 把它列为「预列裁减位」并砍掉，M-I19 补上。微信的四档语义原样照搬。
+
+### 数据
+
+`MomentVM.visibility?: { mode, ids }`（`src/data/types.ts`），schema 侧是
+`moments.visibility_json`——**JSON 列演进，两个驱动都存整行 JSON，不需要
+`DB_VERSION` +1**（没有新 store）。**缺失 = 公开**：M-I19 之前的所有行、以及
+AI 发的每一条帖子都是这个状态，所以旧库零迁移。
+
+`ids` 只对 include/exclude 有意义，另两档存空数组——一列一个形状，解析侧不用
+分支。写入前一律过 `normalizeVisibility()`：
+- 空白名单 = **私密**，不是公开（"分享给谁"清空了不能反手公开发出去）；
+- 空黑名单 = 公开（塌缩成缺失态）；
+- 名单去重、剔掉 `self`（作者不是自己受众的成员）。
+
+### 过滤做在数据层，不在 UI
+
+规则函数在 `src/lib/moment-visibility.ts`，**调用点全在 lib/db/ai**：
+
+| 位置 | 作用 |
+|---|---|
+| `IdbRepo.getMoments` / `SqliteRepo.getMoments` | 出库即过滤，`viewer` 默认 `'self'` |
+| `getMomentsByAuthor(authorId, viewer?)` | 个人相册页同一条路 |
+| `planReactions` / `planRepost` | **排期前**就把看不见的人剔掉 |
+| `runMomentLike/Comment/Repost` | fire 时**再查一次**（同 `canForwardFrom` 的两次查） |
+| `simulate()` | `recentMoments` 带 `visibility` 进来，离线回填同样尊重 |
+
+仿 `search()` 内部过滤隐藏会话的先例：**UI 忘传也漏不出去**。
+`tests/unit/moment-visibility.test.ts` 有一条源码扫描守卫断言
+`src/features/**` 里**不出现** `canSeeMoment` / `visibleMoments`——规则一旦搬进
+组件，下一个新增的读取路径就会静默泄漏。
+
+两个 planner 因此改成收**整行** `PlannablePost`（不再是
+`(id, authorId, postedAt)` 三元组）：可见范围必须跟着帖子走，而第四个位置参数
+是会被忘掉的东西。
+
+### AI 侧（本条最重要的一点）
+
+**她看不到的帖，她不会赞、不会评、不会转。** 不可见的人在掷骰之前就被剔除，
+所以是"零条排期"而不是"排了再拦"——重放/回填也一致。转发更严：**任何非公开的
+帖一律不可转**（不只是查这个转发者），因为转发是把你的话搬到别人墙上，面对的是
+你从没选过的受众，且收不回来。
+
+漂移/亲密度等其它调节量都在可见范围之后才生效，顺序不能反。
+
+### 用户可见面
+
+- 发布页「谁可以看」行：ActionSheet 选档 → 两个名单档进 `Sheet` 联系人多选
+  （复用 I0 组件，没有新浮层）。候选人来自 **contacts**（`audienceCandidates`，
+  只留 `type === 'ai'`），**永远不是 conversations**——用会话行拼人选器正是隐藏
+  AI↔AI 私信泄漏到用户面的经典路径。
+- Feed / 相册卡片：自己的非公开帖在时间戳旁显示「私密 / 部分可见 / 不给谁看」灰标。
+  没有这个标，"到底存成私密了没有"在 App 里无处可查。
+- 赞评通知、搜索命中、年度报告都读同一批出库行，天然继承。
+
+### 删联系人
+
+`deleteContactCascade` 逐条手术：把死者从每个名单里摘掉，**不删整行**——那行里
+还有活人。白名单被摘空 → 退化成**私密**，不是公开。
+
+### 转红测试（`tests/unit/moment-visibility.test.ts`）
+
+- 不可见帖对该联系人的赞评规划为零；公开帖行为与 M-I19 前逐字节相同
+- 过滤在**驱动层**（IdbRepo + SqliteRepo 双跑，viewer 换人结果就换）
+- `visibleMoments` 只减不增（防止有人把过滤器改成取数器 = 泄漏）
+- 未知 mode **fail closed**
+- 人选器只出 AI 联系人；隐藏会话结构上进不来
+- 级联手术后活人仍在名单里；空白名单变私密不变公开

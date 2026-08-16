@@ -18,12 +18,19 @@
  */
 import { seededRng } from '../lib/money';
 import { STICKER_VOCAB } from '../data/stickers';
+import { stickerScale } from './sticker-taste';
 
 export interface BattleContext {
   /** Stable per-turn seed — use the persisted message id. */
   seed: string;
   /** How many consecutive sticker messages ended the transcript (yours+hers), ≥1. */
   streak: number;
+  /**
+   * The persona's 表情使用率 (M-I19), 0..1. Omitted = baseline, i.e. exactly the
+   * curve this module shipped with. This is what stops 话痨爱斗图的 and 高冷的
+   * from playing the same sticker war.
+   */
+  rate?: number;
 }
 
 /**
@@ -32,17 +39,22 @@ export interface BattleContext {
  * One sticker: possible. A budding war (streak 2–4): likely — refusing to
  * play reads colder than playing. Past that the urge falls off; sticker wars
  * end because someone gets bored, and hers should too.
+ *
+ * `rate` (M-I19) scales the whole curve by the persona's 表情使用率, keeping its
+ * SHAPE — the streak still invites, the war still decays — while moving how
+ * readily this particular character joins one at all. A rate of 0 means she
+ * never答图: the multiplication zeroes every branch, so there is no floor to
+ * leak through.
  */
-export function battleUrge(streak: number): number {
+export function battleUrge(streak: number, rate?: number): number {
   if (streak <= 0) return 0;
-  if (streak === 1) return 0.35;
-  if (streak <= 4) return 0.65;
-  return Math.max(0.1, 0.65 - (streak - 4) * 0.2);
+  const base = streak === 1 ? 0.35 : streak <= 4 ? 0.65 : Math.max(0.1, 0.65 - (streak - 4) * 0.2);
+  return Math.min(1, base * stickerScale(rate));
 }
 
 /** Seeded gate over the urge. */
 export function wantsBattle(ctx: BattleContext): boolean {
-  return seededRng(`stkbattle:${ctx.seed}`)() < battleUrge(ctx.streak);
+  return seededRng(`stkbattle:${ctx.seed}`)() < battleUrge(ctx.streak, ctx.rate);
 }
 
 export interface BattleReply {
@@ -65,7 +77,7 @@ export function battleReply(
   justSent?: string,
 ): BattleReply | null {
   const rng = seededRng(`stkbattle:${ctx.seed}`);
-  if (rng() >= battleUrge(ctx.streak)) return null;
+  if (rng() >= battleUrge(ctx.streak, ctx.rate)) return null;
   const customs = customPool.filter((r) => r !== justSent);
   const labels = Object.keys(STICKER_VOCAB).filter((l) => l !== justSent);
   // 70% reach for a custom when she has any — that's the whole point of

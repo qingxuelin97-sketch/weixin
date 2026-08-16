@@ -33,6 +33,15 @@ export const PERSONA_LIMITS = {
   nsfwSampleChars: 100,
 } as const;
 
+/**
+ * The neutral 表情使用率 (M-I19).
+ *
+ * Lives here, next to the default it equals, because it is the point at which
+ * `stickerScale()` returns exactly 1 — every seeded sticker gate keeps the
+ * probability it shipped with. Two numbers that must agree, written once.
+ */
+export const STICKER_RATE_BASELINE = 0.35;
+
 /** Not `as const` — the array fields must stay mutable to satisfy PersonaVM. */
 export const PERSONA_DEFAULTS: Omit<PersonaVM, 'contactId' | 'core'> = {
   fewShots: [],
@@ -46,6 +55,7 @@ export const PERSONA_DEFAULTS: Omit<PersonaVM, 'contactId' | 'core'> = {
   momentsPerDay: 0.3,
   likeRate: 0.5,
   commentRate: 0.25,
+  stickerRate: STICKER_RATE_BASELINE,
   affinityInit: 20,
   // Middling by default: she will send something on a birthday or after a
   // fight, and roughly never otherwise.

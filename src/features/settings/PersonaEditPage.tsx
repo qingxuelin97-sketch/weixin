@@ -388,6 +388,19 @@ export function PersonaEditPage() {
               }}
             />
           </div>
+          <div className="field field--divided">
+            <span className="field__label">
+              表情使用率：{p.stickerRate.toFixed(2)}（发表情包与斗图的频率）
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={p.stickerRate}
+              onChange={(e) => set('stickerRate', Number(e.target.value))}
+            />
+          </div>
           <div className="field">
             <span className="field__label">抢红包速度</span>
             <div className="segmented" style={{ margin: 0 }}>

@@ -21,7 +21,8 @@ import { agendaAt } from './lifeline';
 import { planGift } from './money-motive';
 import { maybeGroupEvent } from './group-events';
 import { maybeGroupInvite } from './agent-invite';
-import type { PersonaVM } from '../data/types';
+import type { MomentVisibility, PersonaVM } from '../data/types';
+import { canSeeMoment } from '../lib/moment-visibility';
 
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
@@ -155,7 +156,18 @@ export interface SimInput {
    * offline friends may belatedly like or comment on. Newest few only; the
    * caller reads them, simulate stays pure.
    */
-  recentMoments?: Array<{ id: string; authorId: string; createdAt: number }>;
+  recentMoments?: Array<{
+    id: string;
+    authorId: string;
+    createdAt: number;
+    /**
+     * 可见范围 (M-I19). Rides in with the row because the belated-reaction
+     * planner below must honour it — an offline absence that comes back with a
+     * like from someone the post was hidden from is the same穿帮 as a live one,
+     * and the backfill path is the one most likely to be forgotten.
+     */
+    visibility?: MomentVisibility;
+  }>;
   /**
    * Member lists of every non-hidden group (M-I18), for `agent_invite`: a trio
    * that already shares a room must never be proposed one. Passed in rather
@@ -310,6 +322,7 @@ export function simulate(t0: number, t1: number, input: SimInput, seed: string):
     for (const cand of candidates) {
       if (reacted >= reactBudget) break;
       if (cand.contactId === m.authorId) continue; // never self-react
+      if (!canSeeMoment(m, cand.contactId)) continue; // 可见范围 (M-I19)
       const r = seededRng(`react:${seed}:${from}:${m.id}:${cand.contactId}`);
       if (r() >= cand.persona.likeRate * 0.5) continue;
       const at = pickTimes(

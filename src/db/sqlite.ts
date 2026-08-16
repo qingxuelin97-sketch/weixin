@@ -46,6 +46,7 @@ import type {
 } from '../data/types';
 import { STORES, idbGetAll, idbDelete, idbPut } from './idb';
 import { deleteContactCascade, type Repo, type CascadeStoryRow } from './repo';
+import { visibleMoments } from '../lib/moment-visibility';
 
 /**
  * The slice of @capacitor-community/sqlite's SQLiteDBConnection this driver
@@ -435,7 +436,7 @@ export class SqliteRepo implements Repo {
   }
 
   /* -- moments -- */
-  async getMoments(opts: { limit?: number; before?: number } = {}) {
+  async getMoments(opts: { limit?: number; before?: number; viewer?: string } = {}) {
     const limit = opts.limit ?? DEFAULT_MOMENTS_PAGE;
     const res =
       opts.before == null
@@ -447,7 +448,11 @@ export class SqliteRepo implements Repo {
             `SELECT data FROM moments WHERE json_extract(data,'$.createdAt') < ? ORDER BY json_extract(data,'$.createdAt') DESC LIMIT ?`,
             [opts.before, limit],
           );
-    return (res.values ?? []).map((r) => JSON.parse(String(r.data)) as MomentVM);
+    // 可见范围 (M-I19) applied HERE, in the driver, exactly as the IDB one does
+    // — both drivers must enforce it or swapping storage would silently unmute
+    // every restricted post.
+    const rows = (res.values ?? []).map((r) => JSON.parse(String(r.data)) as MomentVM);
+    return visibleMoments(rows, opts.viewer ?? 'self');
   }
   async getMomentSocial(momentIds: string[]) {
     const likes: Record<string, MomentLikeVM[]> = {};
@@ -473,9 +478,12 @@ export class SqliteRepo implements Repo {
   async getMoment(id: string) {
     return this.kvGet<MomentVM>('moments', id);
   }
-  async getMomentsByAuthor(authorId: string) {
+  async getMomentsByAuthor(authorId: string, viewer = 'self') {
     const all = await this.kvAll<MomentVM>('moments');
-    return all.filter((m) => m.authorId === authorId).sort((a, b) => b.createdAt - a.createdAt);
+    return visibleMoments(
+      all.filter((m) => m.authorId === authorId),
+      viewer,
+    ).sort((a, b) => b.createdAt - a.createdAt);
   }
   async putMoment(m: MomentVM) {
     await this.kvPut('moments', m);

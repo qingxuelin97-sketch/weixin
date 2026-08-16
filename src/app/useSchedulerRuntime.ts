@@ -563,9 +563,19 @@ async function runForegroundPass(): Promise<void> {
     })),
   );
   // Posts that predate the absence, for belated 赞评 (M-I5). Newest few only.
+  // `visibility` rides along (M-I19) — simulate() is pure and cannot read it
+  // back from storage, so dropping it here would make offline the one path
+  // where a restricted post still draws reactions.
   const recentMoments = await repo
     .getMoments({ limit: 8 })
-    .then((ms) => ms.map((m) => ({ id: m.id, authorId: m.authorId, createdAt: m.createdAt })))
+    .then((ms) =>
+      ms.map((m) => ({
+        id: m.id,
+        authorId: m.authorId,
+        createdAt: m.createdAt,
+        visibility: m.visibility,
+      })),
+    )
     .catch(() => []);
   // Read once and used twice — by the offline 拉群 planner below and by the
   // live one at 1.6. Two reads would be two answers to "are these three
