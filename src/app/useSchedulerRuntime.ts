@@ -516,9 +516,13 @@ async function runForegroundPass(): Promise<void> {
     .catch(() => []);
   try {
     await runBackfill(now, { singles, groups, recentMoments });
-  } catch {
+  } catch (e) {
     // A failed backfill must never block startup — the app still works, it
-    // just doesn't show a fabricated absence this time.
+    // just doesn't show a fabricated absence this time. But it must not fail
+    // INVISIBLY either: this is the core of offline evolution and it makes LLM
+    // calls, so a silent catch made "she went quiet for a day" and "backfill
+    // threw every single time" look identical from both the UI and the log.
+    logError('backfill', e);
   }
 
   // 1.5) Group events (M-I3): each group rolls its seeded weekly dice. The
@@ -680,7 +684,10 @@ async function runForegroundPass(): Promise<void> {
   // 3) Seed the first AI↔AI DM session if none is queued.
   try {
     if (!(await hasPendingOfKind('agent_dm'))) await scheduleNextAgentDm();
-  } catch {
+  } catch (e) {
+    // Never blocks the foreground path — but if this throws every pass, the
+    // entire AI↔AI chemistry layer is dead and nothing else would ever say so.
+    logError('agentdm.seed', e);
     /* chemistry is a bonus; never block the foreground path on it */
   }
 
@@ -728,8 +735,11 @@ async function runForegroundPass(): Promise<void> {
         .map((m) => m.id),
     );
     await syncNotifications(await pendingActions(), s.contacts, now, { selfMomentIds });
-  } catch {
-    /* notifications are a bonus; never let them break the foreground path */
+  } catch (e) {
+    // Notifications are the app's only presence while it is closed, and the
+    // plugin-proxy bug that cost three weeks of dead device builds was hidden
+    // by exactly this shape of catch. Still non-fatal, now never invisible.
+    logError('notify.sync', e);
   }
 
   // 5) M-I10: refresh the home-screen widget from the now-current world.

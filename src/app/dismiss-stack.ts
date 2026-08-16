@@ -14,6 +14,8 @@
  * open from outside the component tree, and a context would wall them out.
  */
 
+import { logError } from '../lib/errlog';
+
 type Dismiss = () => void;
 
 const stack: Array<{ id: number; close: Dismiss }> = [];
@@ -38,8 +40,11 @@ export function popDismiss(): boolean {
   if (!top) return false;
   try {
     top.close();
-  } catch {
-    // A throwing close handler must not eat the back press chain.
+  } catch (e) {
+    // A throwing close handler must not eat the back press chain — but it IS a
+    // bug in that overlay, and swallowing it silently presents as "back button
+    // does nothing here", the least diagnosable symptom there is.
+    logError('dismiss.close', e);
   }
   return true;
 }
