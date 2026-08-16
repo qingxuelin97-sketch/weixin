@@ -64,6 +64,12 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
 `idb:` 照片池（吃货人设不发健身照）；空标签或过滤后为空 → 回落全池（宁可跑题不可
 让人设永远无图）。优先级：运行时媒体库 > 构建期 assets > 渐变占位。同种子同图不变。
 
+**配图只有这一条路径。** M-I3 的聚会事后帖（`handleGroupEvent` 的 aftermath 相位）
+曾经写死 `imageRefs: []`——没人从火锅局回来一张照片都不发，那条帖子因此一眼是生成的。
+现在它和正常发帖一样走 `pickImages`：张数由 `aftermathImageCount(eventId)` 种子化
+（0/1/3，比日常帖更偏向有图），尊重发起人的 `imageTags`，素材池为空时返回空数组
+→ 优雅退化成纯文字，不报错。新增任何"AI 发帖"的入口，配图都接这里，不要另写。
+
 ## M-I15 增补：朋友圈 v2
 
 ### 转发/引用（转发卡片 + 泄漏铁律）

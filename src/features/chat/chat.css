@@ -838,7 +838,8 @@
 .loc-card,
 .contact-card,
 .file-card,
-.link-card {
+.link-card,
+.invite-card {
   background: var(--color-bubble-other);
   color: var(--color-bubble-other-text);
   padding: 0;
@@ -848,9 +849,54 @@
 .loc-card::before,
 .contact-card::before,
 .file-card::before,
-.link-card::before {
+.link-card::before,
+.invite-card::before {
   border-left-color: var(--color-bubble-other);
   border-right-color: var(--color-bubble-other);
+}
+
+/* 拉群提议卡 (M-I3)：她说的那句话在上，可点的邀请卡在下。 */
+.invite-card-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.msg-row--self .invite-card-wrap {
+  align-items: flex-end;
+}
+.invite-card__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+}
+.invite-card__lines {
+  flex: 1;
+  min-width: 0;
+}
+.invite-card__title {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.invite-card__members {
+  margin-top: 3px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.invite-card__icon {
+  flex: none;
+  line-height: 0;
+}
+.invite-card__footer {
+  margin: 0 12px;
+  padding: 5px 0 6px;
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
 }
 
 /* 位置卡片：name + address text block, static mini-map below. */

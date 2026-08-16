@@ -79,6 +79,13 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
   switch (m.type) {
     case 'text': {
       const body = m.content ?? '';
+      // 拉群提议 (M-I3): the roster rides in `meta.suggestGroup` as CONTACT IDS,
+      // and the screen shows it as a card. The model must see that a proposal
+      // is pending — otherwise the next turn cannot mean "所以到底建不建" — but
+      // it must NOT see the ids: an echoed `ai_ada` in dialogue is the same
+      // fourth-wall break as a leaked media handle. The names are already in
+      // `content` (inviteLine wrote them), so the marker carries no roster.
+      const proposal = Array.isArray(meta.suggestGroup) && meta.suggestGroup.length >= 2;
       // A quoted reply only means something if the model can see WHAT was
       // quoted. The quote has been stored in `meta.quote` since M-D, and this
       // projection never read it — so "回复上面那条" arrived as a bare sentence
@@ -86,7 +93,8 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
       // the whole time, which is why it read as a model failure rather than a
       // missing field.
       const quoted = str(meta.quote);
-      return quoted ? `[回复「${clipQuote(quoted)}」] ${body}` : body;
+      const head = quoted ? `[回复「${clipQuote(quoted)}」] ` : '';
+      return proposal ? `${head}${body}[附了一张拉群邀请卡片，等用户决定]` : `${head}${body}`;
     }
 
     case 'image': {

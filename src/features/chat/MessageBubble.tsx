@@ -8,6 +8,7 @@ import { canReEdit } from '../../lib/recall';
 import { resolveImageRef } from '../../data/moments-images';
 import { RPS_GLYPHS, diceResult, rpsResult } from '../../lib/game';
 import { humanSize } from '../../ai/bubble-materialize';
+import { parseSuggestGroup, inviteCardNames } from '../../ai/agent-invite';
 import type { MessageVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -24,6 +25,13 @@ interface Props {
   onMergedTap?: (msg: MessageVM) => void;
   /** Tapping a 名片 card — the page navigates to /contact/:id (M-I13). */
   onContactTap?: (msg: MessageVM) => void;
+  /**
+   * Tapping an AI's 拉群提议 card (M-I3) — the page opens 发起群聊 with the
+   * suggested people pre-ticked. Creating the group stays the user's action.
+   */
+  onSuggestGroupTap?: (msg: MessageVM, memberIds: string[]) => void;
+  /** Display name for a suggested member (the card must never show ids). */
+  nameOf?: (contactId: string) => string | undefined;
   /** Long-press (or right-click) on the row — opens the recall/copy menu. */
   onLongPress?: (msg: MessageVM, x: number, y: number) => void;
   /** 重新编辑 on a recalled text message: refill the composer with the original. */
@@ -38,7 +46,7 @@ interface Props {
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onContactTap, onLongPress, onReEdit, onRetry, readMark }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark }: Props) {
   // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
   // movement and had no fired guard, so releasing a long press on an image
   // ALSO opened the viewer. The hook fixes both.
@@ -66,6 +74,10 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
   // Only a message that JUST arrived pops in; rendering history stays still.
   // Live now() is fine here: it's presentation-only and never persisted.
   const fresh = Date.now() - msg.createdAt < 3_000;
+
+  // 拉群提议 (M-I3): a text message carrying a roster renders as a card. Parsed
+  // once here so both the tap target and the body agree on whether there is one.
+  const suggestIds = msg.type === 'text' ? parseSuggestGroup(msg.meta) : null;
 
   return (
     <div
@@ -102,7 +114,12 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
         <div
           className="msg-row__body"
           onClick={
-            msg.type === 'rp' || msg.type === 'transfer'
+            suggestIds
+              ? () => {
+                  if (lp.fired()) return;
+                  onSuggestGroupTap?.(msg, suggestIds);
+                }
+              : msg.type === 'rp' || msg.type === 'transfer'
               ? () => {
                   if (lp.fired()) return; // release tap after a long press
                   onMoneyTap?.(msg);
@@ -125,7 +142,7 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
                     : undefined
           }
         >
-          <BubbleContent msg={msg} isSelf={isSelf} />
+          <BubbleContent msg={msg} isSelf={isSelf} suggestIds={suggestIds} nameOf={nameOf} />
         </div>
         {msg.meta?.quote != null && (
           <div className="msg-quote">{String(msg.meta.quote)}</div>
@@ -182,10 +199,55 @@ function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
   );
 }
 
-function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
+function BubbleContent({
+  msg,
+  isSelf,
+  suggestIds,
+  nameOf,
+}: {
+  msg: MessageVM;
+  isSelf: boolean;
+  suggestIds?: string[] | null;
+  nameOf?: (contactId: string) => string | undefined;
+}) {
   const side = isSelf ? 'self' : 'other';
   switch (msg.type) {
     case 'text':
+      // 拉群提议卡片 (M-I3). WeChat draws invitation cards white on both sides,
+      // like the other rich cards — so this rides the same `.invite-card` rule
+      // set as 名片/链接. Her own words stay above the card: the proposal is
+      // something she SAID, and the card is the actionable part of it.
+      if (suggestIds) {
+        const names = suggestIds.map((id) => nameOf?.(id)).filter((n): n is string => Boolean(n));
+        return (
+          <div className="invite-card-wrap">
+            {msg.content && <div className={`bubble bubble--${side}`}>{msg.content}</div>}
+            <div className={`bubble bubble--${side} invite-card`}>
+              <div className="invite-card__main">
+                <div className="invite-card__lines">
+                  <div className="invite-card__title">邀请你加入群聊</div>
+                  <div className="invite-card__members">
+                    {names.length ? inviteCardNames(names) : '好友已不在'}
+                  </div>
+                </div>
+                <div className="invite-card__icon" aria-hidden>
+                  <svg viewBox="0 0 40 40" width="40" height="40">
+                    <rect x="1" y="1" width="38" height="38" rx="7" fill="var(--color-page-bg)" />
+                    <circle cx="14" cy="15" r="5" fill="var(--color-brand)" opacity="0.75" />
+                    <circle cx="26" cy="15" r="5" fill="var(--color-brand)" opacity="0.45" />
+                    <path
+                      d="M6 31c0-4.4 3.6-7 8-7s8 2.6 8 7zM19 31c0-4.4 3.6-7 8-7s7 2.6 7 7z"
+                      fill="var(--color-brand)"
+                      opacity="0.3"
+                    />
+                  </svg>
+                </div>
+              </div>
+              <div className="invite-card__footer">群聊邀请</div>
+            </div>
+          </div>
+        );
+      }
       return <div className={`bubble bubble--${side}`}>{msg.content}</div>;
 
     case 'sticker': {

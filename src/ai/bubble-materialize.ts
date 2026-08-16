@@ -48,6 +48,29 @@ export interface MaterializeCtx {
 }
 
 /**
+ * A 名片 message, from a resolved contact. THE shape of a name card — the
+ * identity is SNAPSHOTTED into meta so the card still renders after a rename
+ * or a delete, and `contactId` is what the tap navigates by.
+ *
+ * Exported because bubbles are no longer the only producer: an AI proposing a
+ * group (M-I3) introduces the friends by card too, and two copies of this
+ * object literal would be two subtly different cards.
+ */
+export function contactCardPayload(target: CardContact): MaterializedMsg {
+  return {
+    type: 'contact_card',
+    content: target.name,
+    meta: {
+      contactId: target.contactId,
+      name: target.name,
+      ...(target.wxid ? { wxid: target.wxid } : {}),
+      ...(target.avatarColor ? { avatarColor: target.avatarColor } : {}),
+      ...(target.avatarText ? { avatarText: target.avatarText } : {}),
+    },
+  };
+}
+
+/**
  * Split "标题|摘要"-style content on the first separator. Models are told to
  * use '|', but they improvise ('｜', '——', newline) — accept the lot.
  */
@@ -112,17 +135,7 @@ export function materializeBubble(b: Bubble, ctx: MaterializeCtx): MaterializedM
         // She "recommends" someone the app doesn't know: say it in words.
         return content ? { type: 'text', content } : null;
       }
-      return {
-        type: 'contact_card',
-        content: target.name,
-        meta: {
-          contactId: target.contactId,
-          name: target.name,
-          ...(target.wxid ? { wxid: target.wxid } : {}),
-          ...(target.avatarColor ? { avatarColor: target.avatarColor } : {}),
-          ...(target.avatarText ? { avatarText: target.avatarText } : {}),
-        },
-      };
+      return contactCardPayload(target);
     }
 
     case 'file': {
