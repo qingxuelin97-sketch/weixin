@@ -120,6 +120,24 @@
   padding-bottom: var(--safe-bottom);
   overflow: hidden;
   animation: asheet-rise 220ms var(--ease-standard);
+  /* M-I8: the panel owns the vertical drag, so Android must not hand it to its
+     own scroll before a pointermove is ever delivered. */
+  touch-action: none;
+}
+/* Drag handle (M-I8). Small, centered, and the only advertisement that the
+   sheet can be pushed back down — the gesture is invisible without it. */
+.sheet__grabber {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 2px;
+  border-radius: 2px;
+  background: var(--color-hairline);
+}
+/* The body scrolls normally: the drag hook stands down whenever this is
+   scrolled away from its top. */
+.sheet__body {
+  touch-action: pan-y;
 }
 .sheet__title {
   flex: none;
@@ -142,6 +160,9 @@
   overflow: hidden;
   padding-bottom: var(--safe-bottom);
   animation: asheet-rise 220ms var(--ease-standard);
+  /* M-I8: the panel owns the vertical drag, so Android must not hand it to its
+     own scroll before a pointermove is ever delivered. */
+  touch-action: none;
 }
 @keyframes asheet-rise {
   from {

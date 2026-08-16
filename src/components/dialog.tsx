@@ -21,6 +21,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { pushDismiss } from '../app/dismiss-stack';
+import { useSheetDrag } from './useSheetDrag';
 import './overlay.css';
 
 interface ConfirmOpts {
@@ -204,9 +205,36 @@ function SheetView({ entry }: { entry: Active & { kind: 'sheet' } }) {
   const cancel = () => settle(entry, null);
   useEffect(() => pushDismiss(cancel), []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Drag-to-close (M-I8), on the SAME gesture as `<Sheet/>`.
+   *
+   * This is the app's most-used bottom surface — every 更多 menu, every
+   * 长按 action list — so giving the controlled sheet a thumb-friendly
+   * dismissal and leaving this one tap-only would have been the worse of the
+   * two possible inconsistencies. There is no scrollRef: an action sheet is a
+   * short list that never scrolls, so the drag arms anywhere on it.
+   */
+  const panelRef = useRef<HTMLDivElement>(null);
+  const drag = useSheetDrag({ ref: panelRef, onClose: cancel });
+
   return (
-    <div className="ovl ovl--bottom" onClick={cancel}>
-      <div className="asheet" role="menu" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="ovl ovl--bottom"
+      onClick={() => {
+        // A drag that ended over the scrim is not a scrim tap: the release
+        // already decided, and firing cancel here would close a sheet the user
+        // just chose to keep.
+        if (drag.dragging()) return;
+        cancel();
+      }}
+    >
+      <div
+        ref={panelRef}
+        className="asheet"
+        role="menu"
+        onClick={(e) => e.stopPropagation()}
+        {...drag.handlers}
+      >
         {opts.title && <div className="asheet__title">{opts.title}</div>}
         {opts.actions.map((a, i) => {
           const action: SheetAction = typeof a === 'string' ? { label: a } : a;

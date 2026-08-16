@@ -141,6 +141,12 @@ src/
   它装的就是这个包。开发容器默认**没有** CJK 字体（Chromium 会用别的回退字体渲染，截图照样
   "好看"——但每个字的像素都和 CI 不同，52 张全红）。新会话跑 `pnpm test:screenshot` 前先
   `sudo apt-get install -y fonts-noto-cjk`；忘了装的症状是"本地全绿、重基线后 CI 全红"。
+- **动画留下的残余 transform 会劫持 `position: fixed`**：`animation-fill-mode: both` 会把
+  终帧永久保留，哪怕终帧是 `translateY(0)`——计算值 `matrix(1,0,0,1,0,0)` 仍然让该元素成为
+  fixed 子孙的**包含块**。M-I8 的 `.stagger-in` 因此让每张错峰进场过的朋友圈卡片变成"视口"，
+  从卡片里打开的全屏图片查看器渲染成卡内 390×276 小窗。现象离病因极远（去查了查看器的 CSS、
+  z-index、portal，全都是对的）。规则：淡入类用 `backwards`；WAAPI（`springTo` 默认
+  `fill: both`）收尾先把值落成 inline style 再 `cancel()`。详见 `specs/motion.md`。
 - **不要为"截图稳定"冻结业务时钟**：组件里硬编码 NOW 常量意味着真机上所有相对时间戳
   永远错（diffDays 为负渲染成「星期六」）。确定性归测试侧：Playwright
   `page.clock.setFixedTime(种子纪元)`，业务代码用真实时钟（`useNow()` 分钟级 tick）。

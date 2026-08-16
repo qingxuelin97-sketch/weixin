@@ -195,3 +195,14 @@
 .call-page__btn--accept {
   background: var(--color-brand);
 }
+
+/* Accessibility (M-I8): every animating stylesheet must say how it stops.
+   The breathing dots under 「正在说话」 were the one animation in this file and
+   they had no switch — an infinite loop is exactly what someone who turns
+   reduced motion on is turning off. */
+@media (prefers-reduced-motion: reduce) {
+  .call-subs__dot {
+    animation: none !important;
+    opacity: 0.7;
+  }
+}

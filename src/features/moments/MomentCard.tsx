@@ -12,9 +12,10 @@
  *  - the author name is tappable (→ 个人相册页) when the parent wires it;
  *  - the capsule gains 转发 on posts the parent allows reposting.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Avatar } from '../../components/Avatar';
 import { ImageViewer } from '../../components/ImageViewer';
+import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { resolveImageRef } from '../../data/moments-images';
 import { momentTimestamp } from '../../lib/time';
 import { topicSegments } from '../../lib/topics';
@@ -46,6 +47,52 @@ interface Props {
   onTopicTap?: (tag: string) => void;
   /** Tap the author's name (M-I15 → 个人相册页). */
   onAuthorTap?: () => void;
+}
+
+/**
+ * One grid cell.
+ *
+ * Its own component because it needs two things a map callback cannot hold: a
+ * ref (the rect handed to the viewer's opening transition) and a loaded flag
+ * (the shimmer that covers a photo still coming out of IndexedDB). Before
+ * M-I8 the cell showed its flat placeholder colour until the blob landed, which
+ * on a cold feed reads as "these posts have no photos".
+ */
+function MomentImage({
+  imageRef,
+  onOpen,
+}: {
+  imageRef: string;
+  onOpen: (el: HTMLElement | null) => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const { url, background } = resolveImageRef(imageRef);
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <div
+      ref={ref}
+      className="moment__image"
+      style={background ? { background } : undefined}
+      onClick={() => onOpen(ref.current)}
+      role="button"
+    >
+      {/* Shimmer only for a REAL photo that has not decoded yet. A `ph:` ref
+          has no URL and never will — its gradient IS the content, not a
+          loading state, and shimmering over it would turn the whole seeded
+          feed grey. */}
+      {url && !loaded && <div className="moment__image-skeleton skeleton" aria-hidden />}
+      {url && (
+        <img
+          src={url}
+          alt=""
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          // A broken ref must not leave a shimmer running forever.
+          onError={() => setLoaded(true)}
+        />
+      )}
+    </div>
+  );
 }
 
 /**
@@ -155,20 +202,20 @@ export function MomentCard({
 
         {imgs.length > 0 && (
           <div className={gridClass(imgs.length)}>
-            {imgs.map((ref, i) => {
-              const { url, background } = resolveImageRef(ref);
-              return (
-                <div
-                  key={`${ref}-${i}`}
-                  className="moment__image"
-                  style={background ? { background } : undefined}
-                  onClick={() => setViewerIndex(i)}
-                  role="button"
-                >
-                  {url && <img src={url} alt="" loading="lazy" />}
-                </div>
-              );
-            })}
+            {imgs.map((ref, i) => (
+              <MomentImage
+                key={`${ref}-${i}`}
+                imageRef={ref}
+                onOpen={(el) => {
+                  // Hand the tapped cell's rect to the viewer so the photo
+                  // grows out of THIS cell (M-I8, lib/flip.ts). Measured at the
+                  // moment of the tap: the grid can scroll before the viewer
+                  // mounts, and a stale rect flies in from the wrong place.
+                  captureFlipSource(FLIP_KEYS.imageViewer, el);
+                  setViewerIndex(i);
+                }}
+              />
+            ))}
           </div>
         )}
         {viewerIndex != null && (

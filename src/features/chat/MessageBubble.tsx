@@ -18,8 +18,14 @@ interface Props {
   showNickname?: boolean;
   /** Tapping a red-packet / transfer bubble. */
   onMoneyTap?: (msg: MessageVM) => void;
-  /** Tapping an image bubble — the page opens the full-screen viewer. */
-  onImageTap?: (msg: MessageVM) => void;
+  /**
+   * Tapping an image bubble — the page opens the full-screen viewer.
+   *
+   * The tapped <img> rides along (M-I8) so the viewer can grow out of THIS
+   * bubble rather than fading in over the thread. Measuring it later is not an
+   * option: the thread scrolls while the viewer mounts.
+   */
+  onImageTap?: (msg: MessageVM, el: HTMLElement | null) => void;
   /** Tapping a 合并转发 card — the page opens the record viewer (M-I6). */
   onMergedTap?: (msg: MessageVM) => void;
   /** Tapping a 名片 card — the page navigates to /contact/:id (M-I13). */
@@ -108,9 +114,13 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
                   onMoneyTap?.(msg);
                 }
               : msg.type === 'image'
-                ? () => {
+                ? (e) => {
                     if (lp.fired()) return;
-                    onImageTap?.(msg);
+                    // The <img> itself, not the row: the row is the full bubble
+                    // width, and a transition that starts from a box wider than
+                    // the photo reads as the photo stretching.
+                    const host = e.currentTarget as HTMLElement;
+                    onImageTap?.(msg, host.querySelector<HTMLElement>('.msg-image') ?? host);
                   }
                 : msg.type === 'merged'
                   ? () => {
@@ -182,6 +192,37 @@ function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
   );
 }
 
+/**
+ * Image bubble (M-I8: gained a loading state).
+ *
+ * A chat photo comes out of IndexedDB as a blob and is materialized on demand,
+ * so between the bubble appearing and the picture arriving there is a real gap
+ * — which used to render as nothing at all in a 150×110 hole. The shimmer sits
+ * behind the <img> rather than instead of it, so the swap on load costs no
+ * layout and cannot cancel the viewer's opening transition.
+ *
+ * A `ph:` ref is NOT loading: its gradient is the content. Only a ref with a
+ * real URL gets a shimmer.
+ */
+function ImageBubble({ refImage }: { refImage: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const { url, background } = resolveImageRef(refImage);
+  if (!url) return <div className="msg-image msg-image--ph" style={{ background }} />;
+  return (
+    <span className="msg-image-wrap">
+      {!loaded && <span className="msg-image-skeleton skeleton" aria-hidden />}
+      <img
+        className="msg-image"
+        src={url}
+        alt=""
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        onError={() => setLoaded(true)}
+      />
+    </span>
+  );
+}
+
 function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
   const side = isSelf ? 'self' : 'other';
   switch (msg.type) {
@@ -205,16 +246,10 @@ function BubbleContent({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
       return <div className="msg-sticker">{stickerGlyph(msg.content)}</div>;
     }
 
-    case 'image': {
+    case 'image':
       // content is an image ref (idb:/img:/ph:) — schema had the type since M1,
       // but nothing rendered it until M-C2 (it fell through to the text bubble).
-      const { url, background } = resolveImageRef(msg.content ?? '');
-      return url ? (
-        <img className="msg-image" src={url} alt="" loading="lazy" />
-      ) : (
-        <div className="msg-image msg-image--ph" style={{ background }} />
-      );
-    }
+      return <ImageBubble refImage={msg.content ?? ''} />;
 
     case 'voice':
       return <VoiceBubble msg={msg} isSelf={isSelf} />;

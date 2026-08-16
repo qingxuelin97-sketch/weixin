@@ -13,16 +13,40 @@ import { useSwipeRow } from '../../components/useSwipeRow';
 import { useLongPress } from '../../components/useLongPress';
 import { useDismissable } from '../../app/useDismissable';
 import { showConfirm } from '../../components/dialog';
+import { usePullRefresh } from '../../components/usePullRefresh';
+import { PullRefresh } from '../../components/PullRefresh';
+import { RollingNumber } from '../../components/RollingNumber';
+import { useStagger, type StaggerRowProps } from '../../lib/useStagger';
 
 export function ChatListPage() {
   const all = useAppStore((s) => s.conversations);
   const showToast = useAppStore((s) => s.showToast);
   const patchConversation = useAppStore((s) => s.patchConversation);
   const deleteConversation = useAppStore((s) => s.deleteConversation);
+  const refreshConversations = useAppStore((s) => s.refreshConversations);
   // Hidden (AI↔AI DM) conversations must never surface here.
   const conversations = useMemo(() => all.filter((c) => !c.isHidden), [all]);
   const navigate = useNavigate();
   const totalUnread = conversations.reduce((n, c) => n + (c.isMuted ? 0 : c.unreadCount), 0);
+
+  /**
+   * 下拉刷新 (M-I8).
+   *
+   * The list is virtualized, so the element the gesture translates is the host
+   * around Virtuoso and the scroll position it consults is Virtuoso's own
+   * scroller — handed over through `scrollerRef`, because Virtuoso owns that
+   * node and there is no ref of ours on it.
+   */
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
+  const pull = usePullRefresh({
+    ref: listRef,
+    scroller: () => scrollerRef.current,
+    onRefresh: () => refreshConversations().catch(() => showToast('刷新失败')),
+  });
+  // First paint only: rows recycled by Virtuoso as you scroll must NOT replay
+  // the entrance (see lib/stagger.ts).
+  const stagger = useStagger();
 
   const [plusOpen, setPlusOpen] = useState(false);
   const [menu, setMenu] = useState<{ conv: ConversationVM; y: number } | null>(null);
@@ -81,26 +105,38 @@ export function ChatListPage() {
           </div>
         </div>
       )}
-      <div className="page-body chat-list">
-        <Virtuoso
-          data={conversations}
-          itemContent={(_i, conv) => (
-            <ConversationRow
-              conv={conv}
-              onOpen={() => navigate(`/chat/${conv.id}`)}
-              onLongPress={(y) => setMenu({ conv, y })}
-              onRead={() =>
-                act(() =>
-                  patchConversation(
-                    conv.id,
-                    conv.unreadCount > 0 ? { unreadCount: 0, mentionMe: false } : { unreadCount: 1 },
-                  ),
-                )
-              }
-              onDelete={() => confirmDelete(conv)}
-            />
-          )}
-        />
+      <div className="page-body chat-list pull-clip">
+        {/* The clip is the page body (which does not move); the host inside it
+            is what the gesture translates. Swapping those two is the classic
+            way to build a pull-to-refresh that never shows its indicator. */}
+        <div className="pull-host" ref={listRef} {...pull.handlers}>
+          <PullRefresh phase={pull.phase} progress={pull.progress} />
+          <Virtuoso
+            data={conversations}
+            scrollerRef={(el) => {
+              scrollerRef.current = el as HTMLElement | null;
+            }}
+            itemContent={(i, conv) => (
+              <ConversationRow
+                conv={conv}
+                stagger={stagger(i)}
+                onOpen={() => navigate(`/chat/${conv.id}`)}
+                onLongPress={(y) => setMenu({ conv, y })}
+                onRead={() =>
+                  act(() =>
+                    patchConversation(
+                      conv.id,
+                      conv.unreadCount > 0
+                        ? { unreadCount: 0, mentionMe: false }
+                        : { unreadCount: 1 },
+                    ),
+                  )
+                }
+                onDelete={() => confirmDelete(conv)}
+              />
+            )}
+          />
+        </div>
       </div>
       {menu && (
         <div className="chatlist-overlay" onClick={() => setMenu(null)}>
@@ -156,12 +192,15 @@ const TRAY_WIDTH = 150;
 
 function ConversationRow({
   conv,
+  stagger,
   onOpen,
   onLongPress,
   onRead,
   onDelete,
 }: {
   conv: ConversationVM;
+  /** First-paint entrance props, or undefined for a row arriving later (M-I8). */
+  stagger?: StaggerRowProps;
   onOpen: () => void;
   onLongPress: (y: number) => void;
   onRead: () => void;
@@ -191,7 +230,10 @@ function ConversationRow({
   const swipe = useSwipeRow(TRAY_WIDTH);
 
   return (
-    <div className="conv-swipe">
+    <div
+      className={`conv-swipe${stagger?.className ? ` ${stagger.className}` : ''}`}
+      style={stagger?.style}
+    >
       {/* The tray sits UNDER the row and is revealed by sliding it; rendering
           it above and animating width would reflow the row's text on every
           frame of the drag. */}
@@ -254,16 +296,17 @@ function ConversationRow({
     >
       <div className="conv-row__avatar">
         <Avatar color={conv.avatarColor} text={conv.avatarText} size={48} imageRef={peerRef} members={memberAvatars} />
-        {badge && (
-          // Keyed on the count so a changed number rolls in rather than
-          // swapping in place (M-H3).
-          <span
-            key={`n${conv.unreadCount}`}
-            className={`conv-row__badge badge-roll${dotOnly ? ' conv-row__badge--dot' : ''}`}
-          >
-            {dotOnly ? '' : conv.unreadCount > 99 ? '99+' : conv.unreadCount}
-          </span>
-        )}
+        {badge &&
+          (dotOnly ? (
+            <span className="conv-row__badge conv-row__badge--dot" />
+          ) : (
+            // M-I8: the OLD number leaves upward as the new one arrives from
+            // below. M-H3's `badge-roll` only animated the arriving value, so
+            // what you saw was 3 blinking into 4 — see RollingNumber.tsx.
+            <span className="conv-row__badge">
+              <RollingNumber value={conv.unreadCount > 99 ? '99+' : String(conv.unreadCount)} />
+            </span>
+          ))}
       </div>
       <div className="conv-row__main">
         <div className="conv-row__line1">

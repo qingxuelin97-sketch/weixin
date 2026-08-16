@@ -1,5 +1,6 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { IconChats, IconContacts, IconDiscover, IconMe } from '../components/icons';
+import { RollingNumber } from '../components/RollingNumber';
 import { useAppStore } from '../store/appStore';
 
 const TABS = [
@@ -42,8 +43,11 @@ export function TabScaffold() {
                 <Icon active={active} />
               </span>
               {showBadge && (
-                <span className="tabbar__badge badge-roll" key={`b${totalUnread}`}>
-                  {totalUnread > 99 ? '99+' : totalUnread}
+                // M-I8: the old count leaves upward while the new one arrives
+                // from below. M-H3's `badge-roll` only animated the ARRIVING
+                // value, so a changed number read as a blink, not a roll.
+                <span className="tabbar__badge">
+                  <RollingNumber value={totalUnread > 99 ? '99+' : String(totalUnread)} />
                 </span>
               )}
               <span className="tabbar__label">{label}</span>

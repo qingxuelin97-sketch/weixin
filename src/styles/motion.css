@@ -275,21 +275,12 @@
   }
 }
 
-/* An unread count that changed rolls to its new value instead of swapping.
-   Applied by key change, so it replays per number. */
-.badge-roll {
-  animation: badge-roll 260ms var(--ease-standard);
-}
-@keyframes badge-roll {
-  from {
-    transform: translateY(-60%) scale(0.7);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-  }
-}
+/* `.badge-roll` lived here from M-H3 until M-I8, when <RollingNumber/> replaced
+   it: it animated only the ARRIVING value, so a count changing from 3 to 4 read
+   as a blink rather than a roll. It is DELETED rather than kept "just in case",
+   because a rule with no consumers is indistinguishable from a shipped feature
+   when you are reading this file — which is exactly how `.stagger-in` and
+   `.skeleton` sat here dead for five milestones. See components/RollingNumber. */
 
 /* The send button appearing as the first character is typed. */
 .btn-morph-in {
@@ -306,16 +297,25 @@
   }
 }
 
-/* Tab switch: the selected icon gives a small nod. */
+/* Tab switch: the selected icon gives a small nod.
+   M-I8 recheck: the M-H3 curve overshot once and stopped, which reads as a
+   bump rather than as something with mass. A spring settles by crossing its
+   target more than once, so the icon now goes past, comes back UNDER, and
+   lands — three stops instead of two, which is the smallest change that makes
+   a bezier feel elastic. Still one CSS animation, still ends at scale(1), so
+   a golden captured with animations disabled is unchanged. */
 .tab-bounce {
-  animation: tab-bounce 320ms cubic-bezier(0.34, 1.5, 0.64, 1);
+  animation: tab-bounce 340ms cubic-bezier(0.34, 1.5, 0.64, 1);
 }
 @keyframes tab-bounce {
   0% {
     transform: scale(1);
   }
-  40% {
+  38% {
     transform: scale(1.18);
+  }
+  68% {
+    transform: scale(0.95);
   }
   100% {
     transform: scale(1);
@@ -323,9 +323,19 @@
 }
 
 /* A list that arrives instead of appearing. The delay is set inline per row
-   and capped by the caller — staggering 200 rows would take four seconds. */
+   and capped by the caller — staggering 200 rows would take four seconds.
+
+   FILL MODE IS `backwards`, NOT `both`, AND THAT IS LOAD-BEARING (M-I8).
+   `both` holds the final keyframe forever, which means the row keeps a
+   computed `transform: matrix(1,0,0,1,0,0)` for the rest of its life — and ANY
+   non-`none` transform makes the element a containing block for
+   `position: fixed` descendants. The symptom was spectacular and nowhere near
+   the cause: the full-screen image viewer, which lives inside a Moments card,
+   stopped being full-screen and rendered inside the card instead.
+   `backwards` gives the same visual (the row holds the FROM state through its
+   delay) and leaves nothing behind when the animation ends. */
 .stagger-in {
-  animation: stagger-in 260ms var(--ease-standard) both;
+  animation: stagger-in 260ms var(--ease-standard) backwards;
   animation-delay: var(--stagger-delay, 0ms);
 }
 @keyframes stagger-in {
@@ -373,7 +383,6 @@
   .toast,
   .page-stack__page,
   .like-burst,
-  .badge-roll,
   .btn-morph-in,
   .tab-bounce,
   .stagger-in,

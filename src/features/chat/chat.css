@@ -628,6 +628,23 @@
   width: 150px;
   height: 110px;
 }
+/* Loading shimmer behind a real photo (M-I8). The wrapper is inline-block so
+   the bubble keeps sizing to the picture, and the shimmer is absolute inside it
+   so it costs no layout of its own. */
+.msg-image-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+.msg-image-skeleton {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  /* A photo whose intrinsic size is not known yet gives the wrapper zero
+     height; this keeps the shimmer at the bubble's usual footprint. */
+  min-width: 150px;
+  min-height: 110px;
+}
 
 /* M-D3: 聊天信息页 member grid */
 .chatinfo-members {
@@ -1027,4 +1044,15 @@
 .emoji-panel-scroll {
   height: 100%;
   overflow-y: auto;
+}
+
+/* Accessibility (M-I8): the two animations in this file get their switch.
+   `voice-pulse` is an infinite loop on the hold-to-talk mic and `.msg-anchor-
+   flash` is the one-shot tint marking a row a search jump landed on — the
+   landing still happens with motion off, it just does not blink. */
+@media (prefers-reduced-motion: reduce) {
+  .voice-waves--playing i,
+  .msg-anchor-flash {
+    animation: none !important;
+  }
 }
