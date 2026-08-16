@@ -11,6 +11,26 @@
 > `scripts/device-native-asserts.sh`（单一 shell，`sh -n` 可校验）。
 > 结论：I10 的**编译与冷启动**已被 CI 证明；悬浮窗 / RemoteInput / 来电全屏 / 小组件的
 > **行为**断言，从这次修复起才第一次真正开始跑。
+>
+> **第二次实测（同轮，断言真跑起来之后）**：9 项里 7 项 PASS（RemoteInput 回环、
+> 悬浮气泡、小组件全部真的通了），2 项通知频道 FAIL。第一反应是 `dumpsys` 脱敏，加了
+> `--noredact` 仍红——**猜错了**。把 evidence 工件拉下来读，`dumpsys` 里写着
+> `AppSettings: com.personal.weixinai importance=NONE`，且**零个 `aiwx_` 频道**：
+> POST_NOTIFICATIONS 自 Android 13 起是运行时权限、**默认拒绝**，无头模拟器上没人点
+> 「允许」，于是 `Notifier.canPost()` 为 false，两个 notify 入口在第一行就 return——
+> 而 `ensureChannels()` 恰恰写在那道闸**之后**。
+>
+> 这暴露了一个**真机上也成立的 App 缺陷**（不只是测试环境问题）：用户授权之前，
+> 「设置 → 应用 → 通知」里只有 Capacitor 的 `default` 频道，**没有**消息 / 来电两个
+> 分类可调——建频道本来就不需要任何权限，它却被锁在权限后面。已把
+> `Notifier.ensureChannels(this)` 提到 `MainActivity.onCreate`，启动即注册、幂等。
+>
+> 同时发现 `notify-record-posted` 是个**假绿**：它在整份 dump 里 grep 包名，而
+> `dumpsys` 会为**每个已安装应用**打一行 `AppSettings: <pkg>`——所以这条断言无论有没有
+> 发出通知都会 PASS，那一轮它正是在「通知列表里只有一条、且属于 `pkg=android`」的情况下
+> 报的绿。阻塞门禁里的假绿比它旁边两条诚实的红更危险。现在 posted-ness 只从
+> `Notification List` 段读（`posted_record` / `posted_on_channel`），频道「注册了」与
+> 「真的发在上面」拆成两条断言——它们是两种不同的故障。
 
 五个各自独立可弃的特性：android/ 入库、消息悬浮气泡、通知 RemoteInput 直接回复、
 来电全屏通知、电池白名单向导、桌面小组件。入库与再生成策略见 `docs/android-regen.md`。

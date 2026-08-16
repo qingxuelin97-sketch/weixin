@@ -16,6 +16,36 @@ set -eu
 NA=native-asserts.txt
 : > "$NA"
 RECV=com.personal.weixinai/.aiwx.SelfTestReceiver
+PKG=com.personal.weixinai
+
+# POST_NOTIFICATIONS is a RUNTIME permission since Android 13 and is DENIED
+# until the user taps 允许. Nobody taps anything on a headless emulator, so
+# Notifier.canPost() was false and every notify path returned early — the run
+# that first executed these assertions was measuring a blocked app, not a
+# broken feature. Granting it here is exactly what the user does on a real
+# phone; the permission FLOW itself is on the 真机验收清单 (an emulator cannot
+# exercise a system dialog).
+adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
+
+# `dumpsys notification` prints, for EVERY installed package, an
+# `AppSettings: <pkg>` line plus its channel list. So grepping the whole dump
+# for our package name matches whether or not we ever posted anything — the
+# old notify-record-posted did exactly that and reported PASS on a run where
+# the Notification List held one record and it belonged to `pkg=android`.
+# A false green in a blocking gate is worse than the two honest reds it sat
+# next to, so posted-ness is now read ONLY from the Notification List section.
+posted_record() {
+  sed -n '/^  Notification List:/,/^  [A-Za-z]/p' "$1" | grep -q "pkg=$PKG"
+}
+
+# Posted records print their channel inline: `… Notification(channel=<id> …)`.
+# Reading the channel off a LIVE record is what keeps these honest now that
+# MainActivity registers both channels at launch — a bare `grep aiwx_calls`
+# over the whole dump would match the registration and pass without anything
+# ever having been posted, which is the trap that produced the false green.
+posted_on_channel() {
+  sed -n '/^  Notification List:/,/^  [A-Za-z]/p' "$1" | grep -q "channel=$2"
+}
 
 # ck <name> <severity-on-fail> <cmd…> — `if "$@"` 把探测放在受检上下文里，
 # 这样 `set -e` 不会因为一次预期内的失败就中止整个脚本。
@@ -33,16 +63,17 @@ ck() {
 # (1) 消息通知（带内联回复）：真的发出来了吗？
 adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.NOTIFY || true
 sleep 3
-# `dumpsys notification` REDACTS fields on newer images — the record shows up
-# but its channel id does not, which is why the two channel assertions failed
-# on the first run that ever executed them while the feature itself was fine
-# (notify-record-posted passed, and the ids in Notifier.kt are exactly these).
-# --noredact prints the full record; append the plain dump too so the evidence
-# file is still useful if the flag is unsupported.
+# --noredact prints the full record (some images redact notification content).
+# The plain dump is appended too, so the evidence file stays useful when the
+# flag is unsupported.
 adb shell dumpsys notification --noredact > notif-dump.txt 2>/dev/null || true
 adb shell dumpsys notification >> notif-dump.txt || true
-ck notify-record-posted FAIL grep -q 'com.personal.weixinai' notif-dump.txt
+ck notify-record-posted FAIL posted_record notif-dump.txt
+# Split deliberately: 「频道注册了吗」 and 「真的发在那个频道上吗」 are different
+# failures (missing channel vs. blocked app), and reading them apart is what
+# turned this run from a guess into a diagnosis.
 ck notify-channel-messages FAIL grep -q 'aiwx_messages' notif-dump.txt
+ck notify-posted-on-messages FAIL posted_on_channel notif-dump.txt aiwx_messages
 # dumpsys 常把 action 标题脱敏，这项只作参考。
 ck notify-remoteinput-visible WARN grep -qi 'remoteinput\|remote_input' notif-dump.txt
 
@@ -60,7 +91,8 @@ adb shell am broadcast -n "$RECV" -a com.personal.weixinai.selftest.CALL || true
 sleep 3
 adb shell dumpsys notification --noredact > notif-dump2.txt 2>/dev/null || true
 adb shell dumpsys notification >> notif-dump2.txt || true
-ck call-channel-posted FAIL grep -q 'aiwx_calls' notif-dump2.txt
+ck call-channel-registered FAIL grep -q 'aiwx_calls' notif-dump2.txt
+ck call-channel-posted FAIL posted_on_channel notif-dump2.txt aiwx_calls
 
 # (4) 悬浮气泡：像用户在设置里那样授予 appop，再要一个气泡，看窗口列表。
 adb shell appops set com.personal.weixinai SYSTEM_ALERT_WINDOW allow || true
