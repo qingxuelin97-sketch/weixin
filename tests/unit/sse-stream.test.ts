@@ -2,13 +2,15 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { OpenAiCompatibleProvider } from '../../src/llm/openai-compatible';
-import type { Bubble } from '../../src/llm/types';
+import { type Bubble, type LlmError } from '../../src/llm/types';
 
 /**
  * Web-only SSE streaming (M-I5).
  *
  * The contract under test: whole bubbles only (never half a sentence),
- * <think> spans dropped in-stream, errors throw ONLY before the first yield,
+ * <think> spans dropped in-stream, a pre-first-bubble failure throws its own
+ * kind (so the router can ladder) while a post-output break is reported as
+ * `truncated` (the bubbles stand, the turn is closed in character upstream),
  * and the native transport path never grows a stream reader.
  */
 
@@ -90,11 +92,8 @@ describe('generateStream', () => {
     expect(out[0].content).toBe('最后一句没换行');
   });
 
-  it('throws before the first bubble (router falls back), never after', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
-    await expect(collect(provider().generateStream({ model: 'm', messages: [] }))).rejects.toThrow();
-
-    // Mid-stream failure AFTER output: partial stands, no throw.
+  /** Yields one bubble, then the connection dies on the next read. */
+  function brokenAfterFirst(): Response {
     const encoder = new TextEncoder();
     // pull-based: first read delivers a bubble, the next read errors — with
     // start()+error() the queued chunk would be DISCARDED and nothing yields.
@@ -106,7 +105,85 @@ describe('generateStream', () => {
         else controller.error(new Error('conn reset'));
       },
     });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(broken, { status: 200 })));
+    return new Response(broken, { status: 200 });
+  }
+
+  it('throws its own kind before the first bubble, so the router can ladder', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+    await expect(collect(provider().generateStream({ model: 'm', messages: [] }))).rejects.toThrow();
+  });
+
+  it('a break AFTER output keeps the bubbles and reports truncation (M-I5)', async () => {
+    // Swallowing this is what left a reply hanging in mid-air: the shown
+    // bubbles are right, but the caller has to KNOW the turn never finished.
+    vi.stubGlobal('fetch', vi.fn(async () => brokenAfterFirst()));
+    const out: Bubble[] = [];
+    let thrown: unknown;
+    try {
+      for await (const b of provider().generateStream({ model: 'm', messages: [] })) out.push(b);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(out).toHaveLength(1); // what landed, stands
+    expect(out[0].content).toBe('第一条');
+    expect((thrown as LlmError).kind).toBe('truncated');
+  });
+
+  it('a user abort is NOT truncation — nobody tacks "先不说了" onto an interrupted turn', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => brokenAfterFirst()));
+    const ctrl = new AbortController();
+    const out: Bubble[] = [];
+    let thrown: unknown;
+    try {
+      for await (const b of provider().generateStream({
+        model: 'm',
+        messages: [],
+        signal: ctrl.signal,
+      })) {
+        out.push(b);
+        ctrl.abort(); // a new send lands while she is mid-turn
+      }
+    } catch (e) {
+      thrown = e;
+    }
+    expect(out).toHaveLength(1);
+    expect(thrown).toBeUndefined();
+  });
+
+  it('an abnormal finish_reason counts as truncation even on a clean close', async () => {
+    // max_tokens cut her off: the socket closed politely, the sentence did not.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sseResponse([
+          frame('说到一半\n'),
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] })}\n`,
+          'data: [DONE]\n',
+        ]),
+      ),
+    );
+    const out: Bubble[] = [];
+    let thrown: unknown;
+    try {
+      for await (const b of provider().generateStream({ model: 'm', messages: [] })) out.push(b);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(out).toHaveLength(1);
+    expect((thrown as LlmError).kind).toBe('truncated');
+  });
+
+  it('a normal finish_reason=stop stream ends without a truncation marker', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        sseResponse([
+          frame('说完了\n'),
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n`,
+          'data: [DONE]\n',
+        ]),
+      ),
+    );
     const out = await collect(provider().generateStream({ model: 'm', messages: [] }));
     expect(out).toHaveLength(1);
   });

@@ -103,8 +103,11 @@ export interface ChatProvider {
    * Web-only true SSE (M-I5), optional. `canStream()` gates it per platform —
    * native buffers whole responses, so on a device the one-shot path is the
    * correct transport, not a degraded one. Contract: yields whole bubbles;
-   * throws ONLY before the first yield (the router then falls back to the
-   * one-shot ladder); a later break ends the stream quietly.
+   * a failure BEFORE the first yield throws its own normalized kind (the router
+   * then falls back to the one-shot ladder); a break AFTER output throws
+   * `LlmError('truncated')` — the yielded bubbles stand (they are on screen and
+   * cannot be un-shown), and the router turns that marker into the persona's
+   * cut-off line instead of letting the turn end in mid-air.
    */
   canStream?(): boolean;
   generateStream?(opts: GenerateOptions): AsyncIterable<Bubble>;
@@ -118,6 +121,11 @@ export type LlmErrorKind =
   | 'content_filter' // provider refused on policy grounds
   | 'bad_response' // unparseable / schema mismatch after repair
   | 'bad_model' // model id no longer in the provider's catalog (Zen rotates weekly)
+  // A STREAM that broke after it had already put bubbles on screen (M-I5). Not
+  // a failure to answer — a failure to finish answering, which is why it never
+  // reaches the degradation ladder: what was said cannot be unsaid, so the
+  // router appends the persona's cut-off line and ends the turn.
+  | 'truncated'
   | 'server' // 5xx
   | 'unknown';
 

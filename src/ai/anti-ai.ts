@@ -87,30 +87,58 @@ export interface ScrubBubble {
 }
 
 /**
+ * The same decision, one bubble at a time (M-I5 渐进上屏).
+ *
+ * Progressive playback cannot hand the scrub a finished array — the third
+ * bubble may still be on the wire when the first one is due on screen. This is
+ * the stateful form: feed it bubbles in playback order and it answers keep/drop
+ * with exactly the decisions `scrubBubbles` would have made, because arrival
+ * order IS playback order and every rule here only looks backwards.
+ *
+ * The one rule it cannot answer alone is "never empty" — that needs to know
+ * there is no fourth bubble coming. The caller owns it (see `playbackFeed`'s
+ * `keepLast`), and `scrubBubbles` below still applies it itself.
+ */
+export function makeScrubber<T extends ScrubBubble>(previous: OwnLine[]) {
+  const seenThisTurn: string[] = [];
+  let kept = 0;
+  return {
+    accept(b: T): boolean {
+      const text = b.content ?? '';
+      if (b.type !== 'text' && b.type !== 'voice') {
+        kept++;
+        return true;
+      }
+      if (isAssistantSpeak(text)) return false;
+      // Compare against her history AND against what she already said in this
+      // same turn — two bubbles saying one thing twice is the commonest form.
+      if (isRepeat(text, [...previous, ...seenThisTurn])) return false;
+      seenThisTurn.push(text);
+      kept++;
+      return true;
+    },
+    /** How many survived so far. */
+    get kept(): number {
+      return kept;
+    },
+  };
+}
+
+/**
  * Drop what should never reach the screen: her own repeats and assistant-speak.
  *
  * NEVER returns empty when it was given something. Silence is a worse failure
  * than a repeated line: a message that does not arrive reads as the app being
  * broken, while a slightly repetitive one only reads as her being repetitive.
  * When everything is dropped, the last bubble survives — it is the freshest.
+ *
+ * Implemented on top of `makeScrubber` so the batch form and the progressive
+ * form cannot drift apart into two different definitions of "repeat".
  */
 export function scrubBubbles<T extends ScrubBubble>(bubbles: T[], previous: OwnLine[]): T[] {
   if (bubbles.length === 0) return bubbles;
-  const kept: T[] = [];
-  const seenThisTurn: string[] = [];
-  for (const b of bubbles) {
-    const text = b.content ?? '';
-    if (b.type !== 'text' && b.type !== 'voice') {
-      kept.push(b);
-      continue;
-    }
-    if (isAssistantSpeak(text)) continue;
-    // Compare against her history AND against what she already said in this
-    // same turn — two bubbles saying one thing twice is the commonest form.
-    if (isRepeat(text, [...previous, ...seenThisTurn])) continue;
-    seenThisTurn.push(text);
-    kept.push(b);
-  }
+  const scrubber = makeScrubber<T>(previous);
+  const kept = bubbles.filter((b) => scrubber.accept(b));
   return kept.length > 0 ? kept : [bubbles[bubbles.length - 1]];
 }
 

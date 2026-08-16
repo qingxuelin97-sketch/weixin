@@ -40,7 +40,8 @@ import {
   socialDirective,
   topicKey,
 } from './group-topic';
-import { ownLines, styleNote, scrubBubbles } from './anti-ai';
+import { ownLines, styleNote, makeScrubber } from './anti-ai';
+import { playbackFeed, type BubbleFeed } from './bubble-feed';
 import { maxTier } from '../lib/nsfw-tier';
 import { playMessageSound } from '../lib/sound';
 import { moodOf } from '../lib/mood';
@@ -65,12 +66,6 @@ const MAX_CONCURRENT_ACTORS = 3;
 
 /** Per-conversation in-flight controller: a new user message cancels the round. */
 const inFlight = new Map<string, AbortController>();
-
-interface ActorOutput {
-  plan: SpeakerPlan;
-  member: GroupMember;
-  bubbles: Bubble[];
-}
 
 /**
  * Handle a user message sent into a group: persist it, decide the cast, generate
@@ -190,9 +185,20 @@ export async function sendGroupMessage(
     );
     // Per-group knobs (M-I1): read ONCE for the round, same reason as above.
     const cfgLine = await groupCfgDirective(convId);
-    const outputs = await Promise.all(
-      cast.slice(0, MAX_CONCURRENT_ACTORS).map(async ({ plan, member }): Promise<ActorOutput> => {
-        const bubbles = await generateActorLines(
+    // Playback order is decided BEFORE anyone writes, so the room can start
+    // speaking while the later actors are still generating (M-I5 渐进上屏).
+    // The concurrency that makes a group round fast is unchanged — every actor
+    // is still started in the same tick; only the drain moved downstream.
+    const ordered = cast
+      .slice(0, MAX_CONCURRENT_ACTORS)
+      .sort((a, b) => a.plan.priority - b.plan.priority)
+      .map(({ plan, member }) => ({
+        plan,
+        member,
+        // Rejections are caught HERE, at creation: these promises sit unawaited
+        // while earlier actors play, and an unhandled rejection in that window
+        // takes the process down instead of making one member quiet.
+        feed: startActorLines(
           conv,
           member,
           plan,
@@ -206,16 +212,11 @@ export async function sendGroupMessage(
           convStateLine,
           '',
           cfgLine,
-        );
-        return { plan, member, bubbles };
-      }),
-    );
-    if (ctrl.signal.aborted) return;
-
-    // 3) Play back in the director's order, with human pacing.
-    const ordered = outputs
-      .filter((o) => o.bubbles.length > 0)
-      .sort((a, b) => a.plan.priority - b.plan.priority);
+        ).catch((e) => {
+          logError('group.actor', e);
+          return null; // a quiet member beats an error in the room
+        }),
+      }));
 
     // For `contact` bubbles (M-I13): the full contact list, read once per
     // round, feeds the same name→card resolver the single chat uses.
@@ -223,20 +224,29 @@ export async function sendGroupMessage(
 
     let firstPlayed = false;
     for (let i = 0; i < ordered.length; i++) {
-      const { member, bubbles } = ordered[i];
+      const { member, plan } = ordered[i];
       const persona = member.persona!;
-      const played = bubbles.slice(0, MAX_BUBBLES_PER_ACTOR);
-      for (let bi = 0; bi < played.length; bi++) {
-        const b = played[bi];
-        // The slowest actor's real latency already elapsed inside Promise.all —
-        // the very first played bubble only pays the remainder of its typing
-        // delay (总等待 = max(真, 拟) 而非相加); the rest pace normally.
+      const feed = await ordered[i].feed;
+      if (ctrl.signal.aborted) return;
+      if (!feed) continue;
+      let spoke = 0;
+      for (let bi = 0; bi < MAX_BUBBLES_PER_ACTOR; bi++) {
+        // A break mid-actor keeps what landed and moves on: in a room, someone
+        // stopping after one line is normal, and nothing here may surface an error.
+        const b = await feed.next().catch(() => null);
+        if (b === null) break;
+        // The slowest actor's real latency already elapsed while they generated
+        // in parallel — the very first played bubble only pays the remainder of
+        // its typing delay (总等待 = max(真, 拟) 而非相加); the rest pace normally.
         const full = Math.min(typingDelay(b, persona.typingCpm), 6000);
         const delay = firstPlayed ? full : Math.max(250, full - (hooks.now() - tGenStart));
         firstPlayed = true;
         await sleep(delay, ctrl.signal);
         if (ctrl.signal.aborted) return;
-        if (i === ordered.length - 1) hooks.setTyping(convId, false);
+        spoke++;
+        // Typing goes down when the round is over: the last cast member, with
+        // nothing left buffered and their stream exhausted.
+        if (i === ordered.length - 1 && feed.finished) hooks.setTyping(convId, false);
         // M-I13 rich types go through the SAME materializer as the single
         // chat. `at` is read once so a game's seed and its stored createdAt
         // are the same number (rule #4: the throw replays identically).
@@ -275,7 +285,8 @@ export async function sendGroupMessage(
       }
       // Relationship bookkeeping: speaking in the user's round is a light bond;
       // a staged disagreement cools the actor→target edge (both fire-and-forget).
-      const { plan } = ordered[i];
+      // Only for members who actually spoke — a silent actor bonds with nobody.
+      if (spoke === 0) continue;
       void recordRelEvent('self', member.contactId, 'group_chat', hooks.now(), persona.affinityInit).catch(() => {});
       if (plan.intent === 'disagree' && plan.target && plan.target !== 'user' && byId.has(plan.target)) {
         // One-way (M-E4): the needled cools toward the needler, not both ways.
@@ -290,8 +301,39 @@ export async function sendGroupMessage(
   }
 }
 
-/** Generate one actor's lines. Returns [] on failure — a quiet member beats an error. */
+/**
+ * Generate one actor's lines, drained into an array. Returns [] on failure —
+ * a quiet member beats an error in the room.
+ *
+ * The ambient path (`sendGroupProactiveMessage`) plays exactly one line and has
+ * nothing to overlap, so it takes the whole set. The user-facing round takes the
+ * feed instead and plays as the lines arrive — see `startActorLines`.
+ */
 async function generateActorLines(
+  ...args: Parameters<typeof startActorLines>
+): Promise<Bubble[]> {
+  const out: Bubble[] = [];
+  try {
+    const feed = await startActorLines(...args);
+    for (;;) {
+      const b = await feed.next();
+      if (b === null) break;
+      out.push(b);
+    }
+  } catch {
+    // Whatever landed before the break stands; the rest is silence.
+  }
+  return out;
+}
+
+/**
+ * Build this actor's prompt and hand back a live feed of their bubbles.
+ *
+ * The scrub (her own repeats, assistant-speak) runs inside the feed, on whole
+ * bubbles in playback order — same decisions the batch `scrubBubbles` made,
+ * including its never-empty rule, which is what `keepLast` restores.
+ */
+async function startActorLines(
   conv: ConversationVM,
   member: GroupMember,
   plan: SpeakerPlan,
@@ -319,7 +361,7 @@ async function generateActorLines(
   pacingLine = '',
   /** This room's knob-derived tone/topics line (M-I1), computed once per round. */
   cfgLine = '',
-): Promise<Bubble[]> {
+): Promise<BubbleFeed> {
   const persona = member.persona as PersonaVM;
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
   const facts = await repo.getMemory(member.contactId);
@@ -434,25 +476,23 @@ async function generateActorLines(
     }),
   ];
 
-  try {
-    const router = await getRouter();
-    const out: Bubble[] = [];
-    for await (const b of router.generate(
+  const router = await getRouter();
+  // Same scrub as the single chat: her own repeats and any assistant-speak that
+  // got past the rules, judged one whole bubble at a time as they arrive.
+  //
+  // No `personaTruncation` in the router context here, deliberately: a member
+  // whose stream dies after one line has simply stopped talking, and a room
+  // where three people each tack on "先不说了" is worse than a short line.
+  const scrubber = makeScrubber<Bubble>(ownRecent);
+  return playbackFeed(
+    router.generate(
       { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
       { messages, signal, temperature: persona.temperature, ...(images.length ? { images } : {}) },
       {},
       `${conv.id}:${member.contactId}`,
-    )) {
-      out.push(b);
-    }
-    // Same scrub as the single chat: her own repeats and any assistant-speak
-    // that got past the rules. Unlike the single chat, an emptied result is
-    // fine here — one member staying quiet is a normal thing in a group, so
-    // `scrubBubbles` is only asked to keep the turn non-empty, not to speak.
-    return scrubBubbles(out, ownRecent);
-  } catch {
-    return []; // stay silent rather than surface an error into the group
-  }
+    ),
+    { signal, keepLast: true, accept: (b) => scrubber.accept(b) },
+  );
 }
 
 function intentLabel(intent: SpeakerPlan['intent']): string {
