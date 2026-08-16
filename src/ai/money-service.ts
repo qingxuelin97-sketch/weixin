@@ -273,7 +273,32 @@ export async function sendTransfer(
     payload: { transferId: id, convId },
     now,
   });
+  await enqueueTransferReturn(t, now);
   return t;
+}
+
+/** WeChat returns an uncollected transfer after 24 hours. So does this one. */
+export const TRANSFER_EXPIRE_MS = 24 * 3_600_000;
+
+/**
+ * Queue the 24h auto-return for a transfer that was just sent.
+ *
+ * Queued for BOTH directions. The user→AI direction normally settles in
+ * seconds via `transfer_accept`, and then this row finds a non-pending transfer
+ * and does nothing — but if that accept ever fails (the executor marks a row
+ * done BEFORE running it and never retries), the money left the wallet at send
+ * time and nothing would ever put it back. This is that floor.
+ *
+ * Stable id so a re-send of the same transfer id cannot stack two returns.
+ */
+async function enqueueTransferReturn(t: TransferVM, now: number): Promise<void> {
+  await enqueue({
+    kind: 'transfer_return',
+    fireAt: now + TRANSFER_EXPIRE_MS,
+    payload: { transferId: t.id, convId: t.convId, at: now + TRANSFER_EXPIRE_MS },
+    now,
+    id: `tr_return_${t.id}`,
+  });
 }
 
 /**
@@ -316,6 +341,10 @@ export async function sendTransferFrom(
     status: 'sent',
     createdAt: now,
   });
+  // …but it does not sit there forever. 24h uncollected → back to her, which is
+  // both WeChat's real behaviour and the case the user actually hits: she sends
+  // you money, you never tap 收款, and a permanently pending card is a lie.
+  await enqueueTransferReturn(t, now);
   return t;
 }
 
@@ -349,4 +378,69 @@ export async function acceptTransfer(transferId: string, hooks: MoneyHooks): Pro
       },
     });
   }
+}
+
+/**
+ * 24 小时未收款自动退还.
+ *
+ * `'returned'` was a status the schema, the VM and the transcript projection
+ * all knew about and NOTHING could ever produce — the one branch in render-msg
+ * even compared against `'refunded'`, a string this codebase never writes. So
+ * an uncollected transfer stayed 「请收款」 forever, the sender's money stayed
+ * debited forever, and she had no way to know you never took it.
+ *
+ * Idempotent by construction: anything but `pending` returns immediately, so
+ * the queued row is harmless once the transfer has been accepted (or returned
+ * by an earlier duplicate row).
+ *
+ * @param at the row's `fireAt` — the moment this "happened", per the backfill
+ *           rule that a queued action's timestamp is its fire time, not the
+ *           moment the app happened to be reopened.
+ */
+export async function returnTransfer(
+  transferId: string,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<void> {
+  const t = await repo.getTransfer(transferId);
+  if (!t || t.status !== 'pending') return;
+
+  const msgs = await repo.getMessages(t.convId, { limit: 200 });
+  // rowid 序 == 时间序 (CLAUDE.md): this row is inserted NOW, so its timestamp
+  // must never predate the newest one already in the thread — a backfilled
+  // return can be days behind a conversation that kept going.
+  const lastAt = msgs.at(-1)?.createdAt ?? 0;
+  const now = Math.max(at ?? hooks.now(), lastAt);
+
+  await repo.putTransfer({ ...t, status: 'returned' });
+
+  // The money goes back where it came from. Only the user has a real wallet:
+  // an agent's balance is fiction (see sendRedPacketFrom), so her returned
+  // transfer moves no ledger row — it was never debited from one.
+  if (t.fromId === 'self') {
+    await recordWalletTx('transfer_in', t.amountFen, '转账已退还', `${t.id}_ret`, now);
+  }
+
+  const target = msgs.find((m) => m.type === 'transfer' && m.meta?.transferId === t.id);
+  if (target) {
+    await hooks.updateMessage({
+      ...target,
+      meta: { ...target.meta, status: 'returned', statusText: '已退还' },
+    });
+  }
+
+  // The system line is what makes it legible in the thread — and, through
+  // render-msg, what lets HER know the money came back untouched.
+  const mine = t.fromId === 'self';
+  const who = mine ? '' : await peerName(t.fromId);
+  await hooks.appendMessage({
+    convId: t.convId,
+    senderId: 'self',
+    type: 'system',
+    content: mine
+      ? '你的转账超过 24 小时未被接收，已退还'
+      : `${who}的转账超过 24 小时未被接收，已退还`,
+    status: 'sent',
+    createdAt: now,
+  });
 }

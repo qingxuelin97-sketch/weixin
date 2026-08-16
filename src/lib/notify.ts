@@ -40,6 +40,21 @@ export interface ScheduledNotification {
   body: string;
   fireAt: number;
   kind: NotifyKind;
+  /**
+   * Where tapping it should land, as an `aiwx://` URI (M-I18).
+   *
+   * Pre-scheduled notifications used to carry no destination at all, so a
+   * moments like/comment notification dropped the user wherever the app
+   * happened to be — with the momentId known at schedule time and thrown away
+   * one function earlier. The LIVE notifications (background-notify →
+   * `notifyMessage`) always had one, built Kotlin-side; this is the same
+   * capability for the scheduled half.
+   *
+   * It travels as `extra.route` and is re-parsed through the SAME allowlist
+   * (`parseDeepLink`) on the way back in — a notification payload is no more
+   * trusted than any other intent.
+   */
+  route?: string;
 }
 
 /** WeChat's own no-preview line, used when the body can't be trusted to age well. */
@@ -61,11 +76,19 @@ export function displayBody(n: Pick<ScheduledNotification, 'kind' | 'body'>): st
   return canPregenerateBody(n.kind) ? n.body : NO_PREVIEW_BODY;
 }
 
+interface NotificationActionEvent {
+  notification?: { extra?: { route?: unknown } | null };
+}
+
 interface LocalNotificationsPlugin {
   requestPermissions(): Promise<{ display: string }>;
   schedule(opts: { notifications: unknown[] }): Promise<unknown>;
   cancel(opts: { notifications: Array<{ id: number }> }): Promise<void>;
   getPending(): Promise<{ notifications: Array<{ id: number }> }>;
+  addListener(
+    event: 'localNotificationActionPerformed',
+    fn: (ev: NotificationActionEvent) => void,
+  ): Promise<{ remove: () => Promise<void> }>;
 }
 
 /**
@@ -88,9 +111,36 @@ async function nativePlugin(): Promise<LocalNotificationsPlugin | null> {
       schedule: (opts) => proxy.schedule(opts),
       cancel: (opts) => proxy.cancel(opts),
       getPending: () => proxy.getPending(),
+      addListener: (event, fn) => proxy.addListener(event, fn),
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Subscribe to notification taps, handing back the `route` the notification
+ * was scheduled with (M-I18). Returns an unsubscribe; a no-op on web, where
+ * nothing was scheduled in the first place.
+ *
+ * The callback receives the RAW string. Validation is deliberately not done
+ * here — every native re-entry point goes through the one allowlist in
+ * native/deep-link.ts, and a second, more lenient check next to the plugin is
+ * exactly how an allowlist stops being one.
+ */
+export async function onNotificationTap(
+  fn: (route: string) => void,
+): Promise<() => void> {
+  const plugin = await nativePlugin();
+  if (!plugin) return () => {};
+  try {
+    const handle = await plugin.addListener('localNotificationActionPerformed', (ev) => {
+      const route = ev?.notification?.extra?.route;
+      if (typeof route === 'string' && route) fn(route);
+    });
+    return () => void handle.remove();
+  } catch {
+    return () => {};
   }
 }
 
@@ -144,6 +194,9 @@ export async function scheduleNotifications(
           // A past `at` fires immediately on Android; keep it rather than
           // dropping the item, so a due notification is never silently lost.
           schedule: { at: new Date(Math.max(n.fireAt, now)), allowWhileIdle: true },
+          // Read back on tap (`localNotificationActionPerformed`) and pushed
+          // through parseDeepLink's allowlist before anything navigates.
+          ...(n.route ? { extra: { route: n.route } } : {}),
         })),
       });
       return due.length + future.length;

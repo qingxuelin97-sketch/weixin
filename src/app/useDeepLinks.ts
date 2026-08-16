@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { parseDeepLink } from '../native/deep-link';
+import { onNotificationTap } from '../lib/notify';
 
 export function useDeepLinks(): void {
   const navigate = useNavigate();
@@ -51,9 +52,22 @@ export function useDeepLinks(): void {
         /* no launch url — normal start */
       });
 
+    // A PRE-SCHEDULED notification (lib/notify.ts) is delivered by
+    // LocalNotifications, not as a VIEW intent, so its tap never reaches
+    // appUrlOpen. Without this listener those notifications had no destination
+    // at all — the 朋友圈 like/comment ones landed the user wherever the app
+    // last was, holding a momentId that had been discarded at schedule time.
+    // Same `open()`, so the same allowlist and the same dedupe apply.
+    let removeTapListener: (() => void) | undefined;
+    void onNotificationTap((route) => open(route)).then((off) => {
+      if (disposed) off();
+      else removeTapListener = off;
+    });
+
     return () => {
       disposed = true;
       removeListener?.();
+      removeTapListener?.();
     };
   }, [navigate]);
 }

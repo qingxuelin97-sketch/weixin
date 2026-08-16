@@ -12,12 +12,16 @@ import {
   handleMomentPost,
   handleMomentComment,
   handleMomentRepost,
+  handleStickerReply,
+  handleTransferReturn,
   dmPlanFrom,
   type HandlerDeps,
 } from '../../src/ai/handlers';
 import { makePersona } from '../../src/data/persona-defaults';
 import type { ContactVM, ConversationVM, MessageVM, MomentVM } from '../../src/data/types';
 import type { ScheduledAction } from '../../src/ai/scheduler';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /**
  * The handlers, finally testable (M-E1).
@@ -105,6 +109,7 @@ function harness(over: Partial<HandlerDeps> = {}): Harness {
 
     claimRedPacket: async (rpId, contactId) => void calls.push(`claim:${rpId}:${contactId}`),
     acceptTransfer: async (id) => void calls.push(`accept:${id}`),
+    returnTransfer: async (id, _h, at) => void calls.push(`return:${id}:${at ?? '-'}`),
     sendProactiveMessage: async (convId, peer, _p, _t, _h, at, opts) =>
       void calls.push(`proactive:${convId}:${peer.id}:${at ?? '-'}:${opts?.nudge ? 'nudge' : 'plain'}`),
     sendGroupProactiveMessage: async (c, speaker, members) =>
@@ -168,6 +173,8 @@ describe('malformed payloads are inert, never fatal', () => {
     await handleAgentDm(deps, {});
     await handleMomentPost(deps, {});
     await handleMomentComment(deps, {});
+    await handleStickerReply(deps, {});
+    await handleTransferReturn(deps, {});
     expect(calls).toEqual([]);
     expect(appended).toEqual([]);
   });
@@ -388,5 +395,77 @@ describe('money handlers use the display name the user actually sees', () => {
     const { deps } = harness({ contactById: () => undefined, claimRedPacket: claim });
     await handleRpGrab(deps, { rpId: 'rp1', contactId: 'ai_x' });
     expect(claim).toHaveBeenCalledWith('rp1', 'ai_x', 'ai_x', deps.hooks);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * 斗图 (M-I18): the sticker comeback moved off a bare `setTimeout` onto the
+ * queue.
+ *
+ * The old code appended the reply from a timer inside ChatPage — a second
+ * time-evolution path (铁律 5) producing a REAL message, so backing out of the
+ * chat inside the 0.8–2.5s window silently ate the round while `stickerStreak`
+ * had already counted it. The decision is still made and seeded at send time;
+ * only the delivery moved, which is why this handler needs no rng, no persona
+ * and no LLM call.
+ */
+describe('sticker_reply delivers the seeded comeback', () => {
+  it('appends her sticker at the row fire time and chimes', async () => {
+    const { deps, appended, sounds } = harness();
+    await handleStickerReply(deps, {
+      convId: 'conv_lin',
+      contactId: 'ai_lin',
+      content: '捂脸',
+      at: T0 + 1_500,
+    });
+    expect(appended).toEqual([
+      {
+        convId: 'conv_lin',
+        senderId: 'ai_lin',
+        type: 'sticker',
+        content: '捂脸',
+        status: 'sent',
+        createdAt: T0 + 1_500,
+      },
+    ]);
+    expect(sounds).toEqual([T0 + 1_500]);
+  });
+
+  it('a custom sticker ref rides through untouched', async () => {
+    const { deps, appended } = harness();
+    await handleStickerReply(deps, {
+      convId: 'conv_lin',
+      contactId: 'ai_lin',
+      content: 'idb:abc',
+      at: T0,
+    });
+    expect(appended[0].content).toBe('idb:abc');
+  });
+
+  it('a conversation deleted inside the window drops the reply', async () => {
+    // The timer version wrote into a thread that no longer existed.
+    const { deps, appended } = harness({ conversationExists: () => false });
+    await handleStickerReply(deps, {
+      convId: 'conv_lin',
+      contactId: 'ai_lin',
+      content: '捂脸',
+      at: T0,
+    });
+    expect(appended).toEqual([]);
+  });
+});
+
+describe('斗图 no longer runs on its own timer (铁律 5)', () => {
+  it('ChatPage enqueues the comeback instead of setTimeout-ing it', () => {
+    const page = readFileSync(resolve(__dirname, '../../src/features/chat/ChatPage.tsx'), 'utf8');
+    const send = page.slice(page.indexOf('const sendSticker'), page.indexOf('相册发图'));
+    // The CALL form, so the comment explaining the ban does not trip it.
+    expect(
+      /setTimeout\s*\(/.test(send),
+      '斗图又用上裸 setTimeout 了——随时间自动发生的事只能走 scheduled_actions',
+    ).toBe(false);
+    expect(send.includes("kind: 'sticker_reply'")).toBe(true);
   });
 });

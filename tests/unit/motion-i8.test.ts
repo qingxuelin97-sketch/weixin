@@ -547,6 +547,12 @@ describe('motion stays inside its guard rails', () => {
       'M-I6 search-hit flash: a 1.2s one-shot tint on the single row a search jump landed on. ' +
       'Repainting one row once is cheaper than the pseudo-element + stacking context an ' +
       'opacity version needs, and it never runs during a transition.',
+    'src/features/moments/moments.css:background':
+      'M-I18 notification-anchor flash: the same 1.2s one-shot tint, on the single Moments ' +
+      'card a 赞/评 notification tap landed on. Same trade as the chat one — and here the ' +
+      'opacity alternative is actively dangerous: a retained pseudo-element on a card ' +
+      'wrapper is exactly the containing-block trap that shrank the full-screen image ' +
+      'viewer in M-I8 (CLAUDE.md 3.5).',
   };
 
   it('only transform and opacity are animated', () => {

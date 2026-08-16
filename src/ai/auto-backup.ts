@@ -12,12 +12,14 @@
  *
  * 铁律 4: no Date.now()/Math.random() in here — every function takes `now`,
  * and ids derive from the period index, which also makes them STABLE: the
- * `actionExists` guard can therefore stop a completed period from being
- * revived by a later upsert (the enqueue-by-id trap in CLAUDE.md).
+ * `actionStatus` guard can therefore stop a COMPLETED period from being
+ * revived by a later upsert (the enqueue-by-id trap in CLAUDE.md) — while
+ * still letting a cancelled one be rebuilt, which is the other half of the
+ * same rule and the half that used to be missing (see scheduleNext).
  */
 import {
   enqueue,
-  actionExists,
+  actionStatus,
   hasPendingOfKind,
   cancelPendingWhere,
 } from './scheduler';
@@ -78,9 +80,19 @@ export async function setAutoBackupFreq(freq: AutoBackupFreq, now: number): Prom
 async function scheduleNext(freq: Exclude<AutoBackupFreq, 'off'>, now: number): Promise<void> {
   const fireAt = nextAutoBackupAt(freq, now);
   const id = autoBackupActionId(freq, fireAt);
-  // A done row with this id means this period already backed up — enqueue
+  // A DONE row with this id means this period already backed up — enqueue
   // upserts by id and would revive it as pending (the nudge trap).
-  if (await actionExists(id)) return;
+  //
+  // Only `done` may skip. The guard used to be `actionExists`, which also
+  // matched `cancelled` — and every path that reaches here right after a
+  // cancellation lands on the SAME deterministic id: `setAutoBackupFreq`
+  // cancels the pending row and re-schedules within the same period, so
+  // tapping 每天 twice (or 每天→每周→每天 inside one day) cancelled the chain
+  // and then declined to rebuild it. `ensureAutoBackupScheduled` could not
+  // recover either — it only re-seeds when nothing is pending, and then hit
+  // the same guard. Auto-backup stopped forever, silently, with the setting
+  // still reading 每天.
+  if ((await actionStatus(id)) === 'done') return;
   await enqueue({ kind: 'auto_backup', fireAt, payload: { freq, at: fireAt }, now, id });
 }
 

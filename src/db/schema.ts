@@ -388,6 +388,20 @@ export const SCHEDULED_ACTION_KINDS = [
   'moment_repost',
   /** Periodic .aiwx backup (M-I17). Self-chaining; frequency set on 备份页. */
   'auto_backup',
+  /**
+   * 斗图 (M-I18): her wordless sticker comeback, 0.8–2.5s after yours.
+   *
+   * It used to be a bare `setTimeout` in ChatPage — a second time-evolution
+   * path producing a real message, which rule #5 forbids for the ordinary
+   * reason: leave the chat (or the app) inside that window and the reply was
+   * simply lost, with the streak state already advanced.
+   */
+  'sticker_reply',
+  /**
+   * 转账 24 小时未收款自动退还 (M-I18). Queued when the transfer is sent; a
+   * no-op if it was accepted in the meantime.
+   */
+  'transfer_return',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

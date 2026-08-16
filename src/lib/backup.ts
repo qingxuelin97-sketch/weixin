@@ -69,7 +69,13 @@
  * whole stores with no marker, no snapshot and no rollback.
  */
 import { STORES, idbGetAll, idbPut, openDB } from '../db/idb';
-import { readStoreRows, writeStoreRow, deleteStoreRow, clearStore } from '../db/driver';
+import {
+  readStoreRows,
+  writeStoreRow,
+  writeStoreRows,
+  deleteStoreRow,
+  clearStore,
+} from '../db/driver';
 import {
   isPortableSettingRow,
   isDeviceLocalSettingRow,
@@ -687,7 +693,14 @@ export async function restoreBackup(file: BackupFile, now: number): Promise<Rest
       if (store === 'settings') {
         await writeStoreRow('settings', { key: RESTORE_IN_PROGRESS_KEY, value: now });
       }
-      for (const row of rows) await writeStoreRow(store, row);
+      // Bulk, not row-by-row: on IndexedDB `writeStoreRows` puts a whole store
+      // inside ONE transaction. Restoring `messages` a row at a time meant one
+      // transaction per message — tens of thousands of them on a real install,
+      // which is most of why a large restore takes long enough for Android to
+      // reclaim the WebView mid-write (the very crash RESTORE_IN_PROGRESS_KEY
+      // exists to report). Same failure semantics: the loop already aborted the
+      // whole restore on the first throw.
+      await writeStoreRows(store, rows);
       restored[store] = rows.length;
     }
     await restoreDeviceLocalRows(deviceRows, MANAGED_BY_RESTORE);
@@ -772,7 +785,7 @@ export async function applyIncrementalBackup(
           await writeStoreRow('settings', { key: RESTORE_IN_PROGRESS_KEY, value: now });
         }
       }
-      for (const row of rows) await writeStoreRow(store, row);
+      await writeStoreRows(store, rows);
       applied[store] = rows.length;
     }
     // A tombstone-only store is never staged (the package carries no rows for
@@ -802,7 +815,7 @@ async function rollback(snapshot: BackupFile, deviceRows: DeviceLocalRows): Prom
     if (!rows) continue;
     if (def.name === 'media') rows = rows.map(decodeMediaRow);
     await clearStore(def.name);
-    for (const row of rows) await writeStoreRow(def.name, row);
+    await writeStoreRows(def.name, rows);
   }
 
   // Everything device-local comes back, INCLUDING the backup base: a failed

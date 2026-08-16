@@ -13,6 +13,9 @@ import {
   type DmPlan,
 } from '../../src/ai/agent-dm';
 import { search } from '../../src/lib/search';
+import { totalUnread } from '../../src/lib/unread';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { makePersona } from '../../src/data/persona-defaults';
 import type { ContactVM, ConversationVM, MessageVM, MemoryFactVM } from '../../src/data/types';
 
@@ -295,5 +298,75 @@ describe('SAFETY: hidden DM conversations never reach search', () => {
     expect(search({ contacts: [], conversations: [dm], messages: {}, moments: [] }, '小雨')).toEqual(
       [],
     );
+  });
+});
+
+/**
+ * SAFETY, the other user-visible surface: the UNREAD BADGE.
+ *
+ * Search had a test; the red number on 微信 did not. It is the worse leak of
+ * the two — search needs a query that happens to hit the DM, while the badge is
+ * on screen permanently. "微信 3" over two readable unread threads tells the
+ * user there is a conversation they cannot open, and there is no explaining
+ * that away afterwards.
+ *
+ * `runAgentDm` writes into the hidden thread through the ordinary
+ * `appendMessage` path, and `bumpUnread` does not know the thread is hidden —
+ * so a hidden conversation carrying unread is the NORMAL state, not a corrupt
+ * one. Drop the `isHidden` half of lib/unread.ts and this goes red.
+ */
+describe('SAFETY: a hidden DM never reaches the unread badge', () => {
+  const visible = (over: Partial<ConversationVM> = {}): ConversationVM => ({
+    id: 'conv_a',
+    type: 'single',
+    title: '林小雨',
+    avatarColor: '#000',
+    avatarText: '林',
+    isPinned: false,
+    isMuted: false,
+    unreadCount: 3,
+    mentionMe: false,
+    lastMsgPreview: '',
+    lastMsgAt: NOON,
+    ...over,
+  });
+
+  it('unread on a hidden thread adds nothing to the total', () => {
+    const dm: ConversationVM = {
+      ...makeDmConversation([contact('ai_lin', '小雨'), contact('ai_ada', 'Ada')], NOON),
+      // Deliberately NOT muted: muting would suppress the count for the other
+      // reason and make this assertion pass without the isHidden rule.
+      isMuted: false,
+      unreadCount: 99,
+    };
+    expect(dm.isHidden).toBe(true);
+    expect(totalUnread([visible(), dm])).toBe(3);
+    expect(totalUnread([dm])).toBe(0);
+  });
+
+  it('muted threads are still excluded, and ordinary ones still counted', () => {
+    expect(totalUnread([visible(), visible({ id: 'c2', isMuted: true, unreadCount: 7 })])).toBe(3);
+    expect(totalUnread([visible(), visible({ id: 'c2', unreadCount: 7 })])).toBe(10);
+    expect(totalUnread([])).toBe(0);
+  });
+
+  it('every surface that shows a total reads the one rule', () => {
+    // Three components computed this inline, and one of them spelled only half
+    // the rule out. A fourth surface copying the wrong half is the failure this
+    // guard exists to catch — see CLAUDE.md's 「写了没接线」 sibling trap.
+    for (const f of [
+      'src/app/TabScaffold.tsx',
+      'src/features/chat/ChatPage.tsx',
+      'src/features/chat-list/ChatListPage.tsx',
+    ]) {
+      const src = readFileSync(resolve(__dirname, '../..', f), 'utf8');
+      expect(src.includes("from '../lib/unread'") || src.includes("from '../../lib/unread'")).toBe(
+        true,
+      );
+      expect(
+        /reduce\(\([^)]*\)\s*=>\s*[^)]*unreadCount/.test(src),
+        `${f} 又在本地重算未读总数了——规则只有 lib/unread.ts 一份`,
+      ).toBe(false);
+    }
   });
 });

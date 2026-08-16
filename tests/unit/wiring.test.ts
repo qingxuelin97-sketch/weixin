@@ -137,6 +137,38 @@ describe('the AI authoring flows have an entry point', () => {
   });
 });
 
+describe('a notification tap has somewhere to land (M-I18)', () => {
+  it('the pre-scheduled route survives all the way to the OS payload', () => {
+    // Three separate places, and the feature is dead if ANY one is missing:
+    // notify-service builds the route, notify.ts ships it as `extra`, and
+    // useDeepLinks listens for the tap. Two out of three is a route computed
+    // for nobody — the shape this whole file exists to catch.
+    expect(read('src/ai/notify-service.ts').includes('momentsRoute(')).toBe(true);
+    expect(read('src/lib/notify.ts').includes('extra: { route: n.route }')).toBe(true);
+    expect(read('src/app/useDeepLinks.ts').includes('onNotificationTap(')).toBe(true);
+  });
+
+  it('the tap goes back through the allowlist, not straight to navigate()', () => {
+    // A notification's extra is an intent payload like any other. Routing it
+    // without parseDeepLink would make the allowlist optional.
+    const hook = read('src/app/useDeepLinks.ts');
+    expect(/onNotificationTap\(\(route\) => open\(route\)\)/.test(hook)).toBe(true);
+    expect(read('src/native/deep-link.ts').includes('/^\\/moments$/')).toBe(true);
+  });
+
+  it('the feed can actually honour the anchor it is sent to', () => {
+    // Without this half the notification opens 朋友圈 at the top and the user
+    // still hunts for the post — the defect, minus one tap.
+    const page = read('src/features/moments/MomentsPage.tsx');
+    expect(page.includes("searchParams.get('at')")).toBe(true);
+    expect(page.includes('data-moment-id')).toBe(true);
+    expect(page.includes('moment-anchor-flash')).toBe(true);
+    expect(read('src/features/moments/moments.css').includes('@keyframes moment-anchor-flash')).toBe(
+      true,
+    );
+  });
+});
+
 describe('an incoming call can actually reach the screen', () => {
   it('the overlay is mounted in the shell, not behind a route', () => {
     // A call you have to navigate to is not a call. This is also why the
@@ -275,6 +307,19 @@ describe('backup v2 and the SQLite driver are actually reachable', () => {
     const backup = read('src/lib/backup.ts');
     expect(backup.includes("from '../db/driver'")).toBe(true);
     expect(backup.includes('readStoreRows(')).toBe(true);
+  });
+
+  it('restore writes a store in ONE transaction, not one per row', () => {
+    // `writeStoreRows` was written in I17 and never called: restore looped
+    // `writeStoreRow` per row, so a 40k-message install paid 40k IndexedDB
+    // transactions — long enough for Android to reclaim the WebView mid-write,
+    // which is the half-restored database RESTORE_IN_PROGRESS_KEY reports.
+    const backup = read('src/lib/backup.ts');
+    expect(backup.includes('writeStoreRows(')).toBe(true);
+    expect(
+      /for \(const row of rows\) await writeStoreRow\(/.test(backup),
+      '恢复又退回逐行写了——一个 store 一个事务，别一行一个',
+    ).toBe(false);
   });
 });
 

@@ -6,7 +6,16 @@ import { test, expect } from '@playwright/test';
  * Runs against the production build + real IndexedDB (backup-e2e pattern).
  */
 
-/** Plant a hidden DM conversation with one juicy message, as runAgentDm would. */
+/**
+ * Plant a hidden DM conversation with one juicy message, as runAgentDm would.
+ *
+ * `isMuted: false` on purpose. It used to be true, which made the badge
+ * assertion below unfalsifiable: muted threads are excluded for a completely
+ * different reason, so the test would stay green with the `isHidden` rule
+ * deleted. A hidden thread carrying unread is the normal state anyway —
+ * `bumpUnread` runs on the ordinary append path and knows nothing about
+ * hiding.
+ */
 const PLANT_DM = `
   new Promise((resolve, reject) => {
     const req = indexedDB.open('weixin-ai');
@@ -17,7 +26,7 @@ const PLANT_DM = `
       tx.objectStore('conversations').put({
         id: 'dm_ai_ada_ai_lin', type: 'single', title: '林小雨、Ada',
         avatarColor: '#000', avatarText: '雨', memberIds: ['ai_ada', 'ai_lin'],
-        isPinned: false, isMuted: true, isHidden: true,
+        isPinned: false, isMuted: false, isHidden: true,
         unreadCount: 99, mentionMe: false,
         lastMsgPreview: '这句私聊绝不能被看到', lastMsgAt: Date.now(),
       });
@@ -34,6 +43,17 @@ const PLANT_DM = `
 test('a hidden DM is absent from list, badge and search — but present in the DB', async ({ page }) => {
   await page.goto('/#/chats');
   await page.waitForTimeout(800); // hydrate seeds
+
+  // The badge BEFORE planting is the reference. A hard-coded number would only
+  // assert what the seed happens to contain today.
+  const tabBadge = page.locator('.tabbar__badge');
+  const listTitle = page.locator('.navbar__title').first();
+  const read = async () => ({
+    badge: (await tabBadge.count()) ? ((await tabBadge.first().innerText()) ?? '').trim() : '',
+    title: ((await listTitle.innerText().catch(() => '')) ?? '').trim(),
+  });
+  const before = await read();
+
   await page.evaluate(PLANT_DM);
   // Reload so hydrate() picks the planted conversation up like a real boot.
   await page.reload();
@@ -42,6 +62,17 @@ test('a hidden DM is absent from list, badge and search — but present in the D
   // 1) Chat list: the DM row must not render.
   await expect(page.getByText('林小雨、Ada')).toHaveCount(0);
   await expect(page.getByText('这句私聊绝不能被看到')).toHaveCount(0);
+
+  // 1.5) The unread badge: 99 unread on a hidden thread must move NOTHING —
+  // neither the tab badge nor the 微信(N) title on the list. This is the
+  // permanently-on-screen leak the other assertions do not cover: search needs
+  // a query that happens to hit the DM, the badge is on screen always.
+  const after = await read();
+  expect(after, '隐藏会话的未读漏进了角标/标题——泄漏即穿帮').toEqual(before);
+  // Belt and braces, independent of the seed: the leak adds 99, and Badge caps
+  // its display at 99 — so a leaked total renders as "99+" whatever the seed is.
+  expect(after.badge).not.toContain('99');
+  expect(Number(after.badge || '0')).toBeLessThan(99);
 
   // 2) Search: neither the title nor the message text may surface.
   await page.getByLabel('搜索').first().click();

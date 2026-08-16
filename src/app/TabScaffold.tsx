@@ -2,6 +2,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { IconChats, IconContacts, IconDiscover, IconMe } from '../components/icons';
 import { Badge } from '../components/Badge';
 import { useAppStore } from '../store/appStore';
+import { totalUnread as totalUnreadOf } from '../lib/unread';
 
 const TABS = [
   { path: '/chats', label: '微信', Icon: IconChats },
@@ -14,9 +15,9 @@ const TABS = [
 export function TabScaffold() {
   const location = useLocation();
   const navigate = useNavigate();
-  const totalUnread = useAppStore((s) =>
-    s.conversations.reduce((n, c) => n + (c.isMuted || c.isHidden ? 0 : c.unreadCount), 0),
-  );
+  // Muted and HIDDEN threads are excluded — see lib/unread.ts for why the rule
+  // lives in one place now.
+  const totalUnread = useAppStore((s) => totalUnreadOf(s.conversations));
 
   return (
     <>

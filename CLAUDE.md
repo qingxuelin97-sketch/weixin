@@ -77,12 +77,18 @@ src/
   记忆 → 场景。改顺序=改行为，需评审。
 - **`scheduledActions` 表**：见铁律 5。新增时间驱动行为 = 在 `SCHEDULED_ACTION_KINDS`
   （`src/db/schema.ts`，**唯一那份列表**，`ActionKind` 由它派生）加一项 + `registerHandler`，
-  **不要**新建计时器。M-I 轮结束时共 **19 种**：heartbeat / rp_grab / transfer_accept /
+  **不要**新建计时器。M-I 轮结束时共 **21 种**：heartbeat / rp_grab / transfer_accept /
   moment_post / moment_like / moment_comment / group_msg / agent_dm / recall /
   mem_extract / story_tick / ai_money / ai_call / joint_plan / agent_forward /
-  group_event / agent_invite / moment_repost / auto_backup。自续链的那几种用
+  group_event / agent_invite / moment_repost / auto_backup / sticker_reply /
+  transfer_return。自续链的那几种用
   `registerChainedHandler`（先续链后干活，失败只暂停不终结），并且必须进 wiring 测试的
   SELF_CHAINING 清单。
+- **一次性动作问「有没有过」，自续链问「是不是干完了」**（M-I18）：`enqueue` 按 id upsert，
+  所以 nudge 那类「一辈子只发一次」的必须 `actionExists(id)`（任何状态都算数）。但自续链
+  用同一个判据就会把**取消**当成终结——`auto_backup` 的 `setAutoBackupFreq` 先取消再重排，
+  同周期算出来的 id 正是刚取消的那个，于是在设置页把「每天」再点一次就让自动备份永久静默
+  停止。自续链的守卫用 `actionStatus(id) === 'done'`。
 - **`SETTINGS_KEY_CASCADE` 台账**（`src/db/repo.ts`，M-I18）：settings 是个 KV 大杂烩，
   里面既有全局配置也有 per-contact / per-conv / per-pair 的状态。**每个键（或冒号前缀）
   必须登记** scope 与「删联系人时怎么办」，`deleteContactCascade` **读这份台账**行事——

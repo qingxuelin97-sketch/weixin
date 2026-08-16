@@ -508,3 +508,30 @@
   font-size: 13px;
   color: var(--color-text-secondary);
 }
+
+/* 通知锚定高亮 (M-I18): one pulse marking the post a notification tap landed
+   on. Same treatment as the chat page's `.msg-anchor-flash` — cleared via
+   onAnimationEnd so it can replay for the next notification.
+
+   `backwards`, never `both`: a retained end frame would leave a computed
+   transform/paint on this wrapper, and a moments card that becomes a
+   containing block turns the full-screen image viewer opened from inside it
+   into a 390px window (see CLAUDE.md 3.5 / specs/motion.md). Background-only
+   here, but the fill-mode habit is the point. */
+.moment-anchor-flash {
+  animation: moment-anchor-flash 1.2s ease-out 1 backwards;
+}
+@keyframes moment-anchor-flash {
+  0%,
+  55% {
+    background: var(--color-page-pressed);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .moment-anchor-flash {
+    animation: none !important;
+  }
+}

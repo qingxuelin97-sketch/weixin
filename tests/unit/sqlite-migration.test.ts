@@ -14,11 +14,17 @@ import {
 } from '../../src/db/idb';
 import {
   migrateToSqlite,
+  migratableStores,
   SQLITE_MIGRATE_PROGRESS_KEY,
   MIGRATE_SKIPPED,
 } from '../../src/db/migrate-to-sqlite';
-import { SQLITE_MIGRATED_AT_KEY } from '../../src/db/driver';
-import { sqliteReadAll, sqliteCount } from '../../src/db/sqlite';
+import {
+  SQLITE_MIGRATED_AT_KEY,
+  writeStoreRows,
+  activateSqliteDriver,
+  _resetDriverForTests,
+} from '../../src/db/driver';
+import { sqliteReadAll, sqliteCount, ensureSqliteSchema } from '../../src/db/sqlite';
 
 /**
  * I17 migration acceptance (转红条款 ①): seed EVERY store in IndexedDB, run
@@ -97,6 +103,60 @@ beforeEach(async () => {
   globalThis.indexedDB = new IDBFactory();
   _closeDbForTests();
   await openDB();
+});
+
+/**
+ * `migratableStores()` shipped in I17 with a doc comment calling itself a
+ * sanity check and ZERO callers — the written-but-never-wired shape CLAUDE.md
+ * names by hand. Here is the check it was written for.
+ *
+ * The migrator copies `STORES − MIGRATE_SKIPPED`; SQLite has a table for
+ * `STORES − {tts_cache}`. Those two exclusion lists are maintained separately,
+ * and the day they disagree the migrator writes into a table that does not
+ * exist — a migration that fails at the point of no return, on a phone, with
+ * the user's whole database as the stake.
+ */
+describe('every store the migrator copies has a SQLite table', () => {
+  it('the DDL list and the migrator list agree', () => {
+    const migratorWrites = STORES.map((s) => s.name).filter((n) => !(n in MIGRATE_SKIPPED));
+    expect(
+      migratableStores(),
+      '迁移器要写的表和 SQLite DDL 建的表对不上——差集里的那个 store 迁移时会 no such table',
+    ).toEqual(migratorWrites);
+  });
+});
+
+/**
+ * The bulk write path (`writeStoreRows`) also shipped in I17 with zero callers
+ * while restore wrote one row per transaction. It is wired now, so it needs the
+ * same dispatch guarantee every other driver primitive has: rows must land in
+ * whichever engine currently owns the store, never in the pre-migration copy.
+ */
+describe('writeStoreRows dispatches like the rest of the driver', () => {
+  const rows = [
+    { id: 'ai_x', type: 'ai', name: 'X', avatarColor: 'c', avatarText: 'X' },
+    { id: 'ai_y', type: 'ai', name: 'Y', avatarColor: 'c', avatarText: 'Y' },
+  ];
+
+  it('goes to SQLite while it is active, and back to IDB after a revert', async () => {
+    const db = new FakeSqlDb();
+    await ensureSqliteSchema(db);
+    activateSqliteDriver(db);
+    await writeStoreRows('contacts', rows);
+    expect((await sqliteReadAll(db, 'contacts')) as unknown[]).toEqual(rows);
+    // On a migrated device this must NOT have touched the stale IDB copy.
+    expect(await idbGetAll('contacts')).toEqual([]);
+
+    _resetDriverForTests();
+    await writeStoreRows('contacts', rows);
+    expect(await idbGetAll('contacts')).toEqual(rows);
+  });
+
+  it('an unwritable row rejects the whole batch, exactly like the row-at-a-time loop', async () => {
+    _resetDriverForTests();
+    // No keyPath value → IndexedDB refuses the put and fails the transaction.
+    await expect(writeStoreRows('contacts', [rows[0], { name: '没有 id 的行' }])).rejects.toThrow();
+  });
 });
 
 describe('migrateToSqlite round trip (转红 ①)', () => {

@@ -140,7 +140,16 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
       const fen = num(meta.amountFen);
       const note = str(meta.note);
       const status = str(meta.status);
-      const state = status === 'accepted' ? '，已收下' : status === 'refunded' ? '，已退回' : '';
+      // The status strings are the ones `TransferVM` actually carries. This
+      // used to test for `'refunded'`, which nothing in the codebase ever
+      // writes — so the "she knows you didn't take it" half of the projection
+      // was unreachable text sitting next to a live branch.
+      const state =
+        status === 'accepted'
+          ? '，已收下'
+          : status === 'returned' || status === 'expired'
+            ? '，超过24小时未接收已退还'
+            : '';
       // Unlike a red packet, a transfer's amount IS visible to both sides in
       // WeChat — and it is exactly what "刚给你转了多少" asks about.
       return `[转账 ¥${fen != null ? yuan(fen) : '?'}${note ? `，附言「${note}」` : ''}${state}]`;

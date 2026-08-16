@@ -29,7 +29,11 @@ import {
   periodMs,
   nextAutoBackupAt,
   autoBackupActionId,
+  setAutoBackupFreq,
+  ensureAutoBackupScheduled,
+  chainAutoBackup,
 } from '../../src/ai/auto-backup';
+import { pendingActions, hasPendingOfKind } from '../../src/ai/scheduler';
 
 /**
  * Backup v2 acceptance (转红 ③④): incremental packages must compose — full +
@@ -265,5 +269,62 @@ describe('auto-backup planning (铁律 4: injected time, stable ids)', () => {
     expect(autoBackupActionId('daily', fireAt)).not.toBe(
       autoBackupActionId('daily', fireAt + 86_400_000),
     );
+  });
+});
+
+/**
+ * 转红条款: a CANCELLED row must never be able to end the chain.
+ *
+ * `setAutoBackupFreq` cancels every pending `auto_backup` row and then queues
+ * the successor — and inside one period the successor's deterministic id IS the
+ * id it just cancelled. With an existence-based guard (`actionExists`) the
+ * re-schedule was skipped, `ensureAutoBackupScheduled` hit the same guard on
+ * every later foreground pass, and automatic backups stopped forever while the
+ * settings page still said 每天. Revert `actionStatus(id) === 'done'` back to
+ * `actionExists(id)` in auto-backup.ts and both cases below go red.
+ */
+describe('auto-backup chain survives a cancelled row (转红)', () => {
+  const T0 = 1_754_500_000_000;
+
+  it('re-selecting the same frequency inside one period keeps a pending row', async () => {
+    await setAutoBackupFreq('daily', T0);
+    expect(await hasPendingOfKind('auto_backup')).toBe(true);
+
+    // Same period, so scheduleNext computes the very id it just cancelled.
+    await setAutoBackupFreq('daily', T0 + 60_000);
+    const pending = (await pendingActions()).filter((a) => a.kind === 'auto_backup');
+    expect(
+      pending.length,
+      '重选同一频率后自动备份链断了——cancelled 行的 id 把新一轮挡在门外',
+    ).toBe(1);
+  });
+
+  it('the foreground pass can revive a chain that was cancelled', async () => {
+    await setAutoBackupFreq('daily', T0);
+    // Simulate the cancellation half without the re-schedule (a restore, a
+    // deleted conversation sweep, an old install): nothing pending is left.
+    for (const a of await pendingActions()) {
+      if (a.kind === 'auto_backup') await idbPut('scheduled_actions', { ...a, status: 'cancelled' });
+    }
+    expect(await hasPendingOfKind('auto_backup')).toBe(false);
+
+    await ensureAutoBackupScheduled(T0 + 120_000);
+    expect(
+      await hasPendingOfKind('auto_backup'),
+      'ensureAutoBackupScheduled 没能把被取消的链接回来——自动备份永久静默停止',
+    ).toBe(true);
+  });
+
+  it('a genuinely completed period is still not re-queued', async () => {
+    await setAutoBackupFreq('daily', T0);
+    const [row] = (await pendingActions()).filter((a) => a.kind === 'auto_backup');
+    await idbPut('scheduled_actions', { ...row, status: 'done' });
+    // The chain step runs at fire time; the successor belongs to the NEXT
+    // period, so the done row must neither be revived nor block it.
+    await chainAutoBackup(row.fireAt);
+    const pending = (await pendingActions()).filter((a) => a.kind === 'auto_backup');
+    expect(pending.length).toBe(1);
+    expect(pending[0].id).not.toBe(row.id);
+    expect(await idbGet('scheduled_actions', row.id)).toMatchObject({ status: 'done' });
   });
 });
