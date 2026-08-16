@@ -30,6 +30,7 @@ import type {
   NsfwTierVM,
 } from '../data/types';
 import { seededRng } from '../lib/money';
+import { canSeeMoment } from '../lib/moment-visibility';
 import { beginRecordingSuppression, endRecordingSuppression } from '../lib/llm-recorder';
 import { recordRelEvent } from './relationship';
 import { maxTier, globalTier } from '../lib/nsfw-tier';
@@ -439,7 +440,20 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
       .slice(-3)
       .map((m) => `群里刚聊过：${m.content}`),
     ...moments
+      // 可见范围 (M-I18): the read behind `deps.getMoments` uses the default
+      // viewer ('self'), because there is no single viewer for a DM — so the
+      // audience check belongs HERE, and it must hold for EVERY participant.
+      // Quoting a post one speaker cannot see is not a private slip: hidden
+      // DMs are the source of hearsay, and hearsay surfaces in group chat, so
+      // it would come back to the user as 「她怎么知道这条」.
+      //
+      // Today this is belt-and-braces — the filter already keeps only posts
+      // authored by the participants, and an agent's own post is always
+      // public. It is written anyway because the day an agent can post
+      // 部分可见 (the plan's AI 连续剧式发帖 heads that way), the leak would
+      // open silently, with no test failing.
       .filter((m) => ids.includes(m.authorId) && m.text)
+      .filter((m) => ids.every((viewer) => canSeeMoment(m, viewer)))
       .slice(0, 2)
       .map((m) => `朋友圈那条「${m.text}」`),
     '最近各自在忙什么',

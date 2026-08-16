@@ -14,7 +14,13 @@ import {
 } from '../../src/ai/agent-dm';
 import { search } from '../../src/lib/search';
 import { makePersona } from '../../src/data/persona-defaults';
-import type { ContactVM, ConversationVM, MessageVM, MemoryFactVM } from '../../src/data/types';
+import type {
+  ContactVM,
+  ConversationVM,
+  MessageVM,
+  MemoryFactVM,
+  MomentVM,
+} from '../../src/data/types';
 
 const NOON = new Date(2025, 7, 6, 12, 0, 0).getTime();
 const HOUR = 3_600_000;
@@ -259,6 +265,85 @@ describe('runAgentDm (scripted end-to-end, no real API)', () => {
     };
     expect(await runAgentDm(plan, deps)).toBe(false);
     expect(appended).toEqual([]);
+  });
+});
+
+/**
+ * 可见范围 × 八卦 (M-I18).
+ *
+ * `deps.getMoments` reads with the default viewer ('self') because a DM has no
+ * single viewer, so the audience check lives inside runDmSession and must hold
+ * for EVERY participant. This matters beyond the DM itself: hidden DMs are
+ * where hearsay is minted, and hearsay spills into group chat — so a post one
+ * speaker cannot see, quoted here, comes back to the user as 「她怎么知道这条」.
+ *
+ * Seeded across many fireAt values because the topic is a seeded pick among
+ * candidates: with the filter removed the restricted post wins some of those
+ * draws, and one draw is all it takes to leak.
+ */
+describe('SAFETY: a DM never quotes a post a participant cannot see', () => {
+  const SECRET = '只给小雨看的那条';
+  const OPEN = '大家都能看的那条';
+  type Moments = Awaited<ReturnType<DmDeps['getMoments']>>;
+
+  const moment = (
+    id: string,
+    authorId: string,
+    text: string,
+    visibility?: MomentVM['visibility'],
+  ): Moments[number] => ({ id, authorId, text, createdAt: NOON, visibility }) as Moments[number];
+
+  async function collectPrompts(moments: Moments): Promise<string> {
+    let seen = '';
+    for (let i = 0; i < 24; i++) {
+      const deps: DmDeps = {
+        getPersona: (id) => makePersona({ contactId: id, core: 'c' }),
+        getContact: (id) => contact(id, id === 'ai_lin' ? '小雨' : 'Ada'),
+        getConversation: async () => undefined,
+        addConversation: async () => {},
+        appendMessage: async (m) => ({ ...m, id: 1 }) as MessageVM,
+        putMemory: async () => {},
+        getMemoryFacts: async () => [],
+        getGroupMessages: async () => [],
+        getMoments: async () => moments,
+        complete: async (messages) => {
+          seen += JSON.stringify(messages);
+          return '{"speaker":"A","text":"嗯"}\n{"speaker":"B","text":"嗯"}';
+        },
+        enqueueGroupSpill: async () => {},
+        now: () => NOON + 9 * HOUR,
+        getGlobalTier: async () => 'off',
+      };
+      await runAgentDm(
+        { a: 'ai_lin', b: 'ai_ada', groupId: 'g1', fireAt: NOON + 9 * HOUR + i * 60_000 },
+        deps,
+      );
+    }
+    return seen;
+  }
+
+  it('drops a post excluding the other speaker, and keeps a public one', async () => {
+    // Ada authored both; the first one shuts 小雨 out. Both are hers, so the
+    // author-side check ("ids includes authorId") passes for both — only the
+    // audience check can tell them apart.
+    const prompts = await collectPrompts([
+      moment('m1', 'ai_ada', SECRET, { mode: 'exclude', ids: ['ai_lin'] }),
+      moment('m2', 'ai_ada', OPEN, undefined),
+    ]);
+    // The real assertion.
+    expect(prompts).not.toContain(SECRET);
+    // …and the control: without this, the test would also pass if moments
+    // never reached the prompt at all, which would make it worthless.
+    expect(prompts).toContain(OPEN);
+  });
+
+  it('drops a 私密 post outright — even its own author does not gossip it', async () => {
+    const prompts = await collectPrompts([
+      moment('m1', 'ai_ada', SECRET, { mode: 'private', ids: [] }),
+      moment('m2', 'ai_ada', OPEN, undefined),
+    ]);
+    expect(prompts).not.toContain(SECRET);
+    expect(prompts).toContain(OPEN);
   });
 });
 
