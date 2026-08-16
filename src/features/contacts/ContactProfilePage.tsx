@@ -7,7 +7,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
-import { showConfirm } from '../../components/dialog';
+import { showConfirm, showPrompt } from '../../components/dialog';
 import { Switch } from '../../components/Switch';
 import type { ConversationVM } from '../../data/types';
 import { useGuard } from '../../app/useGuard';
@@ -119,6 +119,40 @@ export function ContactProfilePage() {
         </div>
 
         <div className="settings__group">
+          {/* 设置备注 (M-I18): `remark` was read in a dozen places — the chat
+              title, the contacts list, moments, group nicknames — and written
+              by nothing. WeChat puts this on the profile page and so do we. */}
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() =>
+              guard('contact.remark', async () => {
+                const next = await showPrompt({
+                  title: '设置备注',
+                  initial: contact.remark ?? '',
+                  placeholder: contact.name,
+                  maxLength: 24,
+                  // Clearing the remark is a real intent (fall back to 本名).
+                  allowEmpty: true,
+                });
+                if (next === null) return; // cancelled — leave it alone
+                const remark = next.trim();
+                await putContact({ ...contact, remark: remark || undefined });
+              })
+            }
+          >
+            <span className="settings__label">备注名</span>
+            <span className="settings__value">{contact.remark ?? '未设置'}</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          {/* 个人相册 (M-I18): the album page existed since I15 but was only
+              reachable by tapping an avatar inside the feed. */}
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate(`/moments/album/${contactId}`)}
+          >
+            <span className="settings__label">朋友圈</span>
+            <span className="settings__chevron">›</span>
+          </div>
           <div
             className="settings__row settings__row--divided"
             onClick={() => guard('contact.star', toggleStar)}

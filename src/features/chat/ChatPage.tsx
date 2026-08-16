@@ -968,12 +968,18 @@ export function ChatPage() {
                   }}
                   onLongPress={(m, x, y) => {
                     if (selecting) return;
-                    // Only open when there is at least one action — an empty
-                    // capsule reads as breakage.
-                    const hasCopy = m.type === 'text' && Boolean(m.content);
-                    const canRegen =
-                      m.senderId !== 'self' && !isGroup && messages.at(-1)?.id === m.id;
-                    if (hasCopy || canRecall(m, Date.now()) || canRegen) setMenu({ msg: m, x, y });
+                    // Openable on anything that is still a message (M-I18).
+                    //
+                    // This gate predates I6/I13 and still asked the I5-era
+                    // question: is there COPY, RECALL or REGENERATE to offer?
+                    // Meanwhile the menu grew 收藏 / 转发 / 多选, which apply to
+                    // every type — so long-pressing a photo, a voice clip, a
+                    // location, a link or a card did nothing at all, and so did
+                    // long-pressing your own message three minutes after
+                    // sending it. "Press and nothing happens" reads as a broken
+                    // gesture, not a missing feature; it is also why six of the
+                    // favorites page's eight type filters could never fill up.
+                    if (m.type !== 'system' && !m.isRecalled) setMenu({ msg: m, x, y });
                   }}
                   onReEdit={(m) => setDraft(m.content ?? '')}
                   onRetry={(m) => guard('chat.retry', () => retrySend(m))}

@@ -22,6 +22,7 @@ import type { ContactVM, ConversationVM, MessageVM, PersonaVM } from '../data/ty
 import { AVATAR_PALETTE } from '../data/avatar-palette';
 import { mergeRelationEdges } from '../data/persona-patch';
 import { relationsFor, stampHistory, type GroupBlueprint } from './group-generate';
+import { pinyinInitialOf } from '../lib/pinyin-initial';
 
 /** Everything the build needs from the outside world. */
 export interface BuildDeps {
@@ -180,7 +181,7 @@ export async function buildGroup(state: BuildState, deps: BuildDeps): Promise<Bu
       name: m.name,
       avatarColor: avatarColor(i),
       avatarText: m.name.slice(0, 1),
-      pinyinInitial: '#',
+      pinyinInitial: pinyinInitialOf(m.name),
       wxid: contactId,
     });
     await deps.putPersona(persona);

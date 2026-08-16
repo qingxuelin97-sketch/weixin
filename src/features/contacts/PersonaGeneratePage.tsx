@@ -29,6 +29,7 @@ import { logError } from '../../lib/errlog';
 import type { ContactVM, ConversationVM } from '../../data/types';
 import '../settings/settings.css';
 import './contacts.css';
+import { pinyinInitialOf } from '../../lib/pinyin-initial';
 
 const EXAMPLES = [
   '爱吃辣的川妹子，做插画的，嘴硬心软',
@@ -111,7 +112,7 @@ export function PersonaGeneratePage() {
       signature: card.signature,
       avatarColor: color,
       avatarText: card.name.slice(0, 1),
-      pinyinInitial: '#',
+      pinyinInitial: pinyinInitialOf(card.name),
       wxid: contactId,
     };
     const conv: ConversationVM = {

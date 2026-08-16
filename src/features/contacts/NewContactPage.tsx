@@ -17,6 +17,7 @@ import '../settings/settings.css';
 import '../me/me.css';
 import { logError } from '../../lib/errlog';
 import './contacts.css';
+import { pinyinInitialOf } from '../../lib/pinyin-initial';
 
 export function NewContactPage() {
   const navigate = useNavigate();
@@ -47,7 +48,7 @@ export function NewContactPage() {
       name: trimmed,
       avatarColor: color,
       avatarText: trimmed.slice(0, 1),
-      pinyinInitial: '#',
+      pinyinInitial: pinyinInitialOf(trimmed),
       wxid: id,
     };
     const persona = makePersona({
