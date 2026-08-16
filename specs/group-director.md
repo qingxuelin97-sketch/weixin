@@ -51,6 +51,21 @@
   旋钮，建成后旋钮落到 `groupCfg`。
 - **deleteContact 级联**（资料卡「删除联系人」）：顺序 = 中止在飞 → 调度队列 →
   隐藏私信双向 → 1:1 会话 → 群名册 → 记忆 → 他人卡逐边遗忘（绝不重建 relations
-  整表）→ settings 定向键 → 朋友圈痕迹 → 人设+联系人。钱相关 store 明确豁免
-  （账本不蒸发）。`DELETE_CONTACT_CASCADE` 台账穷举全部 store，加 store 不分类
-  即转红（tests/unit/i1-group-config.test.ts）。
+  整表）→ settings 定向键 → settings 行内按条清除 → 朋友圈痕迹 → 人设+联系人。
+  钱相关 store 明确豁免（账本不蒸发）。`DELETE_CONTACT_CASCADE` 台账穷举全部
+  store，加 store 不分类即转红；守卫还会逐个 store 播种死者痕迹、跑完级联后要求
+  痕迹归零，「标了 cascade 却没接线」当场红（tests/unit/i1-group-config.test.ts）。
+- **settings 键前缀台账 `SETTINGS_KEY_CASCADE`**（M-I18）：`settings` 是一张 KV
+  表干十几张表的活，所以「settings: 'cascade'」这一个词什么也没保证——`agent_state:`
+  / `goal_told:` / `giftAt:` / `callAt:` / `memext:` / `groupNick:` 曾整整一年
+  逃过删除。现在**每个键（或带冒号的前缀）必须表态** scope（global/contact/conv/
+  pair）+ row（cascade/exempt）+ 理由，**级联直接读这张表**：登记即修好。守卫测试
+  静态扫描 src/ 里所有 `putSetting`/`getSetting` 的键表达式（含绕过 putSetting 直写
+  settings store 的 keystore / 恢复 / 迁移三处），与台账**精确比对**——新键未登记
+  即红；带 id 的模板键不许填 `global`，非 global 的键不许填 `exempt`（两个一词开溜的
+  口子都堵死）。
+- **行内按条清除**（台账的 `entries` 字段）：`rel_edges` 把**整张社交图存在一行里**，
+  删行=清空所有人的关系，留着更糟——种子 id 是**固定**的（会话数归零时 appStore 用
+  同一批 id 重新播种），残留的边会让下一个「林」直接继承死者攒的 fam/aff，第一天就是
+  老关系的心跳频率与点赞率。所以按 `pairKey`（分隔符 `REL_PAIR_SEP`，定义在 repo.ts
+  以防与写入侧漂移）逐条删。`groupNick:<convId>` 同理：群活下来，死者那条昵称不能活。

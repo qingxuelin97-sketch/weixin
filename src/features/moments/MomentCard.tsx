@@ -49,6 +49,29 @@ interface Props {
 }
 
 /**
+ * Who a comment is replying TO, or undefined when it isn't a reply — or when
+ * the comment it replied to is gone (M-I18).
+ *
+ * A reply can outlive its target two ways: the user deletes their own comment,
+ * or `deleteContact` cascades away every comment the deleted person wrote. The
+ * old code resolved the dangling id with `?? c.authorId`, which rendered the
+ * reply as 「我 回复 我：…」 — a sentence WeChat never produces. WeChat's own
+ * behaviour when the target is gone is to drop the 回复 clause and show the
+ * reply as a plain comment, which is also the only rendering that stays honest
+ * about a name it can no longer resolve.
+ *
+ * Fixed at RENDER time rather than in the cascade on purpose: it covers the
+ * user-deleted-their-own-comment path too, which no cascade ever touches.
+ */
+export function replyTargetAuthor(
+  comments: MomentCommentVM[],
+  c: MomentCommentVM,
+): string | undefined {
+  if (!c.replyToCommentId) return undefined;
+  return comments.find((x) => x.id === c.replyToCommentId)?.authorId;
+}
+
+/**
  * WeChat's grid: one image renders large and alone, four images use a 2×2 block,
  * everything else is a 3-across grid. Nine is the maximum a post can hold.
  */
@@ -246,31 +269,30 @@ export function MomentCard({
               </div>
             )}
             {likes.length > 0 && comments.length > 0 && <div className="moment__reaction-div" />}
-            {comments.map((c) => (
-              <div
-                key={c.id}
-                className="moment__comment"
-                role="button"
-                // Own comment → delete; someone else's → reply. Same tap, the
-                // ownership decides — exactly the device behavior.
-                onClick={() =>
-                  c.authorId === 'self' ? onDeleteComment?.(c) : onReplyComment?.(c)
-                }
-              >
-                <span className="moment__comment-author">{nameOf(c.authorId)}</span>
-                {c.replyToCommentId && (
-                  <>
-                    <span className="moment__comment-reply">回复</span>
-                    <span className="moment__comment-author">
-                      {nameOf(
-                        comments.find((x) => x.id === c.replyToCommentId)?.authorId ?? c.authorId,
-                      )}
-                    </span>
-                  </>
-                )}
-                <span>：{c.text}</span>
-              </div>
-            ))}
+            {comments.map((c) => {
+              const replyToId = replyTargetAuthor(comments, c);
+              return (
+                <div
+                  key={c.id}
+                  className="moment__comment"
+                  role="button"
+                  // Own comment → delete; someone else's → reply. Same tap, the
+                  // ownership decides — exactly the device behavior.
+                  onClick={() =>
+                    c.authorId === 'self' ? onDeleteComment?.(c) : onReplyComment?.(c)
+                  }
+                >
+                  <span className="moment__comment-author">{nameOf(c.authorId)}</span>
+                  {replyToId && (
+                    <>
+                      <span className="moment__comment-reply">回复</span>
+                      <span className="moment__comment-author">{nameOf(replyToId)}</span>
+                    </>
+                  )}
+                  <span>：{c.text}</span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

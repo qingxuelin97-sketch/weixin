@@ -78,6 +78,11 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
   `tests/unit/moments-v2.test.ts`（repost leak rule）。
 - 删除联动：deleteContact 级联会抹掉引用了死者的快照
   （`repostExcerpt: '原内容已删除'`），store 内存镜像 1:1 同步。
+- **悬空的「回复 X」**（M-I18）：回复目标可能先没（用户删自己的评论，或级联删掉了
+  死者的评论）。旧代码用 `?? c.authorId` 兜底，渲染成「我 回复 我：…」——微信不会
+  写出这句话。现在 `replyTargetAuthor()` 找不到目标就返回 undefined，卡片退化成
+  普通评论（微信本身的行为）。修在**渲染侧**而不是级联侧，因为「用户删自己评论」
+  这条路径级联根本碰不到。
 - 入口：卡片胶囊「转发」（仅他人的帖）→ `/moments/repost/:momentId`。
 - **AI 也会转发你**：`planRepost`（种子化，~8%，仅 `authorId==='self'` 的帖、
   affinity ≥ 55 的密友，30min–6.5h 后落地）→ 新 kind `moment_repost`（已入
