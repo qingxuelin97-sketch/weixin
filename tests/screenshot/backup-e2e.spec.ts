@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { DEVICE_LOCAL_SETTINGS, BACKUP_HISTORY_KEY } from '../../src/lib/device-local';
 
 /**
  * Export → wipe → restore, driven through the real UI against a real IndexedDB.
@@ -50,24 +51,38 @@ const CLEAR_ALL = `
   })
 `;
 
+/**
+ * Settings rows excluded from the round-trip comparison.
+ *
+ * Read from `DEVICE_LOCAL_SETTINGS` rather than listed here (M-I18). This file
+ * used to keep its own three-name copy, and when the ledger grew to eleven the
+ * copy silently went stale: `backupHistory` — which the export itself writes,
+ * and which a restore now deliberately PRESERVES from this device — showed up
+ * as a round-trip difference and failed the test. A second hand-written copy of
+ * a ledger is the exact thing the ledger exists to prevent, so the fix is to
+ * read it, not to append one more name.
+ */
+const NON_PORTABLE = new Set<string>([
+  ...DEVICE_LOCAL_SETTINGS.map((s) => s.key),
+  // NOT device-local (it travels in the package), but restore re-arms the
+  // backfill barrier at restore time, so its value legitimately differs.
+  'lastForegroundAt',
+]);
+
 /** Rows the backup deliberately does not carry, excluded from the comparison. */
 function comparable(dump: Record<string, unknown[]>): Record<string, unknown[]> {
   const { tts_cache: _omitted, settings = [], ...rest } = dump;
-  // Device-local settings rows are non-portable BY DESIGN (H3): the crypto
-  // master key never travels, and restore re-arms the backfill barrier at
-  // restore time. Everything else must round-trip exactly.
   return {
     ...rest,
-    settings: (settings as Array<{ key?: string }>).filter(
-      // Device-local runtime state, not user data: the crypto key, the backfill
-      // barrier, and the in-flight-restore marker a restore necessarily writes.
-      (r) =>
-        r.key !== '__crypto_master' &&
-        r.key !== 'lastForegroundAt' &&
-        r.key !== 'restoreInProgress',
-    ),
+    settings: (settings as Array<{ key?: string }>).filter((r) => !NON_PORTABLE.has(r.key ?? '')),
   };
 }
+
+/** One settings row, straight out of a dump. */
+const settingRow = (dump: Record<string, unknown[]>, key: string) =>
+  (dump.settings as Array<{ key?: string; value?: unknown }> | undefined)?.find(
+    (r) => r.key === key,
+  );
 
 test('export → wipe → restore round-trips the real database', async ({ page }) => {
   await page.goto('/#/chats');
@@ -106,10 +121,24 @@ test('export → wipe → restore round-trips the real database', async ({ page 
   await page.getByRole('button', { name: '确认恢复' }).click();
   await expect(page.getByText(/恢复完成/)).toBeVisible({ timeout: 10_000 });
 
-  const after = comparable(await page.evaluate(DUMP));
+  const afterRaw = (await page.evaluate(DUMP)) as Record<string, unknown[]>;
+  const after = comparable(afterRaw);
   // Zero difference: same stores, same rows, same ids — including the
   // autoincrement message ids, which must survive so rowid order is preserved.
   expect(after).toEqual(before);
+
+  // …and the other half of the contract (M-I18): the rows excluded above are
+  // excluded because the restore PRESERVES this device's copy, not because
+  // nobody checks them. The shelf entry the export just wrote must still be
+  // there — if a restore rewound it, the shelf would list files that no longer
+  // exist and would have lost the very entry the restore came from.
+  const shelf = settingRow(afterRaw, BACKUP_HISTORY_KEY)?.value as
+    | { entries?: Array<{ name?: string }> }
+    | Array<{ name?: string }>
+    | undefined;
+  const entries = Array.isArray(shelf) ? shelf : (shelf?.entries ?? []);
+  expect(entries.length).toBeGreaterThan(0);
+  expect(entries.some((e) => e.name === download.suggestedFilename())).toBe(true);
 });
 
 test('a restore confirmation states what it is about to replace', async ({ page }) => {
