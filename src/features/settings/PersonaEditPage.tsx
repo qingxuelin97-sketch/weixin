@@ -20,6 +20,8 @@ import type { PersonaVM, ProviderVM } from '../../data/types';
 import { makePersona, PERSONA_LIMITS } from '../../data/persona-defaults';
 import { useGuard } from '../../app/useGuard';
 import { getDrift, explainDrift, resetDrift, type DriftExplanation } from '../../ai/drift';
+import type { WorldbookEntry } from '../../ai/worldbook';
+import { askEntryFields, editWorldbookEntry, newEntry } from './worldbook-edit';
 import { importStCard, exportStCard } from '../../ai/sillytavern';
 import { saveTextFile } from '../../lib/save-file';
 import { logError } from '../../lib/errlog';
@@ -68,10 +70,25 @@ export function PersonaEditPage() {
   const [pickingAvatar, setPickingAvatar] = useState(false);
 
   const [drifted, setDrifted] = useState<DriftExplanation[]>([]);
+  const [personaBook, setPersonaBook] = useState<WorldbookEntry[]>([]);
 
   useEffect(() => {
     void repo.getProviders().then((all) => setProviders(all.filter((x) => x.enabled)));
   }, []);
+
+  // Her own worldbook entries (M-I18). They were always addressable — as rows
+  // in the global list wearing a 「· 角色 XX」 suffix — which meant the only way
+  // to see what lore ONE character carries was to read every entry in the app
+  // and match the suffix by eye. They belong next to her card; the rows are
+  // the same rows, so the global list keeps showing them too.
+  const reloadBook = () => {
+    if (!contactId) return;
+    void repo
+      .getWorldbook()
+      .then((all) => setPersonaBook(all.filter((e) => e.scope === 'persona' && e.scopeId === contactId)))
+      .catch(() => {});
+  };
+  useEffect(reloadBook, [contactId]);
 
   // How she has actually changed since the card was written (M-H1). Shown here
   // rather than only in the state page because this is where the user comes to
@@ -128,6 +145,7 @@ export function PersonaEditPage() {
             await repo.putWorldbookEntry({ ...e, createdAt: now }).catch(() => {});
           }
           showToast(`已导入 ${card.worldbook.length} 条世界书条目`);
+          reloadBook();
         });
       }
       // 拟人化追问 (M-I2): imported cards are the ones most likely to read as
@@ -464,16 +482,22 @@ export function PersonaEditPage() {
               {drifted.map((d) => (
                 <div key={d.dim} className="field__hint">
                   · 她{d.label}（{d.delta > 0 ? '+' : ''}
-                  {d.delta.toFixed(2)}）
+                  {d.delta.toFixed(2)}）{d.reason ? `——${d.reason}` : ''}
                 </div>
               ))}
               <button
                 className="btn-ghost"
                 onClick={() => {
-                  void resetDrift(contactId).then(() => {
-                    setDrifted([]);
-                    showToast('已恢复到卡片');
-                  });
+                  // Re-read instead of blanking the list: reset clears the
+                  // STORED layer, and the goal layer on top of it is not stored
+                  // and fades on its own. Showing an empty list would be the
+                  // page claiming an undo it did not perform.
+                  void resetDrift(contactId)
+                    .then(() => getDrift(contactId, Date.now()))
+                    .then((d) => {
+                      setDrifted(explainDrift(d));
+                      showToast('已恢复到卡片');
+                    });
                 }}
               >
                 恢复到卡片
@@ -515,6 +539,53 @@ export function PersonaEditPage() {
               />
             </div>
           ))}
+        </div>
+
+        <div className="settings__group">
+          <div className="settings__group-title">她的世界书（只对这个角色生效）</div>
+          <div className="field">
+            <span className="field__hint">
+              关于她的设定——宠物、住处、你们之间的黑话。聊到相关话题时她会「记得」；
+              留空触发词 = 一直生效。全局条目仍在 设置 → 世界书。
+            </span>
+          </div>
+          {personaBook.length === 0 && (
+            <div className="field field--divided">
+              <span className="field__hint">还没有只属于她的条目</span>
+            </div>
+          )}
+          {personaBook.map((e) => (
+            <div
+              key={e.id}
+              className="settings__row settings__row--divided"
+              onClick={() => void editWorldbookEntry(e).then((changed) => changed && reloadBook())}
+            >
+              <span className="settings__label">
+                {e.title}
+                <span className="settings__value">
+                  {' '}
+                  · {e.keywords.length ? e.keywords.join('、') : '常驻'}
+                  {e.enabled ? '' : '（已停用）'}
+                </span>
+              </span>
+            </div>
+          ))}
+          <div className="field">
+            <button
+              className="btn-ghost"
+              onClick={() =>
+                guard('worldbook.add', async () => {
+                  const fields = await askEntryFields();
+                  if (!fields) return;
+                  await repo.putWorldbookEntry(newEntry(fields, 'persona', contactId, Date.now()));
+                  showToast('已添加');
+                  reloadBook();
+                })
+              }
+            >
+              添加条目
+            </button>
+          </div>
         </div>
 
         <div className="settings__group">

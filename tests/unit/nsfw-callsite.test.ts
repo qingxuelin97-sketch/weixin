@@ -9,6 +9,7 @@ import type { ChatProvider, GenerateOptions, CompletionResult, Bubble } from '..
 import type { ProviderVM, MessageVM } from '../../src/data/types';
 import { makePersona } from '../../src/data/persona-defaults';
 import { extractMemory, selectFactsForInjection } from '../../src/ai/memory';
+import { matchWorldbook, type WorldbookEntry } from '../../src/ai/worldbook';
 import { callDirector } from '../../src/ai/director';
 import { runAgentDm, type DmDeps, type DmPlan } from '../../src/ai/agent-dm';
 import {
@@ -387,6 +388,55 @@ describe('tier derivation is centralised (call sites cannot invent one)', () => 
     expect(out).toContain('小雨');
     expect(out).not.toContain(EXPLICIT);
     expect(out).toContain('…');
+  });
+});
+
+/**
+ * Worldbook selection is a SECOND way authored text reaches a prompt, and
+ * M-I18 gave it a second way to be selected (approximate matching). A gate
+ * that only covers the exact path is not a gate — the tier check has to sit
+ * ahead of BOTH, which is what these assert.
+ */
+describe('call site 5 — worldbook selection, exact and approximate (M-I18)', () => {
+  const T0 = 1_700_000_000_000;
+  const wb = (over: Partial<WorldbookEntry>): WorldbookEntry => ({
+    id: `wb_${over.id ?? 'x'}`,
+    title: 't',
+    keywords: [],
+    content: '内容',
+    scope: 'global',
+    priority: 50,
+    enabled: true,
+    createdAt: T0,
+    ...over,
+  });
+
+  it('nsfw lore never rides an off-tier surface, however it was matched', () => {
+    // 「触发」 is not in the query, so the only route in is the approximate one.
+    const e = wb({ id: 'a', nsfw: true, keywords: ['触发'], content: '她的猫叫年糕' });
+    expect(matchWorldbook([e], { query: '你家猫呢', tier: 'off' })).toEqual([]);
+    expect(matchWorldbook([e], { query: '你家猫呢', tier: 'ambiguous' })).toEqual([
+      '她的猫叫年糕',
+    ]);
+    // And the exact route agrees at both tiers.
+    expect(matchWorldbook([e], { query: '触发一下', tier: 'off' })).toEqual([]);
+    expect(matchWorldbook([e], { query: '触发一下', tier: 'ambiguous' })).toHaveLength(1);
+  });
+
+  it('someone else’s lore is not reachable by approximation either', () => {
+    const e = wb({ id: 'b', scope: 'persona', scopeId: 'ai_a', keywords: ['触发'], content: '她的猫叫年糕' });
+    expect(matchWorldbook([e], { query: '你家猫呢', contactId: 'ai_b', tier: 'full' })).toEqual([]);
+    expect(matchWorldbook([e], { query: '你家猫呢', contactId: 'ai_a', tier: 'full' })).toHaveLength(1);
+  });
+
+  it('both engines derive the tier for the worldbook call rather than declaring one', () => {
+    for (const f of ['src/ai/engine.ts', 'src/ai/group-engine.ts']) {
+      const code = readFileSync(resolve(__dirname, '../..', f), 'utf8');
+      // The `tier` handed to worldLinesFor is the same local the memory
+      // selection uses — never a literal (constitution rule #6).
+      expect(code).toMatch(/worldLinesFor\(\{[\s\S]{0,200}?\btier\b\s*[,}]/);
+      expect(code).not.toMatch(/worldLinesFor\(\{[\s\S]{0,200}?tier:\s*'/);
+    }
   });
 });
 

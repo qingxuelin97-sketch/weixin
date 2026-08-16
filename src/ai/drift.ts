@@ -20,12 +20,27 @@
  *   - every nudge keeps its reason. "她比刚认识时更主动了" is a feature;
  *     "她变了，不知道为什么" is a bug you cannot even file.
  *
+ * On top of that stored layer sits a SECOND, unstored one: the goal linkage
+ * (M-I14, restored in M-I18 — the merge that landed I14 resolved this file to
+ * the pre-I14 side and dropped it, and nothing was red because the test that
+ * should have caught it described the absence as intentional).
+ *
+ * 「她最近考过了，所以更爱找你」 is the whole point: a goal she has been
+ * chasing for weeks finishes, and for a few days she is measurably more
+ * forthcoming — then it decays back. That part is a PURE function of
+ * (contactId, t, epoch) — the same seeded goal timeline `goals.ts` hands the
+ * prompt and the share channel, so the three can never disagree about what
+ * happened. Nothing about it is written, which is also what makes it
+ * rollback-free: there is no row to reset, and it returns to zero on its own
+ * inside GOAL_DRIFT_WINDOW_MS.
+ *
  * Pure core, storage at the bottom. The clock is injected.
  */
 import type { PersonaVM } from '../data/types';
 import type { AffectEvent } from '../lib/affect';
 import { repo } from '../db/repo';
 import { logError } from '../lib/errlog';
+import { agentEpoch, goalEventsBetween, type GoalEvent, type GoalEventKind } from './goals';
 
 const DAY = 86_400_000;
 
@@ -51,8 +66,14 @@ export interface Drift {
   d: Partial<Record<DriftDim, number>>;
   /** Last time the delta was written or decayed. */
   at: number;
-  /** Why, newest first. Bounded — this is shown to the user, not logged. */
-  why: Array<{ text: string; at: number }>;
+  /**
+   * Why, newest first. Bounded — this is shown to the user, not logged.
+   *
+   * `dim` is set only for goal-caused reasons, which are attributable to one
+   * dimension; the event-driven reasons below are about the relationship as a
+   * whole and deliberately carry none.
+   */
+  why: Array<{ text: string; at: number; dim?: DriftDim }>;
 }
 
 const EMPTY: Drift = { d: {}, at: 0, why: [] };
@@ -130,6 +151,134 @@ export function applyEvent(prev: Drift, event: AffectEvent, now: number): Drift 
   return { d, at: now, why };
 }
 
+/* --------------------------- goal linkage --------------------------- */
+
+/** How far back a goal event still moves the needle at all. */
+export const GOAL_DRIFT_WINDOW_MS = 14 * DAY;
+
+/**
+ * How far the goal layer may move a dimension on its own.
+ *
+ * Deliberately smaller than DRIFT_CAP: months of how you treat her outrank one
+ * good week of hers. The two layers add, so the merged delta is bounded by
+ * DRIFT_CAP + GOAL_DRIFT_CAP and `applyDrift` still clamps the knob to 0..1.
+ */
+export const GOAL_DRIFT_CAP = 0.15;
+
+interface GoalImpulse {
+  dim: DriftDim;
+  amount: number;
+  halfLifeDays: number;
+}
+
+/**
+ * What each goal event does to her, and for how long.
+ *
+ * Completion is the headline effect and the plan's actual contract — 目标达成
+ * → proactivity 短期上扬，之后衰减回落 — so it is the largest impulse and the
+ * one with a half-life measured in days, not weeks. Nothing here becomes a new
+ * personality: past GOAL_DRIFT_WINDOW_MS every one of these is exactly zero.
+ */
+const GOAL_IMPULSES: Record<GoalEventKind, GoalImpulse[]> = {
+  completed: [
+    { dim: 'proactivity', amount: 0.12, halfLifeDays: 3 },
+    { dim: 'generosity', amount: 0.06, halfLifeDays: 3 },
+    { dim: 'likeRate', amount: 0.05, halfLifeDays: 2.5 },
+    { dim: 'commentRate', amount: 0.04, halfLifeDays: 2.5 },
+  ],
+  abandoned: [
+    { dim: 'proactivity', amount: -0.07, halfLifeDays: 4 },
+    { dim: 'commentRate', amount: -0.04, halfLifeDays: 4 },
+  ],
+  milestone: [{ dim: 'proactivity', amount: 0.03, halfLifeDays: 1.5 }],
+  setback: [
+    { dim: 'proactivity', amount: -0.03, halfLifeDays: 2 },
+    { dim: 'likeRate', amount: -0.02, halfLifeDays: 2 },
+  ],
+};
+
+function decayFactor(ageMs: number, halfLifeDays: number): number {
+  return Math.pow(0.5, ageMs / (halfLifeDays * DAY));
+}
+
+/** One dimension's goal-driven delta at `t`, with the events that caused it. */
+function goalPart(
+  events: GoalEvent[],
+  dim: DriftDim,
+  t: number,
+): { value: number; causes: Array<{ event: GoalEvent; contribution: number }> } {
+  let value = 0;
+  const causes: Array<{ event: GoalEvent; contribution: number }> = [];
+  for (const e of events) {
+    for (const imp of GOAL_IMPULSES[e.kind]) {
+      if (imp.dim !== dim) continue;
+      const c = imp.amount * decayFactor(t - e.at, imp.halfLifeDays);
+      value += c;
+      if (Math.abs(c) >= 0.01) causes.push({ event: e, contribution: c });
+    }
+  }
+  causes.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+  return { value: clamp(value, -GOAL_DRIFT_CAP, GOAL_DRIFT_CAP), causes };
+}
+
+function eventPhrase(e: GoalEvent): string {
+  switch (e.kind) {
+    case 'completed':
+      return `她刚做成了「${e.title}」`;
+    case 'abandoned':
+      return `她刚放弃了「${e.title}」`;
+    case 'milestone':
+      return `「${e.title}」刚有了进展`;
+    case 'setback':
+      return `「${e.title}」上刚受了点挫`;
+  }
+}
+
+const GOAL_DIM_PHRASE: Record<DriftDim, [up: string, down: string]> = {
+  proactivity: ['所以最近更爱主动来找你', '所以最近不太主动开口'],
+  generosity: ['所以最近对你格外大方', '所以最近手紧了些'],
+  likeRate: ['所以最近更爱给你点赞', '所以最近懒得点赞'],
+  commentRate: ['所以最近更爱在你朋友圈说话', '所以最近不太评论'],
+};
+
+/**
+ * The goal layer at `t`: pure, seeded, unstored.
+ *
+ * Exported so the transition can be tested without a database — the stored
+ * layer needs a repo, this one needs nothing but arithmetic.
+ */
+export function applyGoalDrift(
+  prev: Drift,
+  contactId: string,
+  now: number,
+  epoch = agentEpoch(contactId),
+): Drift {
+  const events = goalEventsBetween(contactId, now - GOAL_DRIFT_WINDOW_MS, now + 1, epoch).filter(
+    (e) => e.at <= now,
+  );
+  if (events.length === 0) return prev;
+
+  const d = { ...prev.d };
+  const why = [...prev.why];
+  const cap = DRIFT_CAP + GOAL_DRIFT_CAP;
+  for (const dim of DRIFT_DIMS) {
+    const { value, causes } = goalPart(events, dim, now);
+    if (Math.abs(value) < 0.001) continue;
+    d[dim] = clamp((d[dim] ?? 0) + value, -cap, cap);
+    const top = causes[0];
+    if (top) {
+      why.unshift({
+        text: `${eventPhrase(top.event)}，${GOAL_DIM_PHRASE[dim][top.contribution > 0 ? 0 : 1]}`,
+        at: top.event.at,
+        dim,
+      });
+    }
+  }
+  // Goal reasons are the newest and the most specific, so they lead; the older
+  // relationship reasons keep whatever room is left.
+  return { ...prev, d, why: why.slice(0, WHY_KEEP + DRIFT_DIMS.length) };
+}
+
 /**
  * The persona as she is NOW: the card plus the delta, clamped to each field's
  * legal range.
@@ -154,6 +303,13 @@ export interface DriftExplanation {
   delta: number;
   /** "更主动了" / "没那么主动了" */
   label: string;
+  /**
+   * The cause, in words, when there is an attributable one — today that means
+   * a goal event ("她刚做成了「考出那张证」，所以最近更爱主动来找你"). Absent
+   * when the movement is the slow residue of how the two of you have been
+   * talking, which has no single moment to point at.
+   */
+  reason?: string;
 }
 
 const DIM_LABEL: Record<DriftDim, [up: string, down: string]> = {
@@ -175,7 +331,9 @@ export function explainDrift(drift: Drift | undefined, floor = 0.05): DriftExpla
   return DRIFT_DIMS.flatMap((dim) => {
     const delta = drift.d[dim] ?? 0;
     if (Math.abs(delta) < floor) return [];
-    return [{ dim, delta, label: DIM_LABEL[dim][delta > 0 ? 0 : 1] }];
+    // Newest first, so the freshest attributable cause for this dimension wins.
+    const reason = drift.why.find((w) => w.dim === dim)?.text;
+    return [{ dim, delta, label: DIM_LABEL[dim][delta > 0 ? 0 : 1], ...(reason ? { reason } : {}) }];
   });
 }
 
@@ -193,11 +351,24 @@ function readDrift(raw: unknown): Drift {
   };
 }
 
+/**
+ * Drift as it is felt right now: the stored, decayed relationship layer plus
+ * the unstored goal layer. Every behavioural read goes through here, so a goal
+ * she just finished reaches the heartbeat interval through the SAME
+ * `driftedPersona` → `proactMul` channel mood and affect already ride — no
+ * second pacing mechanism (constitution rule #5).
+ */
 export async function getDrift(contactId: string, now: number): Promise<Drift> {
+  let stored = EMPTY;
   try {
-    return decayDrift(readDrift(await repo.getSetting(driftKey(contactId))), now);
+    stored = decayDrift(readDrift(await repo.getSetting(driftKey(contactId))), now);
   } catch {
-    return EMPTY;
+    stored = EMPTY;
+  }
+  try {
+    return applyGoalDrift(stored, contactId, now);
+  } catch {
+    return stored;
   }
 }
 

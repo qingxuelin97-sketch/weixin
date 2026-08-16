@@ -18,7 +18,13 @@ import {
   actionExists,
 } from '../ai/scheduler';
 import { claimRedPacket, acceptTransfer } from '../ai/money-service';
-import { runGift, considerGift, considerCall, considerGroupGift } from '../ai/gift-service';
+import {
+  runGift,
+  considerGift,
+  considerCall,
+  considerGroupGift,
+  lastGiftAt,
+} from '../ai/gift-service';
 import { sendProactiveMessage } from '../ai/engine';
 import { sendGroupProactiveMessage } from '../ai/group-engine';
 import { scheduleHeartbeat, shouldNudge } from '../ai/heartbeat';
@@ -516,12 +522,32 @@ async function runForegroundPass(): Promise<void> {
 
   // 1) Backfill what "happened" while away. First, so the fabricated past is
   //    queued before any future scheduling looks at it.
-  const singles = s.conversations.flatMap<SimContact>((c) => {
+  const singlesBase = s.conversations.flatMap<SimContact>((c) => {
     if (c.type !== 'single' || !c.peerId) return [];
     const persona = s.personaFor(c.peerId);
     if (!persona) return [];
     return [{ contactId: c.peerId, convId: c.id, persona, lastMsgAt: c.lastMsgAt }];
   });
+  // Offline gifts (M-I18): `planGift` is pure, but two of its inputs are not —
+  // the relationship edge and when she last gave money here. Same arrangement
+  // as the group activity knob below: the impure edge resolves them, simulate
+  // stays a pure function of its arguments.
+  const singles = await Promise.all(
+    singlesBase.map(async (c) => {
+      try {
+        const edge = await getEdge('self', c.contactId, now);
+        return {
+          ...c,
+          gift: {
+            affinity: effectiveAffinity(edge, c.persona.affinityInit),
+            lastGiftAt: await lastGiftAt(c.convId),
+          },
+        };
+      } catch {
+        return c; // no gift context → no offline gift, never a failed backfill
+      }
+    }),
+  );
   const groupsBase = s.conversations.flatMap<SimGroup>((c) => {
     if (c.type !== 'group') return [];
     const memberIds = (c.memberIds ?? []).filter((id) => s.personaFor(id));
@@ -541,8 +567,15 @@ async function runForegroundPass(): Promise<void> {
     .getMoments({ limit: 8 })
     .then((ms) => ms.map((m) => ({ id: m.id, authorId: m.authorId, createdAt: m.createdAt })))
     .catch(() => []);
+  // Read once and used twice — by the offline 拉群 planner below and by the
+  // live one at 1.6. Two reads would be two answers to "are these three
+  // already in a room together", and the whole point of the check is that
+  // there is only one.
+  const groupRosters = s.conversations
+    .filter((c) => c.type === 'group' && !c.isHidden)
+    .map((c) => c.memberIds ?? []);
   try {
-    await runBackfill(now, { singles, groups, recentMoments });
+    await runBackfill(now, { singles, groups, recentMoments, groupRosters });
   } catch (e) {
     // A failed backfill must never block startup — the app still works, it
     // just doesn't show a fabricated absence this time. But it must not fail
@@ -583,9 +616,6 @@ async function runForegroundPass(): Promise<void> {
   // 1.6) Group proposals (M-I3): a friend with two mutual AI friends who do
   // not already share a room with her occasionally suggests forming one.
   // Same discipline as events: seeded weekly, stable id, actionExists guard.
-  const groupRosters = s.conversations
-    .filter((c) => c.type === 'group' && !c.isHidden)
-    .map((c) => c.memberIds ?? []);
   for (const c of singles) {
     try {
       const relationAiIds = Object.keys(c.persona.relations).filter(

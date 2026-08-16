@@ -18,7 +18,7 @@ import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { refreshConvState, convStateDirective } from './conv-state';
 import { collectTurnImages } from './vision-context';
 import { logError } from '../lib/errlog';
-import { selectFactsForInjection } from './memory';
+import { selectFactsForInjection, withConvSummary } from './memory';
 import { effectiveTier, voiceMeta, preferredRoute, cardResolver, type EngineHooks } from './engine';
 import { materializeBubble } from './bubble-materialize';
 import { gameDirective } from './game-react';
@@ -392,6 +392,16 @@ async function startActorLines(
       // Topical retrieval for the actor too: what the group is talking about now.
       query: groupQuery,
     });
+  // The room's rolling summary from the memory loop (M-D2, wired here in
+  // M-I18). The writer side (`putConvSummary`) never cared whether the
+  // conversation was a group, but the only reader was engine.ts — so a group
+  // summary was generated, backed up and cascade-deleted while never once
+  // entering a prompt: come back a day later and she picked up the thread in
+  // your DM but had no idea what the group had been talking about.
+  // Same shape as the 1:1 side on purpose — inside the memory layer, ahead of
+  // the retrieved facts, layer order untouched (constitution §2).
+  const summaryRow = await repo.getConvSummary(conv.id);
+  memory.topK = withConvSummary(memory.topK, summaryRow?.summary, 'group');
   // Worldbook (M-I4): lore scoped to this member or this room rides along.
   memory.world = await worldLinesFor({
     query: groupQuery,
