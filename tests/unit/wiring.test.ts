@@ -83,16 +83,88 @@ describe('every scheduled-action kind has a handler', () => {
   }
 });
 
-describe('the story beat does not schedule itself from inside its own work', () => {
-  it('runStoryBeat leaves scheduling to the chain', () => {
-    const svc = read('src/ai/story-service.ts');
-    const work = svc.slice(svc.indexOf('export async function runStoryBeat'));
-    expect(
-      work.includes('scheduleNextBeat('),
-      'runStoryBeat 不能自己排下一拍——那样 playBeat 一抛错就再也没有下一拍了。' +
-        '排期归 chainNextBeat（先续链后干活）。',
-    ).toBe(false);
+/**
+ * A self-chaining kind must have exactly ONE owner of "queue the next one":
+ * the chain step. This used to assert it for `runStoryBeat` alone, and the one
+ * kind it did not cover was broken — `runMomentPost` called
+ * `scheduleNextMoment` from inside the work, so every fired `moment_post` left
+ * TWO pending rows (the chain's `from` is taken before the LLM round-trip, the
+ * work's after, so `mpost_<id>_<at>` differs and the id-upsert cannot collapse
+ * them). Each of those forked again: an AI's moments double every period on any
+ * device with a provider configured.
+ *
+ * Invisible offline — with no provider both `from`s land on the same
+ * millisecond, the ids collide, and the duplicate folds away — which is why
+ * four rounds of green tests never saw it. So the guard reads the SOURCE, not
+ * behaviour, and covers the whole class instead of one instance.
+ */
+describe('a self-chaining kind schedules itself from the chain, never from the work', () => {
+  const OWNERS: Record<string, { file: string; work: string; scheduler: string }> = {
+    heartbeat: {
+      file: 'src/ai/engine.ts',
+      work: 'export async function sendProactiveMessage',
+      scheduler: 'scheduleHeartbeat(',
+    },
+    agent_dm: {
+      file: 'src/ai/agent-dm.ts',
+      work: 'export async function runAgentDm',
+      scheduler: 'planNextDm(',
+    },
+    moment_post: {
+      file: 'src/ai/moments-service.ts',
+      work: 'export async function runMomentPost',
+      scheduler: 'scheduleNextMoment(',
+    },
+    story_tick: {
+      file: 'src/ai/story-service.ts',
+      work: 'export async function runStoryBeat',
+      scheduler: 'scheduleNextBeat(',
+    },
+    // This one's work lives in handlers.ts and its chain re-enqueues the kind
+    // directly rather than through a named scheduler, so the token to look for
+    // is the kind itself.
+    group_event: {
+      file: 'src/ai/handlers.ts',
+      work: 'export async function handleGroupEvent',
+      scheduler: "kind: 'group_event'",
+    },
+    auto_backup: {
+      file: 'src/ai/auto-backup.ts',
+      work: 'export async function runAutoBackup',
+      scheduler: 'ensureAutoBackupScheduled(',
+    },
+  };
+
+  // Every self-chaining kind must appear above: adding one to SELF_CHAINING
+  // without saying where its work lives leaves it unguarded, which is exactly
+  // how moment_post slipped through.
+  it('names an owner for every self-chaining kind', () => {
+    expect(Object.keys(OWNERS).sort()).toEqual([...SELF_CHAINING].sort());
   });
+
+  for (const [kind, o] of Object.entries(OWNERS)) {
+    it(`${kind}: ${o.work.split(' ').pop()} does not call ${o.scheduler}`, () => {
+      const src = read(o.file);
+      const at = src.indexOf(o.work);
+      // A renamed/moved work function must fail loudly, not pass vacuously.
+      expect(at, `${o.file} 里找不到 ${o.work}——守卫失去了目标，请更新 OWNERS`).toBeGreaterThan(-1);
+      const body = src.slice(at);
+      const end = body.indexOf('\nexport ', 1);
+      const work = end > 0 ? body.slice(0, end) : body;
+      // Comments may NAME the scheduler (the moment_post fix explains at length
+      // why it is absent), so judge on calls that are not inside a comment.
+      const calls = work
+        .split('\n')
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .filter((l) => l.includes(o.scheduler));
+      expect(
+        calls,
+        `${kind} 的 work 自己排了下一次（${o.scheduler}）。自续链的排期归 chain 步：` +
+          `两个主人 = 每轮翻倍的待办，而且离线测不出来（两次 Date.now() 落在同一毫秒，` +
+          `id 相同被 upsert 折叠）。`,
+      ).toEqual([]);
+    });
+  }
 });
 
 describe('the gift planner is actually consulted', () => {

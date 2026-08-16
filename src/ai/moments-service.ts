@@ -97,9 +97,23 @@ export async function runMomentPost(
 ): Promise<void> {
   const stamp = at ?? hooks.now();
   const generated = await generateMomentPost(persona, peer, stamp);
-  // Chain the next post even when generation failed, or this persona goes
-  // permanently silent after one network blip.
-  await scheduleNextMoment(persona, hooks.now());
+  // NO `scheduleNextMoment` here (M-I18). There used to be one, with the note
+  // "chain the next post even when generation failed" — a concern that stopped
+  // being this function's business in M-E1, when `moment_post` became a
+  // registerChainedHandler kind: the chain step runs BEFORE the work and has
+  // already queued the next post by the time generation is even attempted.
+  //
+  // Keeping both made TWO owners of "queue the next one", and their ids differ:
+  // `mpost_<id>_<at>` where `at = from + gap`, chain's `from` taken before the
+  // LLM round-trip and this one's after it. `enqueue` upserts by id, so two
+  // different ids meant two pending rows — and each of those forked again next
+  // cycle. On a device with a provider configured, an AI's moments double every
+  // period until the feed is nothing else, each row a paid call.
+  //
+  // It survived four rounds because it is invisible offline: with no provider
+  // `generateMomentPost` returns in well under a millisecond, both `from`s land
+  // on the same `Date.now()`, the ids collide, and the upsert silently folds
+  // them back into one. Every test in this repo runs in exactly that condition.
   if (!generated) return;
 
   const moment: MomentVM = {
