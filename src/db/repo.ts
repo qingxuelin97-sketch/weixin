@@ -160,7 +160,9 @@ export const DELETE_CONTACT_CASCADE: Record<string, 'cascade' | 'exempt'> = {
   memory_facts: 'cascade', // rows whose subject is the contact
   conv_summaries: 'cascade', // via deleteConversation
   scheduled_actions: 'cascade', // rows whose payload names the contact or a dead thread
-  settings: 'cascade', // affect/drift/threads/stance/relarc + per-dead-conv keys
+  // One KV store doing the work of a dozen tables, so this one word is not
+  // enough on its own — `SETTINGS_KEY_CASCADE` below classifies it key by key.
+  settings: 'cascade',
   moments: 'cascade', // authored posts + their social rows
   moment_likes: 'cascade', // likes BY the contact anywhere, likes ON their posts
   moment_comments: 'cascade',
@@ -181,6 +183,149 @@ export const DELETE_CONTACT_CASCADE: Record<string, 'cascade' | 'exempt'> = {
   story_saves: 'cascade',
   worldbook: 'cascade', // persona-scoped entries die with their contact
   favorites: 'cascade', // snapshots FROM the contact (or their dead threads) go too
+};
+
+/**
+ * Separator used by `pairKey()` (src/ai/relationship.ts) to fuse two ids into
+ * one undirected edge key. It lives HERE, and relationship.ts imports it, so
+ * the cascade's per-entry surgery on `rel_edges` cannot drift from the writer.
+ */
+export const REL_PAIR_SEP = '~';
+
+/** How a settings key encodes what it belongs to. */
+export type SettingsKeyScope =
+  /** One row for the whole app; never owned by a contact. */
+  | 'global'
+  /** `<prefix><contactId>`. */
+  | 'contact'
+  /** `<prefix><convId>`. */
+  | 'conv'
+  /** `<prefix><fromId>:<toId>` — directional, matched from either side. */
+  | 'pair';
+
+export interface SettingsKeyRule {
+  scope: SettingsKeyScope;
+  /** What contact deletion does to the ROW itself. */
+  row: 'cascade' | 'exempt';
+  /**
+   * Set when the row's VALUE is a map keyed by ids. Such a row belongs to
+   * EVERYONE, so deleting it would take the survivors' data down with the
+   * deleted contact — the cascade cuts out only their ENTRIES instead.
+   * 'id' = plain contact ids; 'pair' = `pairKey()` pairs (`a~b`).
+   */
+  entries?: 'id' | 'pair';
+  /** One line of reasoning. Mandatory: an unexplained 'exempt' is how a leak gets waved through. */
+  why: string;
+}
+
+/**
+ * The SECOND deleteContact ledger: every settings KEY, classified.
+ *
+ * `settings` is one flat KV store doing the work of a dozen tables, so
+ * `DELETE_CONTACT_CASCADE.settings = 'cascade'` says almost nothing. It read as
+ * "handled" while `agent_state:`, `goal_told:`, `giftAt:`, `callAt:`, `memext:`
+ * and `groupNick:` all quietly survived deletion (M-I18 audit): a new
+ * per-contact key needs neither a new object store nor a ledger edit to ship,
+ * so nothing could turn red.
+ *
+ * Hence this table — and hence the cascade READS it instead of carrying its own
+ * hand-written whitelist. Registering a prefix as contact/conv/pair + 'cascade'
+ * is what MAKES deletion handle it. A guard test scans every
+ * `putSetting`/`getSetting` key expression in src/ and asserts the two sets
+ * match exactly, so an unregistered prefix is red before it can leak.
+ *
+ * Key = the exact key for 'global' rows, or the prefix INCLUDING its trailing
+ * ':' for scoped ones.
+ */
+export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
+  /* ---- per contact ---- */
+  'affect:': { scope: 'contact', row: 'cascade', why: '事件情绪脉冲；人没了，脉冲没有主语' },
+  'drift:': { scope: 'contact', row: 'cascade', why: '人设漂移累积量' },
+  'threads:': { scope: 'contact', row: 'cascade', why: '已追问过的话头台账' },
+  'goal_told:': {
+    scope: 'contact',
+    row: 'cascade',
+    why: 'I14 目标结局「一辈子只播一次」台账；残留会让复用 id 的新人一出生就「已经播过了」',
+  },
+  'agent_state:': {
+    scope: 'contact',
+    row: 'cascade',
+    why: 'I-H1 防刷屏冷却；残留会让复用 id 的新人一出生就在 24h 静默里',
+  },
+
+  /* ---- per conversation (deleted when that conversation dies with the contact) ---- */
+  'convstate:': { scope: 'conv', row: 'cascade', why: '会话话题/未答问题/承诺，随会话消亡' },
+  'topic:': { scope: 'conv', row: 'cascade', why: '群话题缓存，随会话消亡' },
+  'groupCfg:': { scope: 'conv', row: 'cascade', why: '群配置，随会话消亡' },
+  'groupBuild:': { scope: 'conv', row: 'cascade', why: '一键建群的断点状态，随会话消亡' },
+  'giftAt:': { scope: 'conv', row: 'cascade', why: '上次送钱时间戳，随会话消亡' },
+  'callAt:': { scope: 'conv', row: 'cascade', why: '上次来电时间戳，随会话消亡' },
+  'memext:': { scope: 'conv', row: 'cascade', why: '记忆抽取水位（msgId），随会话消亡' },
+  'groupNick:': {
+    scope: 'conv',
+    row: 'cascade',
+    entries: 'id',
+    // The group SURVIVES a member's deletion (step 4 only trims the roster), so
+    // the row usually stays — but the dead member's alias inside it must not.
+    why: '群昵称表：会话死则整行死；会话活着则只剔除死者那一条',
+  },
+
+  /* ---- per directional pair ---- */
+  'stance:': { scope: 'pair', row: 'cascade', why: 'A 对 B 的单向态度' },
+  'relarc:': { scope: 'pair', row: 'cascade', why: 'A 与 B 的关系弧标记' },
+
+  /* ---- a global row that nonetheless carries per-contact ENTRIES ---- */
+  rel_edges: {
+    scope: 'global',
+    row: 'exempt',
+    entries: 'pair',
+    why: '整张社交图存在一行里：删行=清空所有人的关系，所以按边删（见 deleteContactCascade 7.4）',
+  },
+
+  /* ---- global app config / bookkeeping: not per-contact at all ---- */
+  defaultProviderId: { scope: 'global', row: 'exempt', why: 'App 级 LLM 配置' },
+  nsfwProviderId: { scope: 'global', row: 'exempt', why: 'App 级 LLM 配置' },
+  nsfwGlobalTier: { scope: 'global', row: 'exempt', why: 'App 级开关' },
+  readReceipts: { scope: 'global', row: 'exempt', why: 'App 级开关' },
+  notifyGranted: { scope: 'global', row: 'exempt', why: '系统权限状态' },
+  notifyAsked: { scope: 'global', row: 'exempt', why: '系统权限状态' },
+  nativeBubble: { scope: 'global', row: 'exempt', why: '原生特性开关' },
+  nativeIncomingCall: { scope: 'global', row: 'exempt', why: '原生特性开关' },
+  momentsSeenAt: { scope: 'global', row: 'exempt', why: '朋友圈红点水位' },
+  momentsCoverRef: { scope: 'global', row: 'exempt', why: '本人朋友圈封面' },
+  ttsModel: { scope: 'global', row: 'exempt', why: 'App 级 TTS 配置' },
+  visionEnabled: { scope: 'global', row: 'exempt', why: 'App 级开关' },
+  asrConfig: { scope: 'global', row: 'exempt', why: 'App 级 ASR 配置' },
+  stickerSent: { scope: 'global', row: 'exempt', why: '本人发过的表情台账（主语是我，不是联系人）' },
+  'usage:daily': { scope: 'global', row: 'exempt', why: '按天聚合的用量，键是日期不是 id' },
+  lastSelftest: { scope: 'global', row: 'exempt', why: '自检结果' },
+  lastForegroundAt: { scope: 'global', row: 'exempt', why: '回填屏障时间戳' },
+  lastBackupAt: { scope: 'global', row: 'exempt', why: '备份时间戳' },
+  autoBackupFreq: { scope: 'global', row: 'exempt', why: '备份配置' },
+  autoBackupCounter: { scope: 'global', row: 'exempt', why: '备份计数器' },
+  backupWatermarks: { scope: 'global', row: 'exempt', why: '按 store 名索引的增量水位，不含 id' },
+  backupHistory: { scope: 'global', row: 'exempt', why: '备份文件清单' },
+  groupBuildActive: {
+    scope: 'global',
+    row: 'exempt',
+    why: '当前建群会话指针；值是 convId，但行本身是全局单例',
+  },
+  groupBuild: {
+    scope: 'global',
+    row: 'exempt',
+    why: '一键建群的老单行状态，只在迁移到 groupBuild:<convId> 时读一次',
+  },
+  restoreInProgress: { scope: 'global', row: 'exempt', why: '恢复中断标记' },
+  sqliteMigratedAt: { scope: 'global', row: 'exempt', why: 'IDB→SQLite 迁移完成时间' },
+  sqliteMigrateProgress: { scope: 'global', row: 'exempt', why: 'IDB→SQLite 迁移断点' },
+  __crypto_master: {
+    scope: 'global',
+    row: 'exempt',
+    // Written straight to the store (idbPut) rather than through putSetting so
+    // the live CryptoKey never round-trips through JSON. Deleting it would
+    // brick every stored API key — see CLAUDE.md's CryptoKey trap.
+    why: '设备本机主密钥；删它=所有已存 API key 永久解不开',
+  },
 };
 
 /**
@@ -286,26 +431,54 @@ export async function deleteContactCascade(
     }
   }
 
-  // 7) Per-contact settings rows. Contact ids never contain ':', so the
-  //    directional keys are matched exactly from either side.
+  // 7) Per-contact / per-conversation settings ROWS, driven entirely by
+  //    `SETTINGS_KEY_CASCADE`. This used to be a hand-written whitelist, which
+  //    is why five key families outlived deletion for a year: adding a key
+  //    never forced anyone to come here. Now registering the prefix IS the fix.
+  //    Contact ids never contain ':', so prefix + exact tail is an exact match,
+  //    and the directional `pair` keys are matched from either side.
   const settingKeys = await ops.allSettingKeys();
-  const isTheirs = (k: string) =>
-    k === `affect:${id}` ||
-    k === `drift:${id}` ||
-    k === `threads:${id}` ||
-    k.startsWith(`stance:${id}:`) ||
-    (k.startsWith('stance:') && k.endsWith(`:${id}`)) ||
-    k.startsWith(`relarc:${id}:`) ||
-    (k.startsWith('relarc:') && k.endsWith(`:${id}`)) ||
-    [...deadIds].some(
-      (cid) =>
-        k === `convstate:${cid}` ||
-        k === `topic:${cid}` ||
-        k === `groupCfg:${cid}` ||
-        k === `groupBuild:${cid}`,
-    );
+  const isTheirs = (k: string): boolean => {
+    for (const [prefix, rule] of Object.entries(SETTINGS_KEY_CASCADE)) {
+      if (rule.row !== 'cascade' || rule.scope === 'global') continue;
+      if (!k.startsWith(prefix)) continue;
+      const tail = k.slice(prefix.length);
+      if (rule.scope === 'contact' && tail === id) return true;
+      if (rule.scope === 'conv' && deadIds.has(tail)) return true;
+      if (rule.scope === 'pair') {
+        const [from, to] = tail.split(':');
+        if (from === id || to === id) return true;
+      }
+    }
+    return false;
+  };
   for (const k of settingKeys) {
     if (isTheirs(k)) await ops.deleteSettingRow(k);
+  }
+
+  // 7.4) Rows whose VALUE is a map keyed by ids — `entries` in the ledger.
+  //      `rel_edges` is the reason this step exists: ONE global row holds EVERY
+  //      pair's (familiarity, affinity), so deleting the row would wipe the
+  //      whole social graph — and leaving it whole is worse. Seed ids are FIXED
+  //      (`ai_lin` & co. are re-seeded verbatim whenever the app finds itself
+  //      empty), so a survivor edge means the NEXT 林 inherits the dead one's
+  //      accumulated closeness: old-friend heartbeat pacing and like odds on
+  //      day one. Cut per ENTRY, never per row.
+  for (const [prefix, rule] of Object.entries(SETTINGS_KEY_CASCADE)) {
+    if (!rule.entries) continue;
+    const rowKeys =
+      rule.scope === 'global' ? [prefix] : settingKeys.filter((k) => k.startsWith(prefix));
+    for (const rowKey of rowKeys) {
+      const map = await repo.getSetting<Record<string, unknown>>(rowKey);
+      // Already deleted above (its conversation died), or never written.
+      if (!map || typeof map !== 'object' || Array.isArray(map)) continue;
+      const kept = Object.entries(map).filter(([entryKey]) =>
+        rule.entries === 'pair' ? !entryKey.split(REL_PAIR_SEP).includes(id) : entryKey !== id,
+      );
+      if (kept.length !== Object.keys(map).length) {
+        await repo.putSetting(rowKey, Object.fromEntries(kept));
+      }
+    }
   }
 
   // 7.5) Worldbook: entries scoped to this persona, or to a dead thread.

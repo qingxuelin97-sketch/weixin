@@ -12,7 +12,7 @@
  * reads in the math, no randomness. Same events at the same timestamps always
  * produce the same edge (backfill/replay safe, rule #4).
  */
-import { repo } from '../db/repo';
+import { repo, REL_PAIR_SEP } from '../db/repo';
 
 export interface RelEdge {
   /** 0..100, monotonically non-decreasing — you can't un-know someone. */
@@ -47,9 +47,15 @@ export const REL_SCORES: Record<RelEventKind, { fam: number; aff: number }> = {
 const DAY_MS = 86_400_000;
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-/** Canonical undirected pair key — 'self' sorts like any other id. */
+/**
+ * Canonical undirected pair key — 'self' sorts like any other id.
+ *
+ * The separator comes from `src/db/repo.ts` because deleteContact's cascade has
+ * to SPLIT these keys again (the whole graph lives in one settings row, so
+ * deletion is per-edge surgery). Two copies of '~' would silently stop matching.
+ */
 export function pairKey(a: string, b: string): string {
-  return [a, b].sort().join('~');
+  return [a, b].sort().join(REL_PAIR_SEP);
 }
 
 export function makeEdge(baseline: number, now: number): RelEdge {

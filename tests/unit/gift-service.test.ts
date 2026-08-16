@@ -17,7 +17,10 @@ const packets = new Map<string, Record<string, unknown>>();
 const transfers = new Map<string, Record<string, unknown>>();
 const walletTxs: Array<Record<string, unknown>> = [];
 
-vi.mock('../../src/db/repo', () => ({
+// Only `repo` is doubled — the module's CONSTANTS (REL_PAIR_SEP, the cascade
+// ledgers) pass through, so adding one there never breaks this mock again.
+vi.mock('../../src/db/repo', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/db/repo')>()),
   repo: {
     getSetting: async (k: string) => settings.get(k),
     putSetting: async (k: string, v: unknown) => void settings.set(k, v),

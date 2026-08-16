@@ -21,7 +21,12 @@ const settings = new Map<string, unknown>();
 /** Message rows written this test, doubling as the transcript the engines read. */
 const rows: Array<Omit<MessageVM, 'id'>> = [];
 /** Anything not named below answers with an empty list — nothing here reads rows. */
-vi.mock('../../src/db/repo', () => ({
+// Passthrough mock: replacing this module WHOLESALE drops its non-repo
+// exports (REL_PAIR_SEP, SETTINGS_KEY_CASCADE…), and a consumer importing
+// one of those then breaks the whole module graph — which surfaces as an
+// unrelated test returning nothing at all rather than as a missing export.
+vi.mock('../../src/db/repo', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/db/repo')>()),
   repo: new Proxy(
     {
       getSetting: async (k: string) => settings.get(k),
