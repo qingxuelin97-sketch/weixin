@@ -132,7 +132,9 @@
   color: var(--color-text-placeholder);
 }
 
-/* M-D3: navbar ＋ dropdown & conversation long-press menu */
+/* M-D3: navbar ＋ dropdown. The conversation long-press menu moved to the
+   shared <LongPressMenu/> (.lp-menu) in I18 — it now wears the chat page's
+   dark capsule instead of its own light card. */
 .chatlist-overlay {
   position: fixed;
   inset: 0;
@@ -149,11 +151,6 @@
   min-width: 140px;
 }
 .plus-menu button {
-  color: var(--color-text-on-brand);
-  border-bottom-color: var(--color-menu-divider, var(--color-hairline));
-}
-.plus-menu button,
-.conv-menu button {
   display: block;
   width: 100%;
   padding: 13px 18px;
@@ -161,27 +158,9 @@
   border: none;
   background: none;
   font-size: var(--fs-cell-title);
-  color: var(--color-text-primary);
-  border-bottom: 0.5px solid var(--color-hairline);
+  color: var(--color-text-on-brand);
+  border-bottom: 0.5px solid var(--color-menu-divider, var(--color-hairline));
 }
-.plus-menu button:last-child,
-.conv-menu button:last-child {
+.plus-menu button:last-child {
   border-bottom: none;
-}
-.conv-menu {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--color-cell-bg);
-  border-radius: 10px;
-  box-shadow: 0 6px 32px var(--color-overlay);
-  overflow: hidden;
-  min-width: 180px;
-  text-align: center;
-}
-.conv-menu button {
-  text-align: center;
-}
-.conv-menu__danger {
-  color: var(--color-badge) !important;
 }

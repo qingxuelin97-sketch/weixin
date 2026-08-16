@@ -125,6 +125,25 @@ export function GroupGeneratePage() {
     ).text;
   };
 
+  /**
+   * Apply a template to the form.
+   *
+   * The templates used to be hidden whenever `?rebuild=` was set, which made
+   * the one-tap presets unreachable from the only flow that ALREADY has a room
+   * to shape — the reconfigure entry on 聊天信息. A template means something
+   * slightly different there: it is a MOOD to re-cast an existing room with
+   * ("用这套气质重配"), not a roster to create. So the brief and the knobs
+   * apply, and the size stays whatever the room already is — shrinking a
+   * twelve-person group to a template's four is the one thing a "reconfigure"
+   * must not silently do. The knobs land on `groupCfg:<convId>` when the build
+   * completes, exactly as in the create flow.
+   */
+  const applyTemplate = (t: GroupTemplate) => {
+    tplRef.current = t;
+    setBrief(t.brief);
+    if (!rebuildConvId) setSize(t.size);
+  };
+
   const planIt = async () => {
     if (!brief.trim() || busy) return;
     setBusy(true);
@@ -284,30 +303,27 @@ export function GroupGeneratePage() {
               <span className="field__hint">
                 正在重新配置「{rebuildConv?.title ?? rebuildConvId}」——名字对得上的现有成员
                 直接沿用（不重复付费），新名字才会生成新人；现有聊天记录不动。
+                套模板＝用那套气质重配，群里现有的人数不会被模板改掉。
               </span>
             </div>
           </div>
         )}
 
-        {!rebuildConvId && (
-          <div className="settings__group">
-            <div className="settings__group-title">一键模板（可改再生成）</div>
-            {GROUP_TEMPLATES.map((t) => (
-              <div
-                key={t.id}
-                className="settings__row settings__row--divided"
-                onClick={() => {
-                  tplRef.current = t;
-                  setBrief(t.brief);
-                  setSize(t.size);
-                }}
-              >
-                <span className="settings__label">{t.name}</span>
-                <span className="settings__value">{t.tagline}</span>
-              </div>
-            ))}
+        <div className="settings__group">
+          <div className="settings__group-title">
+            {rebuildConvId ? '换一套气质（可改再生成）' : '一键模板（可改再生成）'}
           </div>
-        )}
+          {GROUP_TEMPLATES.map((t) => (
+            <div
+              key={t.id}
+              className="settings__row settings__row--divided"
+              onClick={() => applyTemplate(t)}
+            >
+              <span className="settings__label">{t.name}</span>
+              <span className="settings__value">{t.tagline}</span>
+            </div>
+          ))}
+        </div>
 
         <div className="settings__group">
           <div className="settings__group-title">这是个什么群</div>

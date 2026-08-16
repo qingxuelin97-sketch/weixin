@@ -9,9 +9,11 @@ import {
 } from '../../components/icons';
 import { VoiceInputButton } from './VoiceInput';
 import { Avatar } from '../../components/Avatar';
+import { Badge } from '../../components/Badge';
 import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
 import { Sheet } from '../../components/Sheet';
+import { LongPressMenu, type LongPressMenuItem } from '../../components/LongPressMenu';
 import { useDismissable } from '../../app/useDismissable';
 import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
 import { useMedia } from '../../components/useMedia';
@@ -260,15 +262,9 @@ export function ChatPage() {
       }
     };
   }, [convId]);
-  useEffect(() => {
-    if (!menu) return;
-    // Any further interaction dismisses the menu, WeChat-style.
-    const close = () => setMenu(null);
-    document.addEventListener('pointerdown', close, { capture: true });
-    return () => document.removeEventListener('pointerdown', close, { capture: true });
-  }, [menu]);
-  // Hardware back: close the topmost chat overlay before leaving the page.
-  useDismissable(!!menu, () => setMenu(null));
+  // The message menu's scrim, dismiss-stack registration and "any further
+  // interaction closes it" behaviour all moved into <LongPressMenu/> (I18) —
+  // where the chat list gets exactly the same three, instead of its own.
   useDismissable(composer.mode === 'emoji' || composer.mode === 'plus', composer.closeAll);
 
   /**
@@ -838,15 +834,86 @@ export function ChatPage() {
   const isGroup = conv.type === 'group';
   const peerContact = conv.peerId ? contactById(conv.peerId) : undefined;
 
+  /**
+   * The long-press capsule's contents for one message.
+   *
+   * A list rather than conditional JSX since I18: the menu itself is now
+   * <LongPressMenu/> (shared with the chat list), so what stays here is only
+   * WHICH actions this message affords — which is the part that is genuinely
+   * message-specific. Closing is the menu's job; these handlers no longer have
+   * to remember to do it.
+   */
+  const msgMenuItems = (m: MessageVM): LongPressMenuItem[] => {
+    const items: LongPressMenuItem[] = [];
+    const isText = m.type === 'text' && Boolean(m.content);
+    if (isText) items.push({ label: '复制', onSelect: () => copyText(m) });
+    if (canRecall(m, Date.now())) items.push({ label: '撤回', onSelect: () => void recallOwn(m) });
+    if (isText && !m.isRecalled) {
+      items.push({
+        label: '引用',
+        onSelect: () => {
+          const who =
+            m.senderId === 'self'
+              ? '我'
+              : (contactById(m.senderId)?.remark ?? contactById(m.senderId)?.name ?? '');
+          setQuote({ msgId: m.id, text: `${who}: ${(m.content ?? '').slice(0, 40)}` });
+        },
+      });
+    }
+    // Only on the AI's own last turn: regenerating anything else would rewrite
+    // history rather than correct the newest line.
+    if (
+      m.senderId !== 'self' &&
+      !isGroup &&
+      !m.isRecalled &&
+      messages.at(-1)?.senderId === m.senderId
+    ) {
+      items.push({
+        label: '重新生成',
+        onSelect: () => guard('chat.regenerate', () => regenerate()),
+      });
+      items.push({
+        label: '让她重说',
+        onSelect: () => {
+          void showPrompt({
+            title: '让她重说',
+            placeholder: '例：别这么客套 / 短一点',
+          }).then((steer) => {
+            if (steer?.trim()) guard('chat.steer', () => regenerate(steer.trim()));
+          });
+        },
+      });
+    }
+    if (
+      ['text', 'image', 'sticker', 'location', 'file', 'link', 'contact_card'].includes(m.type) &&
+      !m.isRecalled
+    ) {
+      items.push({ label: '转发', onSelect: () => setForwarding(m) });
+    }
+    if (m.type !== 'system' && !m.isRecalled) {
+      items.push({ label: '收藏', onSelect: () => void favoriteMsg(m) });
+    }
+    items.push({
+      label: '多选',
+      onSelect: () => {
+        setSelecting(true);
+        setSelected(new Set([m.id]));
+      },
+    });
+    items.push({
+      label: '删除',
+      onSelect: () => void deleteMessage(convId, m.id).catch(() => showToast('删除失败')),
+    });
+    return items;
+  };
+
   return (
     <div className="chat-page" onClick={() => composer.mode !== 'none' && composer.closeAll()}>
       <header className="navbar chat-nav">
         <div className="navbar__left">
           <button className="navbar__btn chat-nav__back" aria-label="返回" onClick={() => navigate(-1)}>
             <IconBack />
-            {totalUnread > 0 && (
-              <span className="chat-nav__unread">{totalUnread > 99 ? '99+' : totalUnread}</span>
-            )}
+            <Badge className="chat-nav__unread" count={totalUnread} />
           </button>
         </div>
         <div className="navbar__title chat-nav__title">
@@ -1034,103 +1101,12 @@ export function ChatPage() {
       </div>
 
       {menu && (
-        <div
-          className="msg-menu"
-          role="menu"
-          style={{
-            left: Math.min(menu.x, window.innerWidth - 130),
-            top: Math.max(menu.y - 48, 52),
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {menu.msg.type === 'text' && menu.msg.content && (
-            <button role="menuitem" onClick={() => copyText(menu.msg)}>
-              复制
-            </button>
-          )}
-          {canRecall(menu.msg, Date.now()) && (
-            <button role="menuitem" onClick={() => void recallOwn(menu.msg)}>
-              撤回
-            </button>
-          )}
-          {menu.msg.type === 'text' && menu.msg.content && !menu.msg.isRecalled && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                const who = menu.msg.senderId === 'self' ? '我' : (contactById(menu.msg.senderId)?.remark ?? contactById(menu.msg.senderId)?.name ?? '');
-                setQuote({ msgId: menu.msg.id, text: `${who}: ${(menu.msg.content ?? '').slice(0, 40)}` });
-                setMenu(null);
-              }}
-            >
-              引用
-            </button>
-          )}
-          {/* Only on the AI's own last turn: regenerating anything else would
-              rewrite history rather than correct the newest line. */}
-          {menu.msg.senderId !== 'self' &&
-            !isGroup &&
-            !menu.msg.isRecalled &&
-            messages.at(-1)?.senderId === menu.msg.senderId && (
-              <>
-                <button role="menuitem" onClick={() => guard('chat.regenerate', () => regenerate())}>
-                  重新生成
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setMenu(null);
-                    void showPrompt({
-                      title: '让她重说',
-                      placeholder: '例：别这么客套 / 短一点',
-                    }).then((steer) => {
-                      if (steer?.trim()) guard('chat.steer', () => regenerate(steer.trim()));
-                    });
-                  }}
-                >
-                  让她重说
-                </button>
-              </>
-            )}
-          {['text', 'image', 'sticker', 'location', 'file', 'link', 'contact_card'].includes(
-            menu.msg.type,
-          ) &&
-            !menu.msg.isRecalled && (
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setForwarding(menu.msg);
-                  setMenu(null);
-                }}
-              >
-                转发
-              </button>
-            )}
-          {menu.msg.type !== 'system' && !menu.msg.isRecalled && (
-            <button role="menuitem" onClick={() => void favoriteMsg(menu.msg)}>
-              收藏
-            </button>
-          )}
-          <button
-            role="menuitem"
-            onClick={() => {
-              setSelecting(true);
-              setSelected(new Set([menu.msg.id]));
-              setMenu(null);
-            }}
-          >
-            多选
-          </button>
-          <button
-            role="menuitem"
-            onClick={() => {
-              const m = menu.msg;
-              setMenu(null);
-              void deleteMessage(convId, m.id).catch(() => showToast('删除失败'));
-            }}
-          >
-            删除
-          </button>
-        </div>
+        <LongPressMenu
+          at={{ x: menu.x, y: menu.y }}
+          label="消息操作"
+          onClose={() => setMenu(null)}
+          items={msgMenuItems(menu.msg)}
+        />
       )}
 
       {atPicker && conv.type === 'group' && (

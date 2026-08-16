@@ -64,6 +64,59 @@ export interface ChainResult<T> {
   error?: string;
 }
 
+/**
+ * Structured chain input (M-I2, wired in I18).
+ *
+ * `runChain` only ever took a string, so every caller that had FIELDS rather
+ * than a sentence — a persona card, a room's roster — wrote its own hand-rolled
+ * serializer (`describePersona` assembled its lines one template literal at a
+ * time). Three of those and the prompts drift: one uses `：`, one uses `: `, one
+ * forgets the placeholder for an empty field and sends the model a dangling
+ * label.
+ *
+ * Order is the CALLER'S and is never touched: sections serialize in array
+ * order, which is why this is an array and not a record — object key order is
+ * an implementation detail of how the object happened to be built, and a prompt
+ * whose field order depends on that is a prompt that changes when someone
+ * reorders an unrelated assignment. Same input, same bytes, every time.
+ */
+export interface ChainInputSection {
+  label: string;
+  /** A string renders inline (`label：value`); an array renders as bullets. */
+  value?: string | string[];
+  /** Printed when the value is empty — a bare label reads as a bug. */
+  fallback?: string;
+}
+
+export interface ChainInput {
+  /** Serialized in this exact order. */
+  sections: ChainInputSection[];
+  /** Free text appended after the sections (e.g. the brief the user typed). */
+  notes?: string;
+}
+
+const EMPTY_FALLBACK = '（空）';
+
+/** Deterministic text for a structured input. Pure: no clock, no randomness. */
+export function serializeChainInput(input: ChainInput): string {
+  const blocks: string[] = [];
+  for (const s of input.sections) {
+    const fallback = s.fallback ?? EMPTY_FALLBACK;
+    if (Array.isArray(s.value)) {
+      const items = s.value.map((v) => v.trim()).filter(Boolean);
+      blocks.push(
+        items.length
+          ? [`${s.label}：`, ...items.map((v) => `  - ${v}`)].join('\n')
+          : `${s.label}：\n  ${fallback}`,
+      );
+    } else {
+      blocks.push(`${s.label}：${s.value?.trim() || fallback}`);
+    }
+  }
+  if (input.notes?.trim()) blocks.push(input.notes.trim());
+  return blocks.join('\n');
+}
+
 /** Strip fences and any prose the model wrapped its JSON in. */
 export function extractJson(text: string): unknown {
   const body = text
@@ -104,13 +157,26 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** One sentence in. */
 export async function runChain<T>(
   input: string,
   spec: ChainSpec<T>,
   deps: ChainDeps,
+): Promise<ChainResult<T>>;
+/** Fields in — serialized here, deterministically, instead of by the caller. */
+export async function runChain<T>(
+  input: ChainInput,
+  spec: ChainSpec<T>,
+  deps: ChainDeps,
+): Promise<ChainResult<T>>;
+export async function runChain<T>(
+  input: string | ChainInput,
+  spec: ChainSpec<T>,
+  deps: ChainDeps,
 ): Promise<ChainResult<T>> {
   const attempts: GenIssue[][] = [];
-  let planned = input.slice(0, 600);
+  const text = typeof input === 'string' ? input : serializeChainInput(input);
+  let planned = text.slice(0, 600);
 
   if (spec.outlineSystem) {
     deps.onProgress?.(`正在构思${spec.label}`);
@@ -118,7 +184,7 @@ export async function runChain<T>(
       planned = await deps.complete(
         [
           { role: 'system', content: spec.outlineSystem },
-          { role: 'user', content: input.slice(0, 600) },
+          { role: 'user', content: text.slice(0, 600) },
         ],
         { maxTokens: spec.outlineTokens ?? 900 },
       );

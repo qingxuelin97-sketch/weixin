@@ -17,9 +17,11 @@ fixed 浮层（30/50/60/70/80/90/100/1000）、硬件返回键完全没接（真
 | 返回键 | `src/app/useBackButton.ts` | 顶层浮层 → 页面栈 pop → tab 根最小化（**永不 exitApp**，微信是最小化） |
 | dismiss 桥 | `src/app/useDismissable.ts` | 声明式挂接：`useDismissable(open, close)`；close 走 ref，内联箭头不抖栈序 |
 | Sheet | `src/components/Sheet.tsx` | 受控底部容器（标题+可滚 body）；有实内容的面板用它，纯选项列表用 showActionSheet |
-| 长按 | `src/components/useLongPress.ts` | 唯一的 LONG_PRESS_MS；10px 容差半径 + fired 防误触 + 右键回退 |
+| 长按手势 | `src/components/useLongPress.ts` | 唯一的 LONG_PRESS_MS；10px 容差半径 + fired 防误触 + 右键回退 |
+| 长按菜单 | `src/components/LongPressMenu.tsx` + `long-press-menu.css` | 唯一的菜单 DOM/皮肤/消失行为；`layout='row'`（气泡上的胶囊）\| `'column'`（列表行上的竖排） |
+| 徽章 | `src/components/Badge.tsx` | 未读数/红点/角标的唯一实现：0 不渲染、>99 显示 99+、dot 只留框；**类名由调用点传入**（皮肤仍归 feature，golden 不动） |
 | 浮层皮肤 | `src/components/overlay.css` | 微信样式对话框/动作面板/sheet；z 只用 token |
-| z 层级 | `tokens.css` `--z-*` | shell 10 / msg-menu 30 / list-overlay 50 / picker 60 / sheet 70 / viewer 80 / call 90 / rp-open 100 / dialog 120 / toast 1000 |
+| z 层级 | `tokens.css` `--z-*` | shell 10 / 长按菜单 30 / list-overlay 50 / picker 60 / sheet 70 / viewer 80 / call 90 / rp-open 100 / dialog 120 / toast 1000 |
 
 ## 设计决定
 
@@ -41,12 +43,21 @@ fixed 浮层（30/50/60/70/80/90/100/1000）、硬件返回键完全没接（真
 - dismiss 栈：逆序弹出、反注册后不可弹、close 抛错不断链。
 - `LONG_PRESS_MS =` 全仓只允许出现在 `useLongPress.ts`。
 - Sheet 有真实消费者；`forward-mask` 手写浮层零残留。
-- 条件渲染的浮层（Sheet/ImageViewer/MediaPicker/msg-menu/会话列表两浮层/组合器面板）
+- 条件渲染的浮层（Sheet/ImageViewer/MediaPicker/LongPressMenu/会话列表 ＋ 浮层/组合器面板）
   全部登记 dismiss 栈。
+- `<Badge/>` ≥4 个消费者；`src/features`+`src/app` 里 `<span>` 直接写徽章类名零命中。
+- `msg-menu` / `conv-menu` 两套手写菜单零残留（`--z-msg-menu` 这个 token 名保留）；
+  两个消费者都渲染 `<LongPressMenu/>`，聊天页不再自己挂 document pointerdown 监听。
+- Sheet 与 `useComposerPanel` **互不 import**（源码级断言，两边各一条）；Sheet 不得
+  从 `src/features` import 任何东西。
 
 ## 已知边界
 
 - Sheet 拖拽关闭在 I8 补（本期 Sheet 只有动画开合）。
-- 长按**手势**已收敛进 useLongPress；长按**菜单**的视觉仍是两处各画各的
-  （chat-list 的 conv-menu / 聊天页的 msg-menu），菜单收敛视需要再议——两个列表
-  要的菜单确实不同。
+- 长按**菜单**已在 I18 收编：DOM、皮肤、遮罩、dismiss 登记全归 `LongPressMenu`。
+  两处外观有分歧的地方一律以**聊天气泡那份**为准（深色胶囊 + 白字 + on-color 分隔线
+  + 6px 圆角 + 14px），所以会话列表的浅色卡片和它的红色「删除该聊天」都不在了——
+  真机上微信的会话长按菜单本来就是深色全白字。差异只剩**轴向**：气泡上横排、
+  列表行上竖排（`layout` prop），因为这是用途决定的，不是各画各的。
+- 两处的**行为**现在也一样：透明遮罩吃掉那一下"点外面"（以前聊天页是 document
+  捕获监听，点外面会顺手点到底下的东西）、选中即执行即关闭、只登记一次 dismiss。

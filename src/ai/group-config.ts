@@ -64,6 +64,40 @@ export function activityMultiplier(cfg: Pick<GroupCfg, 'activity'>): number {
 }
 
 /**
+ * What the activity knob means to the director's PREFILTER (M-I1, wired in I18).
+ *
+ * The knob shipped reading only into the offline planner and the prompt, so a
+ * room set to 冷清 was exactly as chatty as 热闹 the moment you were looking at
+ * it — the one place the setting is most obviously supposed to show. The
+ * prefilter is where "how alive is this room" actually lives: it decides who is
+ * still on cooldown, how long one member may hold the floor, and whether a lone
+ * candidate bothers to answer.
+ *
+ * Level 2 reproduces `director.ts`'s own defaults BYTE FOR BYTE (45s / 3 /
+ * 0.35), so a group with no `groupCfg` row behaves exactly as it did before
+ * this function existed. Everything stays pure and seeded — the roll is still
+ * `seededRng`, this only moves the threshold it is compared against.
+ */
+export interface PrefilterKnobs {
+  cooldownMs: number;
+  maxStreak: number;
+  speakBias: number;
+}
+
+const COOLDOWN_MS = [150_000, 75_000, 45_000, 28_000];
+const MAX_STREAK = [2, 2, 3, 4];
+const SPEAK_BIAS = [0.05, 0.2, 0.35, 0.55];
+
+export function prefilterKnobs(cfg: Pick<GroupCfg, 'activity'>): PrefilterKnobs {
+  const i = cfg.activity;
+  return {
+    cooldownMs: COOLDOWN_MS[i] ?? COOLDOWN_MS[2],
+    maxStreak: MAX_STREAK[i] ?? MAX_STREAK[2],
+    speakBias: SPEAK_BIAS[i] ?? SPEAK_BIAS[2],
+  };
+}
+
+/**
  * The prompt line the spice knob turns into. Bounded phrasing on purpose:
  * this shapes banter tone inside the persona's own voice — tier routing and
  * the NSFW boundary layer are entirely untouched by it.

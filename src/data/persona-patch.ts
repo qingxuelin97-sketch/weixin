@@ -73,6 +73,31 @@ export function applyPersonaPatch(existing: PersonaVM, patch: Partial<PersonaVM>
 }
 
 /**
+ * The diagnostics line for what a patch lost — '' when it lost nothing.
+ *
+ * Half of "the validator strips them and reports it" shipped: `stripped` came
+ * back from every call and no caller read it, so a humanize run that quietly
+ * dropped a model's attempt to rewrite `relations` looked, from the outside,
+ * exactly like a run that never tried. That is the difference between "the
+ * lock works" and "the lock might not exist" — and it is only observable if
+ * somebody writes it down.
+ *
+ * Pure and deterministic (locked keys first, then ignored empties, each in the
+ * order the patch presented them) so the error log reads the same way twice for
+ * the same input. Callers pass it to `logError`; this module stays free of the
+ * lib import, keeping the dependency direction data → (nothing).
+ */
+export function strippedNote(stripped: string[], who: string): string {
+  if (stripped.length === 0) return '';
+  const locked = stripped.filter((k) => LOCKED.has(k));
+  const empties = stripped.filter((k) => !LOCKED.has(k));
+  const parts: string[] = [];
+  if (locked.length) parts.push(`锁定字段被剥除：${locked.join('、')}`);
+  if (empties.length) parts.push(`空值字段被忽略：${empties.join('、')}`);
+  return `${who}：${parts.join('；')}`;
+}
+
+/**
  * Merge relation EDGES into a persona — the one sanctioned way to write
  * relations outside the editor.
  *

@@ -11,7 +11,7 @@ import type { MessageVM, PersonaVM, ContactVM, NsfwTierVM, ConversationVM } from
 import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
 import { assembleSystemPrompt, promptStats, relationsForPrompt } from './prompt';
-import { getGroupCfg, spiceLine, topicsLine } from './group-config';
+import { getGroupCfg, prefilterKnobs, spiceLine, topicsLine, type GroupCfg } from './group-config';
 import { worldLinesFor } from './worldbook';
 import { affectFor, affectLine } from '../lib/affect';
 import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
@@ -127,8 +127,13 @@ export async function sendGroupMessage(
         ? (contactById('self')?.name ?? '我')
         : (contactById(id)?.remark ?? contactById(id)?.name ?? id);
 
+    // Per-group knobs (M-I1): read ONCE for the whole round. They shape the
+    // prefilter BEFORE any casting happens (a 冷清 room holds people on
+    // cooldown longer and answers less readily) and the actor prompt after.
+    const cfg = await getGroupCfg(convId);
+
     // 1) Cheap rules first — often skips the director entirely.
-    const pre = prefilter(members, recent, now, `${convId}:${now}`);
+    const pre = prefilter(members, recent, now, `${convId}:${now}`, prefilterKnobs(cfg));
     if (pre.mode === 'silence') return;
 
     let speakers = pre.speakers;
@@ -183,8 +188,10 @@ export async function sendGroupMessage(
       await refreshConvState(convId, recent, now),
       now,
     );
-    // Per-group knobs (M-I1): read ONCE for the round, same reason as above.
-    const cfgLine = await groupCfgDirective(convId);
+    // Per-group knobs (M-I1): the cfg row was already read above for the
+    // director's prefilter, so this is the prompt side of the SAME read —
+    // one settings round-trip per round, not two.
+    const cfgLine = groupCfgLine(cfg);
     // Playback order is decided BEFORE anyone writes, so the room can start
     // speaking while the later actors are still generating (M-I5 渐进上屏).
     // The concurrency that makes a group round fast is unchanged — every actor
@@ -683,6 +690,10 @@ export async function sendGroupProactiveMessage(
  * prompt is byte-identical to the pre-knob era.
  */
 async function groupCfgDirective(convId: string): Promise<string> {
-  const cfg = await getGroupCfg(convId);
+  return groupCfgLine(await getGroupCfg(convId));
+}
+
+/** The same line from knobs already in hand — pure, no second settings read. */
+function groupCfgLine(cfg: GroupCfg): string {
   return [spiceLine(cfg), topicsLine(cfg)].filter(Boolean).join('\n');
 }

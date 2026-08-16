@@ -583,27 +583,9 @@
   background: var(--color-cell-bg-pressed);
 }
 
-/* Long-press context menu — WeChat's dark capsule. */
-.msg-menu {
-  position: fixed;
-  z-index: var(--z-msg-menu);
-  display: flex;
-  border-radius: 6px;
-  background: var(--color-menu-bg);
-  overflow: hidden;
-  box-shadow: 0 4px 16px var(--color-overlay);
-}
-.msg-menu button {
-  padding: 9px 16px;
-  border: 0;
-  background: none;
-  font-size: 14px;
-  color: var(--color-text-on-brand);
-  cursor: pointer;
-}
-.msg-menu button + button {
-  border-left: 1px solid var(--color-on-color-divider);
-}
+/* The long-press capsule moved to the shared <LongPressMenu/> (.lp-menu,
+   src/components/long-press-menu.css) — this page's copy WAS the reference
+   skin, so nothing about it changed except where it lives. */
 
 /* 重新编辑 link on a recalled own text message. */
 .msg-system__reedit {

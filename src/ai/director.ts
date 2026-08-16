@@ -54,9 +54,16 @@ export interface PrefilterOptions {
   maxStreak?: number;
   /** How many recent messages to consider for streak/cooldown. */
   window?: number;
+  /**
+   * Added to the lone candidate's `proactivity` before the seeded roll — the
+   * bias toward answering at all. Kept an OPTION rather than a constant because
+   * "how alive is this room" is a per-group setting (`groupCfg:<convId>`), and
+   * a quiet room that still answers every single time is not quiet.
+   */
+  speakBias?: number;
 }
 
-const DEFAULTS = { cooldownMs: 45_000, maxStreak: 3, window: 12 };
+const DEFAULTS = { cooldownMs: 45_000, maxStreak: 3, window: 12, speakBias: 0.35 };
 
 /** Members explicitly @'d in a message body, matched by display name. */
 export function findMentions(text: string, members: GroupMember[]): GroupMember[] {
@@ -84,7 +91,7 @@ export function prefilter(
   seed: string,
   opts: PrefilterOptions = {},
 ): PrefilterResult {
-  const { cooldownMs, maxStreak, window } = { ...DEFAULTS, ...opts };
+  const { cooldownMs, maxStreak, window, speakBias } = { ...DEFAULTS, ...opts };
   const tail = recent.slice(-window);
   const lastMsg = recent[recent.length - 1];
 
@@ -135,7 +142,7 @@ export function prefilter(
   if (shortlist.length === 1) {
     const only = shortlist[0];
     const rng = seededRng(`${seed}:${only.contactId}`);
-    const speaks = rng() < (only.persona?.proactivity ?? 0.5) + 0.35; // biased toward replying
+    const speaks = rng() < (only.persona?.proactivity ?? 0.5) + speakBias; // biased toward replying
     return speaks
       ? {
           mode: 'direct',

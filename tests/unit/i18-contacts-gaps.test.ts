@@ -83,9 +83,14 @@ describe('长按菜单对所有消息类型开启', () => {
 
   it('still gates each menu ITEM individually', () => {
     const src = read('src/features/chat/ChatPage.tsx');
-    // Copy only for text with content; recall only inside its window.
-    expect(src).toMatch(/menu\.msg\.type === 'text' && menu\.msg\.content/);
-    expect(src).toMatch(/canRecall\(menu\.msg, Date\.now\(\)\)/);
+    // Since M-I0's LongPressMenu consolidation the items are built as a list
+    // rather than rendered inline, so the gates are `if (…) items.push(…)`.
+    // What must stay true either way: copy only for text that has content,
+    // recall only inside its window. Opening the menu is now unconditional;
+    // OFFERING an action never is.
+    expect(src).toMatch(/const isText = m\.type === 'text' && Boolean\(m\.content\)/);
+    expect(src).toMatch(/if \(isText\) items\.push\(\{ label: '复制'/);
+    expect(src).toMatch(/if \(canRecall\(m, Date\.now\(\)\)\) items\.push\(\{ label: '撤回'/);
   });
 });
 

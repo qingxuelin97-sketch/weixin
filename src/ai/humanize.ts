@@ -18,9 +18,15 @@
  */
 import type { PersonaVM } from '../data/types';
 import { PERSONA_LIMITS } from '../data/persona-defaults';
-import { runChain, type ChainDeps, type ChainResult, type GenIssue } from './generate-chain';
 import {
-  describePersona,
+  runChain,
+  serializeChainInput,
+  type ChainDeps,
+  type ChainResult,
+  type GenIssue,
+} from './generate-chain';
+import {
+  personaCardInput,
   humanizeSystem,
   fieldsFor,
   EXTRACT_SYSTEM,
@@ -128,7 +134,10 @@ export async function humanizePersona(
   deps: ChainDeps,
   opts: HumanizeOpts = {},
 ): Promise<ChainResult<Partial<PersonaVM>>> {
-  const card = describePersona(persona, name);
+  // Structured in, serialized once: the rewrite hands the card to runChain as
+  // fields (it serializes them itself), and the extract step — a plain
+  // completion, not a chain — takes the same bytes.
+  const card = personaCardInput(persona, name);
 
   // Heavy: extract the hard facts FIRST, in prose, then rewrite against them.
   // One extra cheap call buys the only guarantee that matters in a full
@@ -141,7 +150,7 @@ export async function humanizePersona(
         await deps.complete(
           [
             { role: 'system', content: EXTRACT_SYSTEM },
-            { role: 'user', content: card },
+            { role: 'user', content: serializeChainInput(card) },
           ],
           { maxTokens: 500 },
         )

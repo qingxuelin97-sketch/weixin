@@ -1,6 +1,6 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { IconChats, IconContacts, IconDiscover, IconMe } from '../components/icons';
-import { RollingNumber } from '../components/RollingNumber';
+import { Badge } from '../components/Badge';
 import { useAppStore } from '../store/appStore';
 
 const TABS = [
@@ -43,12 +43,9 @@ export function TabScaffold() {
                 <Icon active={active} />
               </span>
               {showBadge && (
-                // M-I8: the old count leaves upward while the new one arrives
-                // from below. M-H3's `badge-roll` only animated the ARRIVING
-                // value, so a changed number read as a blink, not a roll.
-                <span className="tabbar__badge">
-                  <RollingNumber value={totalUnread > 99 ? '99+' : String(totalUnread)} />
-                </span>
+                // One badge component, and the roll lives inside it (M-I0 ×
+                // M-I8): no `key` remount trick, no per-site `badge-roll`.
+                <Badge className="tabbar__badge" count={totalUnread} />
               )}
               <span className="tabbar__label">{label}</span>
             </button>

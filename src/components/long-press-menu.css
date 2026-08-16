@@ -1,0 +1,51 @@
+/* Shared long-press menu (M-I0). WeChat's dark capsule: the chat bubble's
+   menu was already this, the conversation-list menu used to be a light card.
+   The axis is the only thing the two consumers still disagree about. */
+
+.lp-menu__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-msg-menu);
+}
+
+/* Absolute inside a fixed inset:0 scrim == viewport coordinates. */
+.lp-menu {
+  position: absolute;
+  display: flex;
+  border-radius: 6px;
+  background: var(--color-menu-bg);
+  overflow: hidden;
+  box-shadow: 0 4px 16px var(--color-overlay);
+}
+
+.lp-menu--row {
+  flex-direction: row;
+}
+
+/* A row menu is centered on screen the way the list menu always was; the
+   capsule is anchored to the finger instead (positioned inline). */
+.lp-menu--column {
+  flex-direction: column;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 180px;
+}
+
+.lp-menu button {
+  padding: 9px 16px;
+  border: 0;
+  background: none;
+  font-size: 14px;
+  color: var(--color-text-on-brand);
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lp-menu--row button + button {
+  border-left: 1px solid var(--color-on-color-divider);
+}
+
+.lp-menu--column button + button {
+  border-top: 1px solid var(--color-on-color-divider);
+}

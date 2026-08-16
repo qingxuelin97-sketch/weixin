@@ -8,6 +8,7 @@ import {
   clearDismissStack,
 } from '../../src/app/dismiss-stack';
 import { showConfirm, showPrompt, showActionSheet, dismissAllDialogs } from '../../src/components/dialog';
+import { Badge, badgeText } from '../../src/components/Badge';
 
 /**
  * Component foundation (M-I0).
@@ -107,11 +108,105 @@ describe('nothing raw remains', () => {
       'src/components/Sheet.tsx',
       'src/components/ImageViewer.tsx',
       'src/components/MediaPicker.tsx',
-      'src/features/chat/ChatPage.tsx', // msg-menu + composer panels
-      'src/features/chat-list/ChatListPage.tsx', // ＋ dropdown + row menu
+      'src/components/LongPressMenu.tsx', // the shared long-press menu
+      'src/features/chat/ChatPage.tsx', // composer panels
+      'src/features/chat-list/ChatListPage.tsx', // ＋ dropdown
     ]) {
       expect(read(f).includes('useDismissable'), `${f} does not register with the dismiss stack`).toBe(true);
     }
+  });
+});
+
+/**
+ * The two pieces I0 named but left half-done (finished in I18): the badge and
+ * the long-press MENU. Both were "one component" on paper and two hand-written
+ * copies in the tree.
+ */
+describe('the badge is one component', () => {
+  /** Every class string a badge is allowed to wear. Skins stay feature-owned. */
+  const BADGE_CLASSES = [
+    'tabbar__badge',
+    'conv-row__badge',
+    'chat-nav__unread',
+    'discover__num-badge',
+    'discover__reddot',
+  ];
+  const pages = () => walk('src/features').concat(walk('src/app')).filter((f) => f.endsWith('.tsx'));
+
+  it('has real consumers — 写了没接线 = 没做', () => {
+    const consumers = pages().filter((f) => /from\s+'[^']*components\/Badge'/.test(read(f)));
+    expect(consumers.length, `only ${consumers.length} pages use <Badge/>`).toBeGreaterThanOrEqual(4);
+  });
+
+  it('nobody hand-writes a badge span anymore', () => {
+    // The three rules a badge encodes (hide at zero, clamp at 99+, dot when
+    // muted) were copy-pasted four times. A new hand-rolled span is how one
+    // copy quietly starts rendering `100`.
+    for (const f of pages()) {
+      const inline = new RegExp(`<span[^>]*(${BADGE_CLASSES.join('|')})`);
+      expect(inline.test(read(f)), `${f} hand-writes badge markup — use <Badge/>`).toBe(false);
+    }
+  });
+
+  it('clamps at 99+ and renders nothing at zero', () => {
+    expect(badgeText(1)).toBe('1');
+    expect(badgeText(99)).toBe('99');
+    expect(badgeText(100)).toBe('99+');
+    // An empty red circle is worse than no circle; a dot has no count to show.
+    expect(Badge({ className: 'x', count: 0 })).toBeNull();
+    expect(Badge({ className: 'x' })).toBeNull();
+    expect(Badge({ className: 'x', dot: true })).not.toBeNull();
+  });
+});
+
+describe('the long-press menu is one component', () => {
+  it('both consumers render the shared menu', () => {
+    for (const f of ['src/features/chat/ChatPage.tsx', 'src/features/chat-list/ChatListPage.tsx']) {
+      expect(read(f), `${f} does not use <LongPressMenu/>`).toContain('<LongPressMenu');
+    }
+  });
+
+  it('the old hand-rolled menus are unreachable', () => {
+    // `--z-msg-menu` keeps its token name (the layer is still the layer), so
+    // strip the token before looking for the old class.
+    for (const f of walk('src/features')) {
+      const src = read(f).replaceAll('--z-msg-menu', '--z-<layer>');
+      expect(src.includes('msg-menu'), `${f} still hand-rolls the message menu`).toBe(false);
+      expect(src.includes('conv-menu'), `${f} still hand-rolls the conversation menu`).toBe(false);
+    }
+    // …and the skin lives with the component, not in a feature stylesheet.
+    expect(read('src/components/long-press-menu.css')).toContain('.lp-menu');
+  });
+
+  it('dismissal is the component\'s job in both places', () => {
+    // The chat page used to close its menu with a document-level pointerdown
+    // capture listener while the chat list used a scrim — two behaviours for
+    // "tap outside", in one app. The scrim now lives in the component.
+    expect(read('src/features/chat/ChatPage.tsx')).not.toContain("addEventListener('pointerdown'");
+    expect(read('src/components/LongPressMenu.tsx')).toContain('lp-menu__scrim');
+  });
+});
+
+describe('the sheet and the composer are independent', () => {
+  // I0 shipped them deliberately unentangled: Sheet is a dumb controlled
+  // container, `useComposerPanel` is the three-state keyboard⇄panel machine
+  // (禁止重写清单). Nothing enforced it, and the tempting shortcut — teaching
+  // the sheet to lock itself to the keyboard height — would weld the one
+  // machine that must stay analyzable to a generic overlay.
+  it('Sheet knows nothing about the composer', () => {
+    const sheet = read('src/components/Sheet.tsx');
+    expect(/useComposerPanel|ComposerMode/.test(sheet), 'Sheet imports the composer machine').toBe(
+      false,
+    );
+    // More generally: a component may never reach into a feature.
+    expect(/from\s+'[^']*features\//.test(sheet), 'Sheet imports from src/features').toBe(false);
+  });
+
+  it('the composer machine knows nothing about Sheet', () => {
+    const composer = read('src/features/chat/useComposerPanel.ts');
+    expect(/components\/Sheet|<Sheet/.test(composer), 'the composer machine imports Sheet').toBe(
+      false,
+    );
   });
 });
 

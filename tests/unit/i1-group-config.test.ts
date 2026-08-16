@@ -315,6 +315,31 @@ describe('the knobs are actually wired', () => {
     expect(src).toContain('activityMultiplier');
   });
 
+  it('the activity knob reaches the director prefilter, not just the planner', () => {
+    // It shipped reading into simulate() and the prompt only — the live path
+    // ignored it entirely, so 冷清 and 热闹 behaved identically on screen.
+    const src = read('src/ai/group-engine.ts');
+    expect(src).toContain('prefilterKnobs');
+    expect(src).toMatch(/prefilter\([^)]*prefilterKnobs\(cfg\)\)/);
+    // …and the round reads the row ONCE: the prompt line comes off the same
+    // `cfg`, not a second settings round-trip mid-turn.
+    expect(src).toContain('groupCfgLine(cfg)');
+  });
+
+  it('a template can be applied when RECONFIGURING an existing group', () => {
+    const src = read('src/features/contacts/GroupGeneratePage.tsx');
+    // The block used to be gated behind `{!rebuildConvId && (…)}`, which put
+    // the one-tap presets out of reach of the only flow that already HAS a
+    // room to shape — reachable from 聊天信息 › 一键重新配置本群.
+    expect(src).not.toMatch(/\{!rebuildConvId && \([\s\S]{0,400}GROUP_TEMPLATES/);
+    expect(src).toContain('GROUP_TEMPLATES.map');
+    expect(read('src/features/chat/ChatInfoPage.tsx')).toContain('group-generate?rebuild=');
+    // On that path a template is a MOOD ("用这套气质重配"), not a roster: the
+    // room keeps its own head count, or "reconfigure" would silently shrink a
+    // twelve-person group to a template's four.
+    expect(src).toMatch(/if \(!rebuildConvId\) setSize\(t\.size\)/);
+  });
+
   it('the group ＋ no longer jumps to CREATE-a-group', () => {
     expect(read('src/features/chat/ChatInfoPage.tsx')).not.toContain("navigate('/group-new')");
   });
