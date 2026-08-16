@@ -77,8 +77,12 @@ src/
   记忆 → 场景。改顺序=改行为，需评审。
 - **`scheduledActions` 表**：见铁律 5。新增时间驱动行为 = 在 `SCHEDULED_ACTION_KINDS`
   （`src/db/schema.ts`，**唯一那份列表**，`ActionKind` 由它派生）加一项 + `registerHandler`，
-  **不要**新建计时器。目前 7 种在用：heartbeat / rp_grab / transfer_accept / moment_post /
-  moment_like / moment_comment / group_msg（recall、story_tick 已预留）。
+  **不要**新建计时器。M-I 轮结束时共 **19 种**：heartbeat / rp_grab / transfer_accept /
+  moment_post / moment_like / moment_comment / group_msg / agent_dm / recall /
+  mem_extract / story_tick / ai_money / ai_call / joint_plan / agent_forward /
+  group_event / agent_invite / moment_repost / auto_backup。自续链的那几种用
+  `registerChainedHandler`（先续链后干活，失败只暂停不终结），并且必须进 wiring 测试的
+  SELF_CHAINING 清单。
 - **前台生命周期**（`src/app/useForegroundLifecycle.ts`）：回前台 = 回填 → 撤销并重排通知。
   没有它，`runBackfill` 只在冷启动跑一次——而手机上「切后台→回前台」才是常态。
 - **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
@@ -158,8 +162,9 @@ story-gm（V3 预埋设计）/ native-android（M-I10 重原生）。
 
 ## 5. 工程护栏
 
-- 每次提交前跑：`pnpm typecheck && pnpm lint && pnpm test`（纯函数单测，零真 API，
-  LLM 用录制 fixture）。UI 改动跑 `pnpm test:screenshot`（golden 回归）。
+- 每次提交前跑：`pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm check:size`
+  （纯函数单测，零真 API，LLM 用录制 fixture）。UI 有意变更后**在 CI 上**跑 `regen-goldens`
+  重基线——本地生成的基线与 CI 的 Chromium 构建不一致，提交即让阻塞门禁全红。
 - 截图 golden 是 **AI 自检的前置滤网**；最终 1:1 判定权归**用户真机截图叠图**。
 - CI 绿灯即打 tag（回滚锚点）。CI 与 App 必须同 CJK 字体，否则像素对不上。
 
@@ -170,7 +175,8 @@ story-gm（V3 预埋设计）/ native-android（M-I10 重原生）。
 | `pnpm dev` | Vite 开发服务器（热重载） |
 | `pnpm build` | 类型检查 + 生产构建到 dist/ |
 | `pnpm test` | vitest 纯函数单测 |
-| `pnpm test:screenshot` | Playwright golden 截图回归 |
-| `pnpm test:screenshot:update` | 更新截图基线（UI 有意变更后） |
+| `pnpm test:screenshot` | Playwright golden 截图回归（**本地必然有差异**，见陷阱：基线由 CI 生成；本地只当冒烟） |
+| `pnpm test:screenshot:update` | 只在本地实验时用；**产出不许提交**，重基线走 CI 的 `regen-goldens` workflow |
+| `pnpm check:size` | 启动包 gzip 体积棘轮（CI 同步执行） |
 | `pnpm lint` | eslint + 硬编码颜色检查 |
 | `pnpm cap:sync` | 同步 Web 产物到原生工程 |
