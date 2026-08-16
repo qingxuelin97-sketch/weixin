@@ -169,10 +169,18 @@ src/
 ## 4. 每个 feature 一份 spec
 
 改动某 feature 前，读 `specs/<feature>.md`（验收清单 + 设计要点 + 已知坑）。新增 feature
-先写 spec 再写码。现有：design-tokens / data-schema / llm-provider / composer / nsfw /
-chat-engine / group-director / money / moments / backfill / backup（.aiwx 导出恢复，
-M-I18 起自成一块）/ build-distribution / story-gm（V3 预埋设计）/
-native-android（M-I10 重原生）。
+先写 spec 再写码。**这份索引就是清单本身**——`ls specs/` 与它对不上，说明有人写了 spec
+没登记（或写了模块没写 spec），两种都要补齐。现有 27 份：
+
+| 域 | spec |
+|---|---|
+| 地基 | design-tokens · data-schema · components · motion |
+| 模型接入 | llm-provider · streaming（Web-only SSE 渐进渲染）· nsfw（铁律 6）· asr |
+| 会话 | chat-engine · composer · group-director · msg-types · search |
+| 智能体 | agents · relationship · worldbook · goals-status · year-report · backfill |
+| 功能面 | money · moments · call |
+| 剧情 | story-gm（V3） |
+| 工程 | observability · backup（.aiwx 导出恢复，M-I18 起自成一块）· build-distribution · native-android（M-I10 重原生） |
 
 ## 5. 工程护栏
 
