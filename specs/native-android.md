@@ -1,5 +1,17 @@
 # spec: 重原生 Android（M-I10）
 
+> **M-I18 实测记录（重要）**：device-test 自 M-I10 起一直是红的，但红的**不是 App**。
+> 那次运行的日志证明：debug APK 构建成功（手写 Kotlin 能编译）、装进模拟器、
+> `MainActivity` 起来了、`AIWX-SELFTEST` 行打了出来（`allReachable=true`，zen 走桥
+> 200，deepseek/minimax 无 key 401），且**没有任何 FATAL EXCEPTION**——只有 web fetch
+> 通道的 CORS 报错，而那正是桥通道存在的理由。真正的失败是 shell 语义：
+> `android-emulator-runner` 的 `script:` 是**逐行**交给独立 `sh -c` 的，跨行变量与函数
+> 活不过一行，`: > "$NA"` 于是展开成 `: > ""` 并 exit 2 —— 五组原生面断言**一次都没跑过**，
+> 而「Native surfaces verdict」只会说结果文件不存在。已搬进
+> `scripts/device-native-asserts.sh`（单一 shell，`sh -n` 可校验）。
+> 结论：I10 的**编译与冷启动**已被 CI 证明；悬浮窗 / RemoteInput / 来电全屏 / 小组件的
+> **行为**断言，从这次修复起才第一次真正开始跑。
+
 五个各自独立可弃的特性：android/ 入库、消息悬浮气泡、通知 RemoteInput 直接回复、
 来电全屏通知、电池白名单向导、桌面小组件。入库与再生成策略见 `docs/android-regen.md`。
 
