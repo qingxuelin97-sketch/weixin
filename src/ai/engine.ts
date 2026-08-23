@@ -581,7 +581,7 @@ async function generateAndPlayInner(
           // the earlier bubbles' playback; the awaited voiceMeta at append time
           // then hits the content-addressed cache instead of serializing a TTS
           // round-trip into the gap.
-          if (b.type === 'voice') void voiceMeta(b.content, persona, b.emotion, tier).catch(() => {});
+          if (b.type === 'voice') void voiceMeta(b.content, persona, tier, b.emotion).catch(() => {});
           // 她也用你的表情包 (M-I15): one storage read, started on the first
           // sticker of the turn and awaited only where it is used.
           if (b.type === 'sticker') {
@@ -705,7 +705,7 @@ async function generateAndPlayInner(
         // The description rides along as the caption so a later turn can refer
         // back to "那张饼干的照片" rather than to an opaque handle.
         ...(photo ? { meta: { caption: photo.caption } } : {}),
-        ...(b.type === 'voice' ? { meta: await voiceMeta(b.content, persona, b.emotion, tier) } : {}),
+        ...(b.type === 'voice' ? { meta: await voiceMeta(b.content, persona, tier, b.emotion) } : {}),
         status: 'sent',
         createdAt: hooks.now(),
       });
@@ -981,8 +981,13 @@ function estimateVoiceMs(text: string): number {
 export async function voiceMeta(
   text: string,
   persona: PersonaVM,
+  // Required, and BEFORE the optional `emotion` (M-I18). It used to be last and
+  // defaulted to `= 'off'`, so a forgotten argument sent full-tier text to
+  // MiniMax's mainland TTS, which audits input. Same reason as extractMemory:
+  // rule 6 should fail to COMPILE, not fail quietly — and a required parameter
+  // cannot sit after an optional one, which is why the order changed.
+  tier: NsfwTier,
   emotion?: string,
-  tier: NsfwTier = 'off',
 ): Promise<Record<string, unknown>> {
   // HARD RULE: full-tier text is never sent to MiniMax (mainland input auditing).
   // The bubble still posts, just without audio. See specs/nsfw.md.

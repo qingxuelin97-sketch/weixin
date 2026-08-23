@@ -283,7 +283,7 @@ export async function sendGroupMessage(
           type: b.type === 'sticker' ? 'sticker' : b.type === 'voice' ? 'voice' : 'text',
           content: b.content,
           ...(b.type === 'voice'
-            ? { meta: await voiceMeta(b.content, persona, b.emotion, effectiveTier(globalTier, persona.nsfwPermit)) }
+            ? { meta: await voiceMeta(b.content, persona, effectiveTier(globalTier, persona.nsfwPermit), b.emotion) }
             : {}),
           status: 'sent',
           createdAt: hooks.now(),

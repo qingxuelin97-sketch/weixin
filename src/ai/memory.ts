@@ -174,8 +174,14 @@ export async function extractMemory(
    * here: this transcript is verbatim chat content, so declaring 'off' for a
    * full-tier conversation routes explicit text to a domestic endpoint
    * (constitution rule #6). Callers derive it via lib/nsfw-tier.
+   *
+   * No default (M-I18). It used to be `= 'off'`, three lines under the word
+   * REQUIRED — so a caller that simply forgot the argument declared explicit
+   * material safe for a mainland endpoint, silently, at runtime. Rule 6 is
+   * meant to be a code-level constraint; a required parameter makes the
+   * compiler the one enforcing it.
    */
-  tier: NsfwTier = 'off',
+  tier: NsfwTier,
 ): Promise<ExtractResult> {
   if (messages.length === 0) return { facts: [] };
   // Projected, so a fact like "他转了我 52 块请我喝奶茶" is extractable at all —

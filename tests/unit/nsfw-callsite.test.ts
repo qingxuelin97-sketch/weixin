@@ -573,3 +573,40 @@ describe('a photo cannot take a different route than the words around it', () =>
     expect(refs).toContain('d');
   });
 });
+
+/**
+ * 铁律 6 的 tier 参数不许有默认值 (M-I18).
+ *
+ * `extractMemory` carried `tier: NsfwTier = 'off'` three lines below its own
+ * doc comment saying the parameter is "REQUIRED, and never invented here", and
+ * `voiceMeta` had the same default. `'off'` is the most permissive value there
+ * is: a caller that simply forgot the argument declared explicit chat content
+ * safe for a mainland endpoint, silently, at runtime.
+ *
+ * Rule 6 is stated in the constitution as a CODE-LEVEL constraint, not a
+ * prompt-level suggestion — so the compiler should be the thing enforcing it.
+ * Every call site already passed a tier when the defaults were removed, which
+ * is exactly why this needs a guard: nothing was broken, so nothing would have
+ * noticed the day something was.
+ */
+describe('tier 是必传参数，不是有默认值的参数', () => {
+  const SIGNATURES = [
+    { file: 'src/ai/memory.ts', fn: 'extractMemory' },
+    { file: 'src/ai/engine.ts', fn: 'voiceMeta' },
+  ];
+
+  for (const { file, fn } of SIGNATURES) {
+    it(`${fn} takes tier without a default`, () => {
+      const src = readFileSync(resolve(__dirname, '..', '..', file), 'utf8');
+      const at = src.indexOf(`export async function ${fn}`);
+      expect(at, `${file} 里找不到 ${fn}——守卫失去了目标`).toBeGreaterThan(-1);
+      const sig = src.slice(at, src.indexOf('{', src.indexOf('): ', at)));
+      expect(sig).toContain('tier: NsfwTier');
+      expect(
+        sig,
+        `${fn} 的 tier 又有默认值了。'off' 是最宽松的档：漏传的调用点会把全开档` +
+          `内容声明成可以走国内端点，而且不报错。铁律 6 应当在编译期失败。`,
+      ).not.toMatch(/tier: NsfwTier\s*=/);
+    });
+  }
+});
