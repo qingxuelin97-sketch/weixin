@@ -34,9 +34,12 @@ jobs:
   screenshot:
     name: golden screenshots
     runs-on: ubuntu-latest
-    # Skipped on a manual dispatch: that run exists to REGENERATE baselines, so
-    # checking them first would just report the diff regen is about to erase.
-    if: github.event_name != 'workflow_dispatch'
+    # Skipped whenever this run exists to REGENERATE baselines — checking them
+    # first would only report the diff regen is about to erase. Two ways in:
+    # a manual dispatch, or a commit whose message carries [regen-goldens].
+    if: >-
+      github.event_name != 'workflow_dispatch' &&
+      !contains(github.event.head_commit.message, '[regen-goldens]')
     # BLOCKING since M-I11.
     #
     # The baselines are minted BY THIS JOB (see the `regen-goldens` job below),
@@ -79,9 +82,21 @@ jobs:
 
   regen-goldens:
     name: regenerate goldens (manual)
-    # Manual only — never on push, so it can never race a normal CI run or
-    # loop by triggering itself with its own commit.
-    if: github.event_name == 'workflow_dispatch'
+    # Two entry points, both explicit:
+    #   - workflow_dispatch (the original), and
+    #   - a push whose HEAD commit message contains [regen-goldens].
+    #
+    # The marker exists because dispatch needs a token permission this repo's
+    # automation does not always hold (M-I18: `actions: write` came back 403
+    # mid-round, leaving a stale baseline with no way to remint it). A marker
+    # in a commit message needs nothing but the push that is happening anyway.
+    #
+    # It cannot loop: this job's own commit message is 「在 CI 环境重生成 golden
+    # 基线」, which does not contain the marker, so the push it makes takes the
+    # ordinary screenshot path and verifies what was just minted.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[regen-goldens]')
     runs-on: ubuntu-latest
     permissions:
       contents: write

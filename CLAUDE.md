@@ -159,9 +159,12 @@ src/
   `fonts-noto-cjk` 可对齐）；② **Chromium 构建**——`playwright.config.ts` 本地走
   `PLAYWRIGHT_BROWSERS_PATH` 提供的那个 build，CI 走 `playwright install` 钉住的另一个
   build，两者抗锯齿不同。实测：只对齐字体后仍有 **30/52 张红**。所以 UI 有意变更后不要
-  在本地 `test:screenshot:update` 提交，改为在你的分支上手动触发 **`regen-goldens`**
-  workflow（workflow_dispatch），由 CI 生成并回推基线（它会连跑两次自检，不可复现的基线
-  不许进仓）。本地 `pnpm test:screenshot` 只当快速冒烟，不是门禁。
+  在本地 `test:screenshot:update` 提交，改为让 CI 生成并回推基线——**`regen-goldens`**
+  有两个入口：手动触发 workflow_dispatch，或**在提交信息里写 `[regen-goldens]`**
+  然后照常 push（M-I18 加的第二个入口：dispatch 需要 `actions: write`，而自动化并不
+  总是持有它——那一轮它中途变成 403，基线过期却无法重铸）。它会连跑两次自检，
+  不可复现的基线不许进仓；回推的那次提交不带标记，所以走的是普通截图门禁、
+  正好复核刚铸的基线，不会自触发成环。本地 `pnpm test:screenshot` 只当快速冒烟，不是门禁。
 - **动画留下的残余 transform 会劫持 `position: fixed`**：`animation-fill-mode: both` 会把
   终帧永久保留，哪怕终帧是 `translateY(0)`——计算值 `matrix(1,0,0,1,0,0)` 仍然让该元素成为
   fixed 子孙的**包含块**。M-I8 的 `.stagger-in` 因此让每张错峰进场过的朋友圈卡片变成"视口"，
@@ -204,7 +207,7 @@ src/
 | `pnpm build` | 类型检查 + 生产构建到 dist/ |
 | `pnpm test` | vitest 纯函数单测 |
 | `pnpm test:screenshot` | Playwright golden 截图回归（**本地必然有差异**，见陷阱：基线由 CI 生成；本地只当冒烟） |
-| `pnpm test:screenshot:update` | 只在本地实验时用；**产出不许提交**，重基线走 CI 的 `regen-goldens` workflow |
+| `pnpm test:screenshot:update` | 只在本地实验时用；**产出不许提交**，重基线走 CI 的 `regen-goldens`（dispatch 或提交信息带 `[regen-goldens]`） |
 | `pnpm check:size` | 启动包 gzip 体积棘轮（CI 同步执行） |
 | `pnpm lint` | eslint + 硬编码颜色检查 |
 | `pnpm cap:sync` | 同步 Web 产物到原生工程 |
