@@ -159,11 +159,14 @@ src/
   `fonts-noto-cjk` 可对齐）；② **Chromium 构建**——`playwright.config.ts` 本地走
   `PLAYWRIGHT_BROWSERS_PATH` 提供的那个 build，CI 走 `playwright install` 钉住的另一个
   build，两者抗锯齿不同。实测：只对齐字体后仍有 **30/52 张红**。所以 UI 有意变更后不要
-  在本地 `test:screenshot:update` 提交，改为让 CI 生成并回推基线——**`regen-goldens`**
-  有两个入口：手动触发 workflow_dispatch，或**在提交信息里写 `[regen-goldens]`**
-  然后照常 push（M-I18 加的第二个入口：dispatch 需要 `actions: write`，而自动化并不
-  总是持有它——那一轮它中途变成 403，基线过期却无法重铸）。它会连跑两次自检，
-  不可复现的基线不许进仓；回推的那次提交不带标记，所以走的是普通截图门禁、
+  在本地 `test:screenshot:update` 提交，改为让 CI 生成并回推基线。**`regen-goldens`**
+  有两个入口：
+  ① 手动 workflow_dispatch；
+  ② **在这次 push 的 tip 提交信息里写 `[regen-goldens]`**（M-I18 加的，因为 dispatch 需要
+  `actions: write`，而自动化并不总是持有——那一轮它中途变成 403，基线过期却无法重铸）。
+  ②**只看 tip**：条件读的是 `github.event.head_commit.message`，标记在中间那个提交上不算数
+  （我自己先踩了一次：标记提交后面又叠了两个，regen 直接 skip）。
+  它会连跑两次自检，不可复现的基线不许进仓；回推的那次提交不带标记，所以走普通截图门禁、
   正好复核刚铸的基线，不会自触发成环。本地 `pnpm test:screenshot` 只当快速冒烟，不是门禁。
 - **动画留下的残余 transform 会劫持 `position: fixed`**：`animation-fill-mode: both` 会把
   终帧永久保留，哪怕终帧是 `translateY(0)`——计算值 `matrix(1,0,0,1,0,0)` 仍然让该元素成为
