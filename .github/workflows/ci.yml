@@ -91,9 +91,14 @@ jobs:
     # mid-round, leaving a stale baseline with no way to remint it). A marker
     # in a commit message needs nothing but the push that is happening anyway.
     #
-    # It cannot loop: this job's own commit message is 「在 CI 环境重生成 golden
-    # 基线」, which does not contain the marker, so the push it makes takes the
-    # ordinary screenshot path and verifies what was just minted.
+    # It cannot loop, though not for the reason first written here: GitHub fires
+    # NO workflow at all for a push made with GITHUB_TOKEN, so this job's own
+    # commit triggers nothing — not this job, and not the screenshot gate either.
+    # (The marker-free commit message is a second belt, not the load-bearing one.)
+    # The consequence to remember: baselines committed here are NEVER re-checked
+    # by the gate; their only verification is the two-pass self-check below. To
+    # have the gate actually run against them, push one more commit on top — an
+    # ordinary push does trigger workflows.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.head_commit.message, '[regen-goldens]')
