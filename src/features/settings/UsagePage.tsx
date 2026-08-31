@@ -10,7 +10,14 @@
  */
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
-import { getUsage, clearUsage, KIND_LABELS, type DayUsage, type UsageKind } from '../../lib/usage';
+import {
+  getUsage,
+  clearUsage,
+  dayTokens,
+  KIND_LABELS,
+  type DayUsage,
+  type UsageKind,
+} from '../../lib/usage';
 import { useAppStore } from '../../store/appStore';
 import './settings.css';
 
@@ -19,10 +26,19 @@ function dayLabel(day: number): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-/** Kinds of one day, largest first, labels resolved. */
-function kindRows(u: DayUsage): Array<{ label: string; n: number }> {
+/** 12345 → "1.2万"; below 10k, the raw number. */
+function fmtTokens(n: number): string {
+  return n >= 10_000 ? `${(n / 10_000).toFixed(1)}万` : String(n);
+}
+
+/** Kinds of one day, largest first, labels resolved (tokens best-effort). */
+function kindRows(u: DayUsage): Array<{ label: string; n: number; tokens: number }> {
   return Object.entries(u.counts)
-    .map(([kind, n]) => ({ label: KIND_LABELS[kind as UsageKind] ?? kind, n }))
+    .map(([kind, n]) => ({
+      label: KIND_LABELS[kind as UsageKind] ?? kind,
+      n,
+      tokens: u.tokens?.[kind] ?? 0,
+    }))
     .sort((a, b) => b.n - a.n);
 }
 
@@ -66,20 +82,26 @@ export function UsagePage() {
                     style={{ width: `${Math.round((d.total / max) * 100)}%` }}
                   />
                 </span>
-                <span className="settings__value">{d.total} 次</span>
+                <span className="settings__value">
+                  {d.total} 次{dayTokens(d) > 0 ? ` · ${fmtTokens(dayTokens(d))} tok` : ''}
+                </span>
               </div>
               {open === d.day &&
                 kindRows(d).map((r) => (
                   <div className="settings__row settings__row--divided usage-detail" key={r.label}>
                     <span className="settings__label usage-detail__label">{r.label}</span>
-                    <span className="settings__value">{r.n} 次</span>
+                    <span className="settings__value">
+                      {r.n} 次{r.tokens > 0 ? ` · ${fmtTokens(r.tokens)} tok` : ''}
+                    </span>
                   </div>
                 ))}
             </div>
           ))}
           <p className="settings__hint">
-            按天计次，保留 14 天。点一天可展开按用途的拆分。心跳、记忆整理、朋友圈、
-            群聊调度这些没人按按钮也会发生——用的是你自己的 key。
+            按天计次，保留 14 天。点一天可展开按用途的拆分——语音合成/识别与图片生成
+            也各自计次。心跳、记忆整理、朋友圈、群聊调度这些没人按按钮也会发生——
+            用的是你自己的 key。token 数只在服务商返回 usage 字段时累计，拿不到就不估算，
+            所以它是参考量级，不是账单。
           </p>
         </div>
         {history.length > 0 && (

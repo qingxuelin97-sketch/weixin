@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import 'fake-indexeddb/auto';
@@ -574,6 +574,107 @@ describe('a photo cannot take a different route than the words around it', () =>
   });
 });
 
+/* ==================== call site 6 — image generation (M-J3) ==================== */
+
+/**
+ * image.ts is the repo's SECOND direct-network module (after llm/http), which
+ * makes it the second place rule #6 must hold WITHOUT the router's help: a
+ * generation prompt describes graded content, and SiliconFlow — the first-class
+ * preset — is a mainland official endpoint exactly like DeepSeek/MiniMax. The
+ * gate lives inside the module's single entry (`generateImage`), ahead of the
+ * key read and ahead of any bytes: at the full tier only a CUSTOM endpoint the
+ * user explicitly marked `nsfwCapable` may be called. These tests drive that
+ * branch for real and pin that a refusal produces ZERO network attempts.
+ */
+describe('call site 6 — generateImage 的全开档拒绝分支', () => {
+  const realFetch = globalThis.fetch;
+  const hadLocalStorage = 'localStorage' in globalThis;
+
+  beforeEach(() => {
+    // The keystore reads localStorage; node has none. An empty stub means
+    // "no key saved", which is all these cases need.
+    if (!hadLocalStorage) {
+      (globalThis as { localStorage?: unknown }).localStorage = {
+        getItem: () => null,
+        setItem: () => {},
+        removeItem: () => {},
+      };
+    }
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    if (!hadLocalStorage) delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+
+  it('full 档 + SiliconFlow（国内官方）→ tier_blocked，零网络', async () => {
+    const { saveImageProvider, imagePresetToConfig, generateImage } = await import(
+      '../../src/llm/image'
+    );
+    await saveImageProvider(imagePresetToConfig('siliconflow'));
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    await expect(generateImage(EXPLICIT, 'full')).rejects.toMatchObject({
+      name: 'ImageGenError',
+      kind: 'tier_blocked',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('full 档 + custom 但未勾 nsfwCapable → 同样拒绝（未声明即 NO）', async () => {
+    const { saveImageProvider, imagePresetToConfig, generateImage } = await import(
+      '../../src/llm/image'
+    );
+    await saveImageProvider({
+      ...imagePresetToConfig('custom'),
+      baseUrl: 'https://gw.example.test/v1',
+      model: 'flux',
+    });
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    await expect(generateImage(EXPLICIT, 'full')).rejects.toMatchObject({ kind: 'tier_blocked' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('full 档 + 显式声明的 custom → 过闸（在密钥这一步停下，而不是在铁律这一步）', async () => {
+    const { saveImageProvider, imagePresetToConfig, generateImage } = await import(
+      '../../src/llm/image'
+    );
+    await saveImageProvider({
+      ...imagePresetToConfig('custom'),
+      baseUrl: 'https://gw.example.test/v1',
+      model: 'flux',
+      nsfwCapable: true,
+    });
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    // No key saved in this environment: the next gate is not_configured. The
+    // point pinned here is WHICH branch answered — the tier gate let it pass.
+    await expect(generateImage(EXPLICIT, 'full')).rejects.toMatchObject({
+      kind: 'not_configured',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('低档不误伤：off 档在预设端点上照常走到密钥检查', async () => {
+    const { saveImageProvider, imagePresetToConfig, generateImage } = await import(
+      '../../src/llm/image'
+    );
+    await saveImageProvider(imagePresetToConfig('siliconflow'));
+    await expect(generateImage('一只猫', 'off')).rejects.toMatchObject({ kind: 'not_configured' });
+  });
+
+  it('生成的调用面全都派生 tier，不自造（engine / moments 源码扫描）', () => {
+    const engine = readFileSync(resolve(__dirname, '../../src/ai/engine.ts'), 'utf8');
+    expect(engine).toMatch(/resolvePhotoOrGenerate\([\s\S]{0,160}?,\s*tier,/);
+    const moments = readFileSync(resolve(__dirname, '../../src/ai/moments-engine.ts'), 'utf8');
+    expect(moments).toContain('momentRouteTier');
+    expect(moments).not.toMatch(/generateToLibrary\(\{[\s\S]{0,200}?tier:\s*'/);
+    const service = readFileSync(resolve(__dirname, '../../src/ai/moments-service.ts'), 'utf8');
+    expect(service).not.toMatch(/generateToLibrary\(\{[\s\S]{0,300}?tier:\s*'/);
+  });
+});
+
 /**
  * 铁律 6 的 tier 参数不许有默认值 (M-I18).
  *
@@ -593,6 +694,8 @@ describe('tier 是必传参数，不是有默认值的参数', () => {
   const SIGNATURES = [
     { file: 'src/ai/memory.ts', fn: 'extractMemory' },
     { file: 'src/ai/engine.ts', fn: 'voiceMeta' },
+    // M-J3: the image module's single entry point, same discipline from day one.
+    { file: 'src/llm/image.ts', fn: 'generateImage' },
   ];
 
   for (const { file, fn } of SIGNATURES) {

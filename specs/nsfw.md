@@ -21,6 +21,12 @@
   后续 full 档轮次，反向同理。
 - 全开档语音：先经宽松通道**降敏改写**再送 MiniMax TTS，失败自动"语音转文字气泡"（露骨文本
   永不出境到 MiniMax）。
+- 全开档**图片生成**（M-J3）：生成提示词描述的就是分档内容，而 SiliconFlow 与
+  DeepSeek/MiniMax 同属国内官方端点。`generateImage(prompt, tier)` 的 tier 必传无默认；
+  full 档只放行 `kind==='custom' ∧ nsfwCapable`（用户显式勾选，语义同 ASR 的
+  `nsfwSafe`），预设端点勾了也无效，拒绝先于读 key 与出网。调用面 tier 一律派生
+  （单聊=本回合 tier；朋友圈/换头像=`momentRouteTier`），拒绝时静默回落素材池。
+  钉死：`nsfw-callsite.test.ts` call site 6 + `image-gen.test.ts`。
 - 拒答降级见 `llm-provider.md`；原始拒答永不上屏。
 
 ### 调用点自报 tier 禁令（M-E0，`tests/unit/nsfw-callsite.test.ts` 钉死）

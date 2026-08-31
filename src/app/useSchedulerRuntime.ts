@@ -35,6 +35,7 @@ import { getExtractMarker, setExtractMarker } from '../ai/memory-service';
 import { tierFor, maxTier, globalTier, tierOfConversation, redactForTier } from '../lib/nsfw-tier';
 import { renderTranscript } from '../ai/render-msg';
 import { logError } from '../lib/errlog';
+import type { ContactVM } from '../data/types';
 import { moodOf, moodParams } from '../lib/mood';
 import { affectFor, recordAffect } from '../lib/affect';
 import { noteDrift, driftedPersona } from '../ai/drift';
@@ -216,6 +217,9 @@ export function useSchedulerRuntime(enabled: boolean): void {
       addMoment: store.addMoment,
       applyLike: store.applyLike,
       addComment: store.addComment,
+      // 换头像 (M-J3): through the store so an open chat list repaints the new
+      // face immediately; the store writes through to the Repo.
+      updateContact: (c: ContactVM) => useAppStore.getState().putContact(c),
       now: () => Date.now(),
     };
 

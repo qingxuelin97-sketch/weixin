@@ -12,10 +12,21 @@
  * wrong often enough to be worse than useless (every gateway reports usage
  * differently, and some not at all), and a wrong number about money is worse
  * than an honest count of calls. So: calls per day, split by what caused them.
+ *
+ * Tokens (M-J3) are a strictly BEST-EFFORT annex to that stance, not a reversal
+ * of it: when a response happens to carry a `usage.total_tokens`, the number is
+ * added to the day's token tally; when it doesn't, nothing is estimated and
+ * nothing is shown. Calls remain the primary metric — the token line exists so
+ * a spike's SIZE is visible, never to be mistaken for a bill.
  */
 import { repo } from '../db/repo';
 
-/** What made the call. Matches the router's `role` plus the background kinds. */
+/**
+ * What made the call. Matches the router's `role` plus the background kinds,
+ * plus the three non-chat modalities (M-J3) — TTS/ASR/image are paid calls
+ * exactly like a chat turn, and until they were counted here the usage page
+ * was silently lying about什么在花钱.
+ */
 export type UsageKind =
   | 'chat'
   | 'group'
@@ -24,12 +35,21 @@ export type UsageKind =
   | 'moments'
   | 'agent_dm'
   | 'story'
+  | 'tts'
+  | 'asr'
+  | 'image'
   | 'other';
 
 export interface DayUsage {
   day: number;
   counts: Record<string, number>;
   total: number;
+  /**
+   * Best-effort token tallies per kind (M-J3). Absent on rows written before
+   * the field existed and on days where no provider reported usage — readers
+   * must treat missing as "unknown", never as zero spend.
+   */
+  tokens?: Record<string, number>;
 }
 
 const KEY = 'usage:daily';
@@ -40,8 +60,16 @@ function dayOf(now: number): number {
   return Math.floor(now / 86_400_000);
 }
 
-export async function recordUsage(kind: UsageKind, now: number, n = 1): Promise<void> {
+/**
+ * Count a call (and, best-effort, its tokens).
+ *
+ * `n = 0` is a legal and meaningful shape (M-J3): the router counts the CALL
+ * up front — so failures are billed honestly — and reports tokens in a second,
+ * zero-count record once the response has actually arrived with a usage field.
+ */
+export async function recordUsage(kind: UsageKind, now: number, n = 1, tokens = 0): Promise<void> {
   try {
+    if (n === 0 && tokens <= 0) return; // nothing to record
     const rows = (await repo.getSetting<DayUsage[]>(KEY)) ?? [];
     const day = dayOf(now);
     const list = Array.isArray(rows) ? rows.filter((r) => day - r.day < KEEP_DAYS) : [];
@@ -52,10 +80,19 @@ export async function recordUsage(kind: UsageKind, now: number, n = 1): Promise<
     }
     today.counts[kind] = (today.counts[kind] ?? 0) + n;
     today.total += n;
+    if (tokens > 0 && Number.isFinite(tokens)) {
+      today.tokens ??= {};
+      today.tokens[kind] = (today.tokens[kind] ?? 0) + Math.round(tokens);
+    }
     await repo.putSetting(KEY, list);
   } catch {
     /* accounting must never break a turn */
   }
+}
+
+/** Total reported tokens of one day, or 0 when nothing was reported. */
+export function dayTokens(u: DayUsage): number {
+  return Object.values(u.tokens ?? {}).reduce((a, b) => a + b, 0);
 }
 
 export async function getUsage(now: number): Promise<{ today: DayUsage; history: DayUsage[] }> {
@@ -90,5 +127,8 @@ export const KIND_LABELS: Record<UsageKind, string> = {
   moments: '朋友圈',
   agent_dm: 'AI 之间私聊',
   story: '剧情',
+  tts: '语音合成',
+  asr: '语音识别',
+  image: '图片生成',
   other: '其他',
 };

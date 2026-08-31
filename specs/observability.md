@@ -36,7 +36,12 @@ M-G 轮工作流审计的结论写进这里：**新的观测能力只能吸收�
 - **errlog 永不抛错**，且冷启恢复路径与内存路径同为 newest-first
   （M-I11 修掉了恢复漏 `.reverse()` 的老 bug——诊断页恰恰是重启后最常看的）。
 - **usage 是计次不是账单**：各网关的 token 报法互不兼容、有的不报，宁可给一个诚实的
-  次数也不给一个常错的金额。
+  次数也不给一个常错的金额。M-J3 在此立场内加了 **token 尽力而为**：响应带
+  `usage.total_tokens` 才累计（router 在成功 rung 后以 `n=0` 补记），拿不到就不估算、
+  不显示——它是量级参考，永远不是账单。同轮修掉**断流双记**（流式失败回落 complete
+  时同一回合记两次——`completeInner` 带「本回合已记」标记），并把 TTS / ASR / 图片生成
+  纳入计次（新 UsageKind `tts`/`asr`/`image`，各在其唯一出网点记一次）。
+  守卫：`tests/unit/j3-model-surface.test.ts`。
 
 ## 验收清单
 

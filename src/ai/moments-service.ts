@@ -16,9 +16,12 @@ import {
   generateMomentPost,
   generateMomentComment,
   generateRepostText,
+  momentRouteTier,
 } from './moments-engine';
 import { repostMoment } from './moment-repost';
+import { generateToLibrary } from './gen-media';
 import { canSeeMoment } from '../lib/moment-visibility';
+import { seededRng } from '../lib/money';
 import { repo } from '../db/repo';
 
 export interface MomentsHooks {
@@ -26,6 +29,12 @@ export interface MomentsHooks {
   /** Idempotent add — NOT a toggle; an AI reacting must never un-like. */
   applyLike: (like: MomentLikeVM) => Promise<void>;
   addComment: (c: MomentCommentVM) => Promise<void>;
+  /**
+   * Write an updated contact row (M-J3, AI 换头像). Optional so fakes that
+   * predate the field keep working — absent hook = the swap silently never
+   * happens, which is the correct degraded shape for an optional flourish.
+   */
+  updateContact?: (c: ContactVM) => Promise<void>;
   now: () => number;
 }
 
@@ -123,6 +132,77 @@ export async function runMomentPost(
     imageRefs: generated.imageRefs,
     isNsfw: false,
     createdAt: stamp,
+  };
+  await hooks.addMoment(moment);
+  await scheduleReactionsFor(moment, contacts, personaFor, hooks.now());
+  // 偶尔换个头像 (M-J3): rides the tail of the post that already fired — no
+  // new action kind, no second timer, and offline backfill reaches it through
+  // the same materialized `moment_post` row as everything else.
+  await maybeAvatarSwap(persona, peer, contacts, personaFor, hooks, stamp);
+}
+
+/**
+ * How often a due post ALSO becomes an avatar change. Rare on purpose: a
+ * changed avatar is one of the loudest "she has a life" signals there is, and
+ * each one costs a paid generation — at 3% of posts a 0.5/day persona changes
+ * hers about once a month, which is what real people do.
+ */
+export const AVATAR_SWAP_RATE = 0.03;
+
+/** Seeded gate, pure — replay and backfill agree on which post swaps. */
+export function shouldSwapAvatar(contactId: string, stamp: number): boolean {
+  return seededRng(`avatarswap:${contactId}:${stamp}`)() < AVATAR_SWAP_RATE;
+}
+
+/**
+ * Generate a fresh 512 avatar, point the contact at it, and post the
+ * 「换了个头像」moment that makes the change legible in the feed.
+ *
+ * Every exit is silent: no updateContact hook, dice say no, generation not
+ * configured (or blocked by the 铁律 6 tier gate inside generateToLibrary),
+ * or the endpoint failed — in all cases the ordinary post already published
+ * and nothing on screen hints that anything more was attempted.
+ *
+ * The new avatar lands in the media library as `kind: 'avatar'` (not
+ * 'generated'): startup hydration eagerly materializes avatars and the LRU
+ * eviction exempts them — stored any other way, her face degrades to a
+ * placeholder tint after the next cold start.
+ */
+export async function maybeAvatarSwap(
+  persona: PersonaVM,
+  peer: ContactVM,
+  contacts: ContactVM[],
+  personaFor: (id: string) => PersonaVM | undefined,
+  hooks: MomentsHooks,
+  stamp: number,
+): Promise<void> {
+  if (!hooks.updateContact) return;
+  if (!shouldSwapAvatar(peer.id, stamp)) return;
+  // Routing tier for HER card riding the prompt — derived, never declared
+  // (the same rule the post generation itself follows).
+  const tier = await momentRouteTier(persona);
+  const style = persona.imageTags.filter(Boolean).join('、');
+  const ref = await generateToLibrary({
+    prompt:
+      `一张社交软件个人头像，主角是：${persona.core.slice(0, 80)}。` +
+      `${style ? `画面气质贴合：${style}。` : ''}构图居中、适合裁成方形小图、不要文字水印。`,
+    tier,
+    now: stamp,
+    seed: `avatar:${peer.id}:${stamp}`,
+    tags: ['AI生成'],
+    kind: 'avatar',
+    size: '512x512',
+  });
+  if (!ref) return;
+  await hooks.updateContact({ ...peer, avatarRef: ref });
+  const moment: MomentVM = {
+    id: `mo_${peer.id}_${stamp}_avatar`,
+    authorId: peer.id,
+    text: '换了个头像',
+    imageRefs: [ref],
+    isNsfw: false,
+    // Right after the post it rode in on, so the feed reads in order.
+    createdAt: stamp + 1,
   };
   await hooks.addMoment(moment);
   await scheduleReactionsFor(moment, contacts, personaFor, hooks.now());

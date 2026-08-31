@@ -28,10 +28,13 @@ export interface MediaItemVM {
   id: string;
   /**
    * 'avatar' items feed the avatar picker; 'photo' items feed聊天/朋友圈配图;
-   * 'sticker' items (M-I15) feed the composer's「我的表情」panel. Row-level
+   * 'sticker' items (M-I15) feed the composer's「我的表情」panel; 'generated'
+   * items (M-J3) are AI-generated pictures — referenced by exactly the message
+   * or post that caused them, deliberately OUTSIDE the random photo pool (a
+   * generated 饼干 resurfacing as a random 晚霞 is an instant tell). Row-level
    * field — adding a kind needs NO idb migration, only UI awareness.
    */
-  kind: 'avatar' | 'photo' | 'sticker';
+  kind: 'avatar' | 'photo' | 'sticker' | 'generated';
   /** Free-form persona tags (风景/美食/自拍…). Empty = usable by everyone. */
   tags: string[];
   mime: string;

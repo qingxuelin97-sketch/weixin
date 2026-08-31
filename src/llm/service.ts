@@ -106,6 +106,13 @@ async function loadConfig(): Promise<ResolvedConfig> {
 const PERMISSIVE_KINDS = new Set(['zen', 'custom']);
 const isPermissive = (p: ProviderVM): boolean => PERMISSIVE_KINDS.has(p.kind);
 
+/**
+ * Whether a provider KIND qualifies as a permissive channel (M-J3, for the
+ * config page's badge). Exported as a function over the same set the policy
+ * reads, so the badge can never say one thing while the router does another.
+ */
+export const isPermissiveKind = (kind: string): boolean => PERMISSIVE_KINDS.has(kind);
+
 export function makePolicy(cfg: ResolvedConfig): RoutingPolicy {
   const byId = new Map(cfg.providers.map((p) => [p.id, p]));
   const pick = (id?: string): ProviderVM | undefined =>

@@ -27,7 +27,7 @@ import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
 import { collectTurnImages } from './vision-context';
-import { resolvePhotoBubble, photoDirective } from './photo-send';
+import { resolvePhotoOrGenerate, photoDirective } from './photo-send';
 import { materializeBubble, type CardContact } from './bubble-materialize';
 import { gameDirective } from './game-react';
 import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
@@ -665,12 +665,15 @@ async function generateAndPlayInner(
       }
 
       // A photo bubble names what she wants to show, not a file — resolve it
-      // against the user's own pool. With no pool it becomes text: a broken
-      // image reads as a bug, while saying it in words reads as her not having
-      // a picture to hand.
+      // against the user's own pool, or (M-J3) actually generate the picture
+      // when the pool has nothing real and an image endpoint is configured.
+      // The tier handed over is THIS turn's tier — the surface's own grade,
+      // never a literal (rule #6 covers generation prompts like any content).
+      // With neither pool nor generator it becomes text: a broken image reads
+      // as a bug, while saying it in words reads as her not having a picture.
       const photo =
         b.type === 'image'
-          ? resolvePhotoBubble(b, persona, convId, `${convId}:${hooks.now()}:${i}`)
+          ? await resolvePhotoOrGenerate(b, persona, convId, `${convId}:${hooks.now()}:${i}`, tier, hooks.now())
           : null;
       if (b.type === 'image' && !photo) {
         await hooks.appendMessage({

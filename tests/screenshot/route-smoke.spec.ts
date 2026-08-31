@@ -20,7 +20,7 @@ import { test, expect } from '@playwright/test';
 const ROUTES = [
   '/chats', '/contacts', '/discover', '/me', '/moments', '/search', '/story',
   '/wallet', '/profile', '/report', '/favorites', '/settings', '/settings/api',
-  '/settings/asr', '/settings/backup', '/settings/battery', '/settings/env',
+  '/settings/asr', '/settings/tts', '/settings/backup', '/settings/battery', '/settings/env',
   '/settings/media', '/settings/native', '/settings/notify-test',
   '/settings/prompt-lab', '/settings/usage', '/settings/worldbook',
   '/contacts-tags', '/contacts-chats-only', '/groups', '/new-friends',

@@ -30,6 +30,7 @@ const SHOTS: Array<[name: string, path: string]> = [
   ['settings-native', '/settings/native'],
   ['settings-battery', '/settings/battery'],
   ['settings-asr', '/settings/asr'],
+  ['settings-tts', '/settings/tts'],
   ['settings-notify-test', '/settings/notify-test'],
 ];
 
