@@ -30,11 +30,9 @@ import {
   type ReportStorySave,
   type YearReport,
 } from '../../lib/report';
-import {
-  renderReportImage,
-  reportImageLines,
-  type ReportImagePalette,
-} from '../../lib/report-image';
+// Type-only: the Canvas long-image renderer is a save-button-only path, so the
+// implementation loads as a lazy chunk inside the handler (启动包棘轮余量为零).
+import type { ReportImagePalette } from '../../lib/report-image';
 import { saveBlobFile } from '../../lib/save-file';
 import { listSaves } from '../../ai/story-gm';
 import { fenToYuan } from '../../lib/money';
@@ -195,6 +193,7 @@ function ReportBody({
         hairline: token('--color-report-hairline'),
       };
       const canvas = document.createElement('canvas');
+      const { renderReportImage, reportImageLines } = await import('../../lib/report-image');
       renderReportImage(canvas, reportImageLines(r), palette);
       const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
       if (!blob) throw new Error('图片导出失败');

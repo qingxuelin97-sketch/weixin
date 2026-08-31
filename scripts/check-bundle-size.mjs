@@ -21,13 +21,17 @@ import { join } from 'node:path';
 /**
  * Total gzipped JS+CSS shipped to the browser, in KB. Measured 307 at M-I18.
  *
+ * 360→375 (M-J wave 1b): J5 原生 SSE + J8 钱二期 + J9 剧情 V4 + J12 收藏/报告四期
+ * 共 +13KB 首方代码，仍零新依赖；report-image 已拆懒 chunk（本棘轮总量口径不奖励
+ * 懒拆，J13 改双账本后才会）。
+ *
  * 340→360 (M-J wave 1): J1 心智一致性 + J3 图像生成 landed ~11KB of first-party
  * main-chunk code with ZERO new runtime dependencies (the only new lazy chunk,
  * image.ts, is 2.7KB and loads on demand). Raised deliberately per this file's
  * own doctrine; J13 will split the ratchet into main-chunk vs lazy budgets so
  * the number stops punishing code that never blocks cold start.
  */
-const BUDGET_KB = 360;
+const BUDGET_KB = 375;
 
 const dir = 'dist/assets';
 let entries;

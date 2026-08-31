@@ -47,11 +47,9 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/settings': { golden: 'settings', smoke: { path: '/settings' } },
   '/settings/api': { golden: 'settings-api', smoke: { path: '/settings/api' } },
   '/settings/asr': { golden: 'settings-asr', smoke: { path: '/settings/asr' } },
-  // pendingCast (M-J3): the shot is WIRED (pages.spec.ts) but the PNG can only
-  // be minted by CI's regen-goldens — local Chromium baselines are宪法-banned.
-  // The flag is self-cleaning: once the PNG lands in the repo, a guard in
-  // route-goldens.test.ts demands the flag be removed.
-  '/settings/tts': { golden: 'settings-tts', pendingCast: true, smoke: { path: '/settings/tts' } },
+  // pendingCast 旗已摘（M-J wave1b）：CI regen 在 67878d5 铸出了 settings-tts.png，
+  // 自清洁守卫随即要求回到存在性强断言的正常轨道。
+  '/settings/tts': { golden: 'settings-tts', smoke: { path: '/settings/tts' } },
   '/settings/backup': { golden: 'backup', smoke: { path: '/settings/backup' } },
   '/settings/notify-test': { golden: 'settings-notify-test', smoke: { path: '/settings/notify-test' } },
   '/settings/env': {
