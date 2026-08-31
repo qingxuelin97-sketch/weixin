@@ -27,6 +27,10 @@
  */
 import { Capacitor } from '@capacitor/core';
 import { repo } from '../db/repo';
+// 已知债（M-J0 依赖方向上锁时既存）：这个自检**有意**共享 llm/http 的传输层——它要
+// 回答的正是「这条通道通不通」，换一套 http 就测不到真通道了（见文件头注释）。
+// 传输层或许本该住 lib/，但搬家动到所有 Provider，不在门禁地基期做——逐条豁免。
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { httpJson } from '../llm/http';
 import { logError } from './errlog';
 

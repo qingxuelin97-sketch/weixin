@@ -6,6 +6,10 @@
  * a new voice message stops the previous one, like the real app.
  */
 import { idbGet, idbPut, idbGetAll, idbDelete } from '../db/idb';
+// 已知债（M-J0 依赖方向上锁时既存）：TTS 合成器住在 llm/（它就是一次 provider 调用），
+// 而缓存+播放住在 lib/。按 §1 该是 llm→lib，这条是反着的。搬家会动 features 里所有
+// 调用方，不属于门禁地基期的改动范围——先逐条豁免，欠据在此。
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { synthesize, isTtsAvailable, DEFAULT_VOICE } from '../llm/tts';
 
 /**
