@@ -260,4 +260,108 @@ const OLD_FRIENDS: Script = {
   ],
 };
 
-export const BUILTIN_SCRIPTS: Script[] = [RAINY_NIGHT, WEEKEND_PLAN, OLD_FRIENDS];
+/**
+ * The V4 showcase — a 双人本 written for a SINGLE chat (one AI actor, the user
+ * playing the other role live), exercising all three V4 mechanisms at once:
+ * a choice node (the fork is the player's tap, not an expr), per-node pace
+ * (the opening breathes, the recognition tumbles), and NG+ legacy (finishing
+ * once carries `met_before` into the next run, so 第 2 周目 opens with the two
+ * of them already half-recognizing each other). Also fine in a group — both
+ * roles can be AIs; the choice still belongs to the person holding the phone.
+ */
+const LAST_TRAIN: Script = {
+  scriptId: 'builtin_last_train',
+  title: '末班车',
+  genre: '邂逅',
+  nsfwLevel: 0,
+  cast: [
+    { charId: 'stranger', role: '邻座的人', secret: '你认出了对方，但不确定对方还记不记得你' },
+    { charId: 'rider', role: '晚归的人', secret: '你今晚本来要去见一个很久没见的人，结果没去成' },
+  ],
+  vars: { spoke: false, met_before: false },
+  legacy: { carry: ['met_before'] },
+  entry: 'board',
+  nodes: [
+    {
+      id: 'board',
+      goal: '末班车上只剩两个人，看谁先开口',
+      onEnter: { narrate: '末班车晃晃悠悠。车厢里只剩下两个人，和一排闪过去的灯。', scene: '深夜的末班车' },
+      pace: 'slow',
+      directives: [
+        {
+          charId: 'stranger',
+          instruction: '偷偷打量对方，找一个不突兀的由头搭话',
+          forbid: '不要一上来就说你认识对方',
+        },
+        { charId: 'rider', instruction: '心事重重地看着窗外，别人搭话就应一两个字' },
+      ],
+      triggers: [{ when: 'llm:有人先开了口，另一个人接了话', to: 'talk', effects: { vars: { spoke: true } } }],
+      timeout: { turns: 6, to: 'silent_end' },
+    },
+    {
+      id: 'talk',
+      goal: '有一搭没一搭地聊，越聊越觉得对方眼熟',
+      onEnter: { narrate: '话匣子开了一条缝。' },
+      pace: 'fast',
+      directives: [
+        { charId: 'stranger', instruction: '往对方的过去里试探，提一个也许共同经历过的地方', reveal: '可以承认你觉得对方眼熟' },
+        { charId: 'rider', instruction: '说说你今晚为什么坐末班车，但别把伤心事全倒出来' },
+      ],
+      triggers: [
+        {
+          when: 'llm:两人发现了一段共同的过去（同一个地方、同一件事或同一个人）',
+          to: 'fork',
+          effects: {
+            vars: { met_before: true },
+            memWrite: [{ charId: 'stranger', fact: '末班车上重逢的那个人，原来早就认识' }],
+          },
+        },
+      ],
+      timeout: { turns: 8, to: 'fork' },
+    },
+    {
+      id: 'fork',
+      goal: '到站前的最后一分钟，那句话到底问不问',
+      onEnter: { narrate: '广播报了下一站。有人把手伸向了扶杆。' },
+      choice: {
+        prompt: '就快到站了。要不要把那句一直没敢问的话问出口？',
+        options: [
+          { label: '问出口', setVars: { spoke: true }, goto: 'ask' },
+          { label: '算了，就这样吧', goto: 'silent_end' },
+        ],
+      },
+      directives: [],
+      triggers: [],
+    },
+    {
+      id: 'ask',
+      goal: '那句话问出了口，答案比问题更让人意外',
+      onEnter: { narrate: '车门开了又关。谁也没有下车。' },
+      pace: 'fast',
+      directives: [
+        { charId: 'stranger', instruction: '正面回答对方的问题，把你藏了一路的话说出来' },
+        { charId: 'rider', instruction: '听完之后，说出你今晚真正的心事' },
+      ],
+      triggers: [{ when: 'llm:两个人把话说开了', to: 'warm_end' }],
+      timeout: { turns: 6, to: 'warm_end' },
+    },
+    {
+      id: 'warm_end',
+      goal: '收束：终点站，交换了联系方式',
+      onEnter: { narrate: '终点站到了。这一次，有人先开了口说「下次见」。' },
+      directives: [{ charId: 'stranger', instruction: '道别，并把这次重逢好好收个尾' }],
+      triggers: [],
+      ending: true,
+    },
+    {
+      id: 'silent_end',
+      goal: '收束：各自下车，谁也没说破',
+      onEnter: { narrate: '到站了。两个人往不同的出口走，谁也没有回头。' },
+      directives: [{ charId: 'rider', instruction: '在心里把没说出口的那句话说完，然后走进夜里' }],
+      triggers: [],
+      ending: true,
+    },
+  ],
+};
+
+export const BUILTIN_SCRIPTS: Script[] = [RAINY_NIGHT, WEEKEND_PLAN, OLD_FRIENDS, LAST_TRAIN];

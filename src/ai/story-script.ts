@@ -51,6 +51,32 @@ export const TriggerSchema = z.object({
   effects: EffectsSchema.optional(),
 });
 
+/**
+ * One option of a choice node (V4). `goto` is a graph edge exactly like a
+ * trigger's `to` — reachability and escape analysis walk it — and `setVars`
+ * lands before the move, so the destination's `expr:` triggers can read it.
+ */
+export const ChoiceOptionSchema = z.object({
+  /** Button text. Short — it renders as a chip on the chat page. */
+  label: z.string().min(1).max(20),
+  /** Variable assignments applied when this option is picked. */
+  setVars: z.record(z.union([z.number(), z.string(), z.boolean()])).optional(),
+  /** Destination node id. Validated to exist. */
+  goto: z.string().min(1),
+});
+
+/**
+ * A player decision point (V4). The GM reaching a node that carries one PAUSES
+ * the run — the tick chain stops, the prompt lands as a grey system line, the
+ * chat page shows the options — and only the user's tap moves the story again.
+ * 1–4 options: one is a legitimate "press on" beat, five don't fit a phone row.
+ */
+export const ChoiceSchema = z.object({
+  /** The question put to the player, shown as grey narration. */
+  prompt: z.string().min(1).max(200),
+  options: z.array(ChoiceOptionSchema).min(1).max(4),
+});
+
 export const NodeSchema = z.object({
   id: z.string().min(1),
   /** One line for the director: what this beat is FOR. */
@@ -72,6 +98,17 @@ export const NodeSchema = z.object({
   sfwAlt: z.string().optional(),
   /** True for endings: no triggers required, the run finishes here. */
   ending: z.boolean().optional(),
+  /**
+   * Player decision point (V4). The run pauses here until the user picks; the
+   * options are this node's ONLY exits that matter (triggers never evaluate
+   * while a choice waits), so a choice node needs neither triggers nor timeout.
+   */
+  choice: ChoiceSchema.optional(),
+  /**
+   * Beat cadence hint (V4): 'fast' halves the tick gap, 'slow' doubles it.
+   * Purely a fireAt multiplier — there is no second clock (constitution §5).
+   */
+  pace: z.enum(['fast', 'slow']).optional(),
 });
 
 export const ScriptSchema = z.object({
@@ -84,9 +121,18 @@ export const ScriptSchema = z.object({
   vars: z.record(z.union([z.number(), z.string(), z.boolean()])).default({}),
   entry: z.string().min(1),
   nodes: z.array(NodeSchema).min(1),
+  /**
+   * NG+ (V4): which vars a new run may inherit from a FINISHED run of this
+   * script. A whitelist by design — carrying everything would let 第 2 周目
+   * open with every secret already exposed; the author names what persists
+   * ("彼此认识了" yes, "这一轮的信任值" no). Bounded so the row stays small.
+   */
+  legacy: z.object({ carry: z.array(z.string().min(1)).max(8) }).optional(),
 });
 
 export type Cast = z.infer<typeof CastSchema>;
+export type ChoiceOption = z.infer<typeof ChoiceOptionSchema>;
+export type Choice = z.infer<typeof ChoiceSchema>;
 export type Directive = z.infer<typeof DirectiveSchema>;
 export type Effects = z.infer<typeof EffectsSchema>;
 export type Trigger = z.infer<typeof TriggerSchema>;
@@ -112,7 +158,8 @@ export interface ValidationIssue {
     | 'no_ending'
     | 'dead_end'
     | 'unknown_char'
-    | 'nsfw_entry';
+    | 'nsfw_entry'
+    | 'choice_conflict';
   message: string;
   nodeId?: string;
 }
@@ -185,8 +232,30 @@ export function validateScript(raw: unknown): ValidationResult {
         nodeId: n.id,
       });
     }
-    // A non-ending node with no way out is where a run dies quietly.
-    if (!n.ending && n.triggers.length === 0 && !n.timeout) {
+    // Choice edges are graph edges (V4): a goto to an invented id strands the
+    // run at the exact moment the user commits to a decision — worse than any
+    // trigger typo, because the pause makes the freeze look intentional.
+    for (const opt of n.choice?.options ?? []) {
+      if (!ids.has(opt.goto)) {
+        issues.push({
+          code: 'dangling_edge',
+          message: `节点 ${n.id} 的选项「${opt.label}」指向不存在的节点「${opt.goto}」`,
+          nodeId: n.id,
+        });
+      }
+    }
+    // An ending never plays another beat, so a choice on it can never be shown
+    // — its gotos would be authored edges nobody can take.
+    if (n.ending && n.choice) {
+      issues.push({
+        code: 'choice_conflict',
+        message: `节点 ${n.id} 既是结局又带选项——结局不再推进，选项永远不会出现`,
+        nodeId: n.id,
+      });
+    }
+    // A non-ending node with no way out is where a run dies quietly. A choice
+    // IS a way out — the user's tap is the trigger.
+    if (!n.ending && n.triggers.length === 0 && !n.timeout && !n.choice) {
       issues.push({
         code: 'dead_end',
         message: `节点 ${n.id} 既不是结局，也没有任何出口`,
@@ -230,7 +299,21 @@ export function validateScript(raw: unknown): ValidationResult {
   return { ok: issues.length === 0, issues, script };
 }
 
-/** Node ids reachable from the entry, following triggers and timeouts. */
+/**
+ * Every outgoing edge of a node: triggers, timeout, and (V4) choice options.
+ * The ONE list both graph analyses walk — a new edge kind added here is
+ * automatically part of reachability AND escape analysis, and a new edge kind
+ * added elsewhere without touching this is the bug the V4 tests provoke.
+ */
+export function outEdgesOf(n: StoryNode): string[] {
+  return [
+    ...n.triggers.map((t) => t.to),
+    ...(n.timeout ? [n.timeout.to] : []),
+    ...(n.choice?.options ?? []).map((o) => o.goto),
+  ];
+}
+
+/** Node ids reachable from the entry, following triggers, timeouts and choices. */
 export function reachableFrom(script: Script): Set<string> {
   const byId = new Map(script.nodes.map((n) => [n.id, n]));
   const seen = new Set<string>();
@@ -239,9 +322,7 @@ export function reachableFrom(script: Script): Set<string> {
     const id = stack.pop()!;
     if (seen.has(id) || !byId.has(id)) continue;
     seen.add(id);
-    const n = byId.get(id)!;
-    for (const t of n.triggers) stack.push(t.to);
-    if (n.timeout) stack.push(n.timeout.to);
+    for (const to of outEdgesOf(byId.get(id)!)) stack.push(to);
   }
   return seen;
 }
@@ -273,8 +354,9 @@ export function strandedNodes(script: Script): string[] {
     changed = false;
     for (const n of script.nodes) {
       if (canFinish.has(n.id)) continue;
-      const outs = [...n.triggers.map((t) => t.to), ...(n.timeout ? [n.timeout.to] : [])];
-      if (outs.some((o) => canFinish.has(o) && byId.has(o))) {
+      // Choice edges count (V4): a beat whose only way to an ending runs
+      // through the player's decision is escapable — the player IS the trigger.
+      if (outEdgesOf(n).some((o) => canFinish.has(o) && byId.has(o))) {
         canFinish.add(n.id);
         changed = true;
       }

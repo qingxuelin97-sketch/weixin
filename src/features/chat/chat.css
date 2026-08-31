@@ -795,6 +795,45 @@
   background: var(--color-brand);
   border-color: var(--color-brand);
 }
+/* ---- 剧情抉择条 (V4): the story is waiting on the player ---- */
+.story-choice {
+  flex: none;
+  padding: 10px 12px;
+  background: var(--color-panel-bg, var(--color-cell-bg));
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.story-choice__prompt {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+  line-height: var(--lh-body);
+}
+.story-choice__options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.story-choice__opt {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: var(--hairline-width) solid var(--color-brand);
+  border-radius: 6px;
+  background: var(--color-cell-bg);
+  color: var(--color-brand);
+  font-size: var(--fs-cell-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.story-choice__opt:active {
+  background: var(--color-cell-bg-pressed);
+}
+.story-choice__opt:disabled {
+  opacity: 0.5;
+}
+
 .select-bar {
   display: flex;
   align-items: center;

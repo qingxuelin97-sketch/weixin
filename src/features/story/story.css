@@ -118,6 +118,10 @@
   stroke-dasharray: 4 3;
   stroke: var(--color-text-placeholder);
 }
+.sgraph__edge--choice {
+  stroke-dasharray: 1.5 3;
+  stroke: var(--color-link);
+}
 .sgraph__edge--walked {
   stroke: var(--color-brand);
   stroke-width: 2;
@@ -187,6 +191,10 @@
 }
 .sgraph__legend i.dash {
   border-top-style: dashed;
+}
+.sgraph__legend i.dot {
+  border-top-style: dotted;
+  border-top-color: var(--color-link);
 }
 .sgraph__legend i.walked {
   border-top-color: var(--color-brand);
@@ -571,6 +579,12 @@
 .casting__stage-item--active {
   border-color: var(--color-brand);
   color: var(--color-brand);
+}
+.casting__hint {
+  margin: 6px 0 0;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  line-height: var(--lh-body);
 }
 .casting__role {
   padding: 8px 0;

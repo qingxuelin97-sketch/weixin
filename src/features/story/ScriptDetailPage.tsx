@@ -25,8 +25,16 @@ import {
   type StoryScriptRow,
   type StorySaveRow,
 } from '../../ai/story-gm';
-import { scheduleNextBeat } from '../../ai/story-service';
-import { galleryFor, gallerySummary, nextRunNumber, runsOf, runStateLabel } from '../../ai/story-runs';
+import { scheduleNextBeat, tickMsFor, STORY_TICK_ACTIVE_MS } from '../../ai/story-service';
+import {
+  carriedVars,
+  galleryFor,
+  gallerySummary,
+  legacyOf,
+  nextRunNumber,
+  runsOf,
+  runStateLabel,
+} from '../../ai/story-runs';
 import { globalTier } from '../../lib/nsfw-tier';
 import { describeWhen, type Script } from '../../ai/story-script';
 import { StoryGraph } from './StoryGraph';
@@ -50,6 +58,8 @@ export function ScriptDetailPage() {
   const [saves, setSaves] = useState<StorySaveRow[]>([]);
   const [casting, setCasting] = useState(false);
   const [starting, setStarting] = useState(false);
+  /** NG+ (V4): the next start inherits the last finished run's outcome. */
+  const [ngWanted, setNgWanted] = useState(false);
 
   const reload = useCallback(async () => {
     if (!scriptId) return;
@@ -74,6 +84,11 @@ export function ScriptDetailPage() {
     [script, saves],
   );
   const liveRun = runs.find((r) => r.isActive);
+  /** What a finished run left behind — the NG+ entry exists exactly when this does. */
+  const legacy = useMemo(
+    () => (script ? legacyOf(saves, script.scriptId) : undefined),
+    [script, saves],
+  );
 
   const start = (convId: string, bindings: Record<string, string>) =>
     guard('story.start', async () => {
@@ -89,6 +104,16 @@ export function ScriptDetailPage() {
           return;
         }
         const now = Date.now();
+        // NG+ (V4): the whitelist gate lives HERE — only `legacy.carry` vars
+        // survive into the new run, and the GM gets the ending for its opening.
+        const inherit =
+          ngWanted && legacy
+            ? {
+                fromRun: legacy.run,
+                endingId: legacy.endingId,
+                vars: carriedVars(script, legacy.vars),
+              }
+            : undefined;
         const save = makeSave({
           script,
           convId,
@@ -96,14 +121,20 @@ export function ScriptDetailPage() {
           globalTier: await globalTier(),
           now,
           run: nextRunNumber(saves, script.scriptId),
+          inherit,
         });
         await putSave(save);
         // Tick 1 opens the chain; every later tick is queued by `chainNextBeat`
         // before its beat runs, so a failed beat retries instead of dying.
-        await scheduleNextBeat(save, now, 1);
+        // Active cadence for the opener (V4): the person who just pressed 开演
+        // is on their way to the chat — the curtain should not take 45s.
+        await scheduleNextBeat(save, now, 1, tickMsFor(save, script, true) ?? STORY_TICK_ACTIVE_MS);
         setCasting(false);
+        setNgWanted(false);
         await reload();
-        showToast(`《${script.title}》第 ${runOf(save)} 周目开演，去群里看`);
+        showToast(
+          `《${script.title}》第 ${runOf(save)} 周目${inherit ? '（NG+ 继承）' : ''}开演，去聊天里看`,
+        );
       } finally {
         setStarting(false);
       }
@@ -168,9 +199,28 @@ export function ScriptDetailPage() {
                 第 {runOf(liveRun)} 周目进行中 · 去看
               </button>
             ) : (
-              <button className="run-btn run-btn--primary" onClick={() => setCasting(true)}>
-                {runs.length > 0 ? `开启第 ${nextRunNumber(saves, script.scriptId)} 周目` : '开演'}
-              </button>
+              <>
+                <button
+                  className="run-btn run-btn--primary"
+                  onClick={() => {
+                    setNgWanted(false);
+                    setCasting(true);
+                  }}
+                >
+                  {runs.length > 0 ? `开启第 ${nextRunNumber(saves, script.scriptId)} 周目` : '开演'}
+                </button>
+                {legacy && (
+                  <button
+                    className="run-btn"
+                    onClick={() => {
+                      setNgWanted(true);
+                      setCasting(true);
+                    }}
+                  >
+                    NG+ 继承开局
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -188,17 +238,23 @@ export function ScriptDetailPage() {
                 <div className="beats__head">
                   <span className="beats__id">{n.id}</span>
                   {n.id === script.entry && <span className="story-chip">开场</span>}
+                  {n.choice && <span className="story-chip">抉择</span>}
                   {n.ending && <span className="story-chip story-chip--live">结局</span>}
                   {(n.nsfwLevel ?? 0) > 0 && (
                     <span className="story-chip story-chip--adult">18+</span>
                   )}
                 </div>
                 <div className="beats__goal">{n.goal}</div>
-                {(n.triggers.length > 0 || n.timeout) && (
+                {(n.triggers.length > 0 || n.timeout || n.choice) && (
                   <div className="beats__exits">
                     {n.triggers.map((t, i) => (
                       <div className="beats__exit" key={i}>
                         {describeWhen(t.when)} → {t.to}
+                      </div>
+                    ))}
+                    {(n.choice?.options ?? []).map((o, i) => (
+                      <div className="beats__exit" key={`c${i}`}>
+                        你选「{o.label}」 → {o.goto}
                       </div>
                     ))}
                     {n.timeout && (
@@ -259,6 +315,27 @@ export function ScriptDetailPage() {
               </p>
             )}
           </div>
+          {/* NG+ 入口 (V4): unlocked the moment ANY run finishes with a real
+              ending. It rides the same casting flow — only the vars differ. */}
+          {legacy && !liveRun && (
+            <div
+              className="settings__row settings__row--divided"
+              onClick={() => {
+                setNgWanted(true);
+                setCasting(true);
+              }}
+            >
+              <span className="settings__label">NG+ · 继承上周目</span>
+              <span className="settings__value">
+                第 {legacy.run} 周目的结局
+                {(script.legacy?.carry?.length ?? 0) > 0
+                  ? `与 ${script.legacy!.carry.length} 个变量`
+                  : ''}
+                会带进新档
+              </span>
+              <span className="settings__chevron" />
+            </div>
+          )}
         </div>
 
         <div className="settings__group">
@@ -316,7 +393,10 @@ export function ScriptDetailPage() {
         script={script}
         open={casting}
         busy={starting}
-        onClose={() => setCasting(false)}
+        onClose={() => {
+          setCasting(false);
+          setNgWanted(false);
+        }}
         onStart={start}
       />
     </>

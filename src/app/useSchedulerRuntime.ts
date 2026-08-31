@@ -295,7 +295,12 @@ export function useSchedulerRuntime(enabled: boolean): void {
     // the scheduler marks a row done before running it and drops handler
     // errors without retrying, one flaky LLM call ended the story forever.
     registerChainedHandler('story_tick', {
-      chain: (p) => chainNextBeat(p, Date.now()),
+      // 节奏自适应 (V4): the user watching the stage conversation tightens the
+      // beat gap to 15s; `tickMsFor` inside chainNextBeat also honours a choice
+      // wait (no scheduling at all) and the node's pace. Presence is read HERE
+      // because story-service is pure of the store by design.
+      chain: (p) =>
+        chainNextBeat(p, Date.now(), useAppStore.getState().activeConvId === p.convId),
       work: async (p) => {
         const saveId = String(p.saveId ?? '');
         if (!saveId) return;
@@ -305,6 +310,20 @@ export function useSchedulerRuntime(enabled: boolean): void {
             const st = useAppStore.getState();
             const c = st.conversationById(convId);
             if (!c) return;
+            // 单聊剧情 (V4): no director — the peer is the play's only actor,
+            // speaking through the single-chat engine with their own beat
+            // directive (roles bound to 'self' are the user, who acts freely).
+            if (c.type === 'single') {
+              const peerId = c.peerId;
+              const peer = peerId ? st.contactById(peerId) : undefined;
+              const persona = peerId ? st.personaFor(peerId) : undefined;
+              const directive = peerId ? directives[peerId] : undefined;
+              if (!peerId || !peer || !persona || !directive) return;
+              await sendProactiveMessage(convId, peer, persona, await globalTier(), hooks, Date.now(), {
+                story: `${goal}｜${directive}`.slice(0, 300),
+              });
+              return;
+            }
             const members = (c.memberIds ?? []).map((id) => {
               const ct = st.contactById(id);
               return {
@@ -335,7 +354,11 @@ export function useSchedulerRuntime(enabled: boolean): void {
             // Rule #6: this prompt carries the transcript, so the tier comes
             // from the CONVERSATION's participants — never from a constant
             // here. `tierOfConversation` is the authority for exactly this.
-            const tier = await tierOfConversation(c.memberIds ?? [], st.personaFor);
+            // A single-chat stage (V4) has no memberIds — its participant set
+            // is the peer; falling through to [] would judge at the floor.
+            const participants =
+              c.type === 'single' && c.peerId ? [c.peerId] : (c.memberIds ?? []);
+            const tier = await tierOfConversation(participants, st.personaFor);
             const nameOf = (id: string) => {
               const ct = st.contactById(id);
               return ct?.remark ?? ct?.name ?? id;

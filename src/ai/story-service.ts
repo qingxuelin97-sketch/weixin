@@ -8,18 +8,46 @@
  * Serial by construction — GM decides the beat, the director casts it, the
  * actors speak — because a story where two beats overlap is not a story.
  */
-import { enqueue } from './scheduler';
+import { enqueue, pendingActions, payloadOf } from './scheduler';
 import { repo } from '../db/repo';
 import type { ContactVM, MemoryFactVM, MomentVM } from '../data/types';
-import { getScript, activeSaveFor, putSave, planBeat, advance, applyTrigger, materializeEffects, endRun, getSave, clearStall, type StorySaveRow } from './story-gm';
-import type { Trigger } from './story-script';
+import { getScript, activeSaveFor, putSave, planBeat, advance, applyTrigger, applyChoiceOption, openChoice, hasPendingChoice, materializeEffects, endRun, getSave, clearStall, runOf, type StorySaveRow } from './story-gm';
+import type { Script, Trigger } from './story-script';
+import { ngPlusOpening } from './story-runs';
 import { BUILTIN_SCRIPTS } from './story-builtin';
 import { saveScript, listScripts } from './story-gm';
 import { beginStoryStamp, endStoryStamp } from './story-stamp';
 import { logError } from '../lib/errlog';
 
-/** How long between beats. Slow enough to read, fast enough to feel alive. */
+/** The idle cadence. Slow enough to read, fast enough to feel alive. */
 export const STORY_TICK_MS = 45_000;
+
+/** The cadence while the user is LOOKING at the stage conversation (V4). */
+export const STORY_TICK_ACTIVE_MS = 15_000;
+
+/**
+ * The gap before the NEXT beat, or `null` for "do not schedule at all" (V4).
+ *
+ * Three inputs, one fireAt — never a second timer (constitution rule #5):
+ *  - a run waiting on a player choice schedules NOTHING; the user's tap
+ *    re-opens the chain (`applyChoice`);
+ *  - the user watching the stage conversation gets beats at 15s instead of
+ *    45s — a play you are looking at should feel live, one running in the
+ *    background should not burn tokens at watch speed;
+ *  - the CURRENT node's `pace` scales the result ('fast' ×½, 'slow' ×2), so an
+ *    author can make a confrontation tumble and an aftermath breathe.
+ */
+export function tickMsFor(
+  save: Pick<StorySaveRow, 'pendingChoice' | 'nodeId'>,
+  script: Script | null,
+  userPresent: boolean,
+): number | null {
+  if (hasPendingChoice(save)) return null;
+  const base = userPresent ? STORY_TICK_ACTIVE_MS : STORY_TICK_MS;
+  const pace = script?.nodes.find((n) => n.id === save.nodeId)?.pace;
+  const mul = pace === 'fast' ? 0.5 : pace === 'slow' ? 2 : 1;
+  return Math.round(base * mul);
+}
 
 export interface StoryHooks {
   appendMessage: (m: {
@@ -94,14 +122,31 @@ export async function scheduleNextBeat(
   save: StorySaveRow,
   now: number,
   tick: number,
+  delayMs: number = STORY_TICK_MS,
 ): Promise<void> {
   await enqueue({
     kind: 'story_tick',
-    fireAt: now + STORY_TICK_MS,
+    fireAt: now + delayMs,
     payload: { saveId: save.id, convId: save.convId, tick },
     now,
     id: `story_${save.id}_t${tick}`,
   });
+}
+
+/**
+ * Is a tick already queued for this run? (V4)
+ *
+ * The chain queues the successor BEFORE the work, so the beat that OPENS a
+ * choice already left one pending tick behind — it lands as a no-op and its
+ * own chain step refuses to continue. If the user picks an option INSIDE that
+ * window, scheduling a second fresh chain would leave two live chains playing
+ * beats in parallel forever. The pick therefore only opens a new chain when
+ * the queue holds nothing for this run; otherwise the surviving tick — now
+ * unblocked — carries on. (`resumeRun` reuses this for the same ≤1-tick race.)
+ */
+export async function hasLiveTick(saveId: string): Promise<boolean> {
+  const rows = await pendingActions();
+  return rows.some((r) => r.kind === 'story_tick' && payloadOf(r)?.saveId === saveId);
 }
 
 /**
@@ -118,6 +163,8 @@ export async function scheduleNextBeat(
 export async function chainNextBeat(
   payload: Record<string, unknown>,
   now: number,
+  /** Is the user looking at the stage conversation right now? Injected by the app shell. */
+  userPresent = false,
 ): Promise<void> {
   const saveId = String(payload.saveId ?? '');
   if (!saveId) return;
@@ -126,8 +173,13 @@ export async function chainNextBeat(
   // Don't chain past the end of a run, and don't chain a paused one — that is
   // what stops a dead provider from being retried until the heat death.
   if (!save || !save.isActive || isStalled(save)) return;
+  // Adaptive cadence (V4), and the choice pause: `null` means the run is
+  // waiting on the player — the chain STOPS here, and the user's tap
+  // (`applyChoice`) is what opens a fresh one.
+  const delay = tickMsFor(save, await getScript(save.scriptId), userPresent);
+  if (delay == null) return;
   const tick = typeof payload.tick === 'number' && Number.isFinite(payload.tick) ? payload.tick : 0;
-  await scheduleNextBeat(save, now, tick + 1);
+  await scheduleNextBeat(save, now, tick + 1, delay);
 }
 
 /** Newest message id in a conversation — the rollback watermark. 0 when empty. */
@@ -150,8 +202,60 @@ export async function resumeRun(saveId: string, now: number): Promise<StorySaveR
   if (!save || !save.isActive) return undefined;
   const cleared = clearStall(save, now);
   await putSave(cleared);
-  await scheduleNextBeat(cleared, now, now);
+  // The last tick queued before the stall can still be pending (chain runs
+  // before the failing work); resuming inside that window must join the
+  // surviving chain, not stand up a second one beside it (V4).
+  if (!(await hasLiveTick(cleared.id))) {
+    const delay = tickMsFor(cleared, await getScript(cleared.scriptId), true);
+    await scheduleNextBeat(cleared, now, now, delay ?? STORY_TICK_ACTIVE_MS);
+  }
   return cleared;
+}
+
+/**
+ * The player picked an option (V4): land the vars, move to the option's node,
+ * clear the wait, and re-open the tick chain. The impure half of
+ * `applyChoiceOption` — this is the ONLY code path that un-pauses a choice.
+ */
+export async function applyChoice(
+  saveId: string,
+  optionIndex: number,
+  now: number,
+  hooks: Pick<StoryHooks, 'appendMessage'>,
+): Promise<StorySaveRow | undefined> {
+  const save = await getSave(saveId);
+  if (!save || !save.isActive || !hasPendingChoice(save)) return undefined;
+  const label = save.pendingChoice!.options[optionIndex]?.label;
+  if (label == null) return undefined;
+
+  // The watermark FIRST, then the「选择」line: rolling back to this beat later
+  // trims the line and re-asks the question — a rolled-back decision is undecided.
+  const msgCursor = await latestMessageId(save.convId);
+  beginStoryStamp(save.convId, { saveId: save.id, scriptId: save.scriptId, seq: save.seq });
+  try {
+    await hooks.appendMessage({
+      convId: save.convId,
+      senderId: 'system',
+      type: 'system',
+      content: `【选择】${label}`,
+      status: 'sent',
+      createdAt: now,
+    });
+  } finally {
+    endStoryStamp(save.convId);
+  }
+
+  const stepped = applyChoiceOption(save, optionIndex, now, msgCursor);
+  if (!stepped) return undefined;
+  await putSave(stepped.save);
+
+  // Re-open the chain — unless the pause's own leftover tick is still queued
+  // (see `hasLiveTick`); the user is by definition present, so active cadence.
+  if (!(await hasLiveTick(stepped.save.id))) {
+    const delay = tickMsFor(stepped.save, await getScript(stepped.save.scriptId), true);
+    await scheduleNextBeat(stepped.save, now, now, delay ?? STORY_TICK_ACTIVE_MS);
+  }
+  return stepped.save;
 }
 
 /**
@@ -168,6 +272,10 @@ export async function runStoryBeat(
   if (!save || !save.isActive) return { finished: true };
   // A tick queued before the run paused can still land here. Honour the pause.
   if (gm.isStalled(save)) return { finished: false };
+  // Waiting on the player (V4): a leftover tick landing during the wait must
+  // not advance ANYTHING — no acting, no trigger evaluation, no turn counted.
+  // The story moves again only through `applyChoice`.
+  if (hasPendingChoice(save)) return { finished: false };
   const script = await getScript(save.scriptId);
   if (!script) {
     // The script was deleted mid-run. Ending the run is the honest outcome —
@@ -191,13 +299,29 @@ export async function runStoryBeat(
   // never leave the conversation stamping ordinary chat forever.
   beginStoryStamp(save.convId, { saveId: save.id, scriptId: save.scriptId, seq: save.seq });
   try {
-    // Narration first, as a grey system line — the story's own voice, visibly
+    const firstArrival = save.turnsInNode === 0 && gm.stallsOf(save) === 0;
+
+    // NG+ opening (V4): the very first beat of an inheriting run announces
+    // what it inherited — once, before even the entry narration. Same gate as
+    // narration so a flaky first night cannot repeat it.
+    if (save.ngPlus && save.seq === 0 && firstArrival) {
+      await hooks.appendMessage({
+        convId: save.convId,
+        senderId: 'system',
+        type: 'system',
+        content: ngPlusOpening(script, save.ngPlus, runOf(save)),
+        status: 'sent',
+        createdAt: now,
+      });
+    }
+
+    // Narration next, as a grey system line — the story's own voice, visibly
     // distinct from anything a character says.
     //
     // `stallsOf(save) === 0` gates it to the FIRST attempt at this beat. Retries
     // re-enter with the same unadvanced save, so without the gate a flaky night
     // would print the same narration line once per retry.
-    if (plan.narrate && save.turnsInNode === 0 && gm.stallsOf(save) === 0) {
+    if (plan.narrate && firstArrival) {
       await hooks.appendMessage({
         convId: save.convId,
         senderId: 'system',
@@ -208,8 +332,36 @@ export async function runStoryBeat(
       });
     }
 
+    // A choice node (V4): the story PAUSES here. The prompt lands as grey
+    // narration (stamped with this beat, so rollback re-asks it), the wait is
+    // persisted, and the beat neither acts nor advances — deterministic and
+    // free of LLM calls, which is what makes the pause instant. The successor
+    // tick already queued by the chain lands as a no-op and refuses to chain
+    // further; the user's tap is what moves the story again.
+    if (plan.node.choice) {
+      if (firstArrival) {
+        await hooks.appendMessage({
+          convId: save.convId,
+          senderId: 'system',
+          type: 'system',
+          content: `【剧情抉择】${plan.node.choice.prompt}`,
+          status: 'sent',
+          createdAt: now,
+        });
+      }
+      await putSave(openChoice(save, plan.node, hooks.now()));
+      return { finished: false };
+    }
+
     try {
-      await hooks.playBeat(save.convId, plan.directives, plan.goal);
+      // The NG+ flavour rides into the FIRST beat's goal (V4): the actors are
+      // not handed the previous run's plot — only that a faint familiarity is
+      // in character now. Spoiling the old ending here would replay it.
+      const goal =
+        save.ngPlus && save.seq === 0
+          ? `${plan.goal}（多周目重开：角色间带着一点说不清的既视感）`
+          : plan.goal;
+      await hooks.playBeat(save.convId, plan.directives, goal);
     } catch (e) {
       // The successor tick is already queued (chain-before-work), so this is a
       // retry, not a death — up to MAX_STALLS of them.

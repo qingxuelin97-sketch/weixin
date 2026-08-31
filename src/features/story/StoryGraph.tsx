@@ -135,6 +135,7 @@ export function StoryGraph({ script, currentId, visited, inspectable = true }: S
             const cls = [
               'sgraph__edge',
               e.kind === 'timeout' ? 'sgraph__edge--timeout' : '',
+              e.kind === 'choice' ? 'sgraph__edge--choice' : '',
               isWalked ? 'sgraph__edge--walked' : '',
             ]
               .filter(Boolean)
@@ -191,6 +192,9 @@ export function StoryGraph({ script, currentId, visited, inspectable = true }: S
         </span>
         <span>
           <i className="dash" /> 超时兜底
+        </span>
+        <span>
+          <i className="dot" /> 玩家抉择
         </span>
         {visited && (
           <span>

@@ -26,6 +26,7 @@ import { idbGet, idbGetAll, idbGetAllByIndex, idbPut, idbDelete } from '../db/id
 import { repo } from '../db/repo';
 import type { MemoryFactVM, MomentVM } from '../data/types';
 import {
+  type Choice,
   type Script,
   type StoryNode,
   type Trigger,
@@ -104,6 +105,38 @@ export interface StorySaveRow {
    * still `isActive` — it is paused, not ended, and the user can resume it.
    */
   stalledAt?: number;
+  /**
+   * The player decision the run is waiting on (V4). While set, the tick chain
+   * does not schedule and a landed tick does nothing — the story is PAUSED,
+   * deliberately, until the user taps an option on the chat page. The options
+   * are snapshotted here (not re-read from the script) so an edited or deleted
+   * script cannot re-point a decision the user is already looking at.
+   */
+  pendingChoice?: PendingChoice;
+  /**
+   * NG+ marker (V4): this run was started inheriting a finished run's outcome.
+   * Feeds the opening narration ("上一周目走到了…") and the run-page badge.
+   * The inherited VARS are already merged into `vars` by `makeSave` — this is
+   * provenance, not state.
+   */
+  ngPlus?: { fromRun: number; endingId: string };
+}
+
+/** A choice waiting on the player, snapshotted onto the save row (V4). */
+export interface PendingChoice {
+  /** The node that owns the choice — where the run is standing. */
+  nodeId: string;
+  prompt: string;
+  options: Choice['options'];
+  /** When the wait began. */
+  at: number;
+}
+
+/** Is this run parked on a player decision? */
+export function hasPendingChoice(
+  save: Pick<StorySaveRow, 'pendingChoice'>,
+): boolean {
+  return save.pendingChoice != null && Array.isArray(save.pendingChoice.options);
 }
 
 /** Consecutive-failure count for a save row, tolerating pre-M-G0 rows. */
@@ -263,6 +296,13 @@ export interface StartOptions {
   now: number;
   /** 周目 number (M-I7). Callers derive it via `nextRunNumber`; defaults to 1. */
   run?: number;
+  /**
+   * NG+ (V4): inherit a finished run's outcome. `vars` here are ALREADY
+   * whitelisted by the caller (`carriedVars` — the script's `legacy.carry`
+   * list); makeSave merges them over the script defaults and records the
+   * provenance. Passing unfiltered vars is the bug the V4 test provokes.
+   */
+  inherit?: { fromRun: number; endingId: string; vars: Vars };
 }
 
 export function makeSave(opts: StartOptions): StorySaveRow {
@@ -271,7 +311,10 @@ export function makeSave(opts: StartOptions): StorySaveRow {
     id: `save_${script.scriptId}_${now}`,
     scriptId: script.scriptId,
     nodeId: script.entry,
-    vars: { ...script.vars },
+    vars: { ...script.vars, ...(opts.inherit?.vars ?? {}) },
+    ...(opts.inherit
+      ? { ngPlus: { fromRun: opts.inherit.fromRun, endingId: opts.inherit.endingId } }
+      : {}),
     seq: 0,
     turnsInNode: 0,
     convId: opts.convId,
@@ -318,6 +361,10 @@ export function planBeat(script: Script, save: StorySaveRow): BeatPlan | null {
   for (const d of node.directives) {
     const contactId = save.bindings[d.charId];
     if (!contactId) continue;
+    // A role played by the USER (single-chat stories, V4) gets no directive —
+    // the person acts for themselves, and printing their secret into any
+    // prompt would hand it to the character opposite them.
+    if (contactId === 'self') continue;
     const cast = script.cast.find((c) => c.charId === d.charId);
     const text = directiveTextFor(node, save.effectiveLevel, d);
     // The character's own secret rides along — and ONLY in their own prompt.
@@ -472,6 +519,59 @@ export function applyTrigger(
 }
 
 /* ==================================================================== */
+/* Player choices (V4)                                                   */
+/* ==================================================================== */
+
+/**
+ * Park the run on a node's choice. Pure — the caller persists and stops the
+ * tick chain (which `chainNextBeat` does by reading `pendingChoice`).
+ */
+export function openChoice(save: StorySaveRow, node: StoryNode, now: number): StorySaveRow {
+  const c = node.choice;
+  if (!c) return save;
+  return {
+    ...save,
+    pendingChoice: {
+      nodeId: node.id,
+      prompt: c.prompt,
+      // Copied, not referenced: the save row must stay meaningful even if the
+      // script row is edited or deleted while the user thinks it over.
+      options: c.options.map((o) => ({ label: o.label, setVars: o.setVars, goto: o.goto })),
+      at: now,
+    },
+    updatedAt: now,
+  };
+}
+
+/**
+ * Apply the player's pick: snapshot, land `setVars`, move to `goto`, clear the
+ * wait. Pure; structurally an `applyTrigger` whose trigger is the user's tap —
+ * which is exactly what makes a choice replayable and rollback-able like every
+ * other move. `msgCursor` is captured BEFORE the「选择」line lands, so rolling
+ * back to this beat later returns to the un-chosen moment and asks again.
+ */
+export function applyChoiceOption(
+  save: StorySaveRow,
+  optionIndex: number,
+  now: number,
+  msgCursor = 0,
+): { save: StorySaveRow; effects: AdvanceResult['effects'] } | null {
+  const pc = save.pendingChoice;
+  if (!pc) return null;
+  const opt = pc.options[optionIndex];
+  if (!opt) return null;
+  const stepped = applyTrigger(
+    save,
+    { when: 'choice', to: opt.goto, effects: opt.setVars ? { vars: opt.setVars } : undefined },
+    now,
+    msgCursor,
+  );
+  const cleared = { ...stepped.save };
+  delete cleared.pendingChoice;
+  return { save: cleared, effects: stepped.effects };
+}
+
+/* ==================================================================== */
 /* Side effects (the part rollback has to be able to undo)               */
 /* ==================================================================== */
 
@@ -592,15 +692,37 @@ async function collectCascade(
   const moments = (await idbGetAll<MomentVM & { storyTag?: string }>('moments')).filter((m) =>
     isFromRunLaterBeat(m, save, restoredSeq),
   );
-  // A cursor of 0/undefined means the snapshot predates cursor recording
-  // (pre-I7 rows, or a run whose conversation was empty at start): trimming
-  // to 0 would delete the entire thread, so those snapshots restore state only.
+  // Two independent reasons a message dies, unioned (V4):
+  //
+  //  - **Watermark**: id past the snapshot's cursor. Catches EVERYTHING after
+  //    the restore point, ordinary interjections included — a scene un-happens
+  //    whole. A cursor of 0/undefined means the snapshot predates cursor
+  //    recording (pre-I7 rows, or a run whose conversation was empty at
+  //    start); trimming to 0 would delete the entire thread, so the watermark
+  //    contributes nothing for those.
+  //  - **Act stamp**: `storySeq > restoredSeq` — the column that had writers
+  //    since I7 and, until V4, zero readers. This is what makes 按幕裁剪 real
+  //    for zero-cursor snapshots: the undone beats' lines still go, even when
+  //    the watermark cannot help. Scoped to THIS run by script id + the run's
+  //    own time window, because a second 周目 of the same script in the same
+  //    conversation re-counts seq from 0 and must never reach back into the
+  //    first one's transcript (`createdAt >= save.createdAt` is that fence).
   const messageIds: number[] = [];
-  if (msgCursor && msgCursor > 0) {
-    const rows = await idbGetAllByIndex<{ id: number }>('messages', 'byConv', save.convId);
-    for (const r of rows) {
-      if (typeof r.id === 'number' && r.id > msgCursor) messageIds.push(r.id);
-    }
+  const rows = await idbGetAllByIndex<{
+    id: number;
+    createdAt: number;
+    storyScriptId?: string;
+    storySeq?: number;
+  }>('messages', 'byConv', save.convId);
+  for (const r of rows) {
+    if (typeof r.id !== 'number') continue;
+    const pastWatermark = msgCursor != null && msgCursor > 0 && r.id > msgCursor;
+    const laterAct =
+      r.storyScriptId === save.scriptId &&
+      typeof r.storySeq === 'number' &&
+      r.storySeq > restoredSeq &&
+      r.createdAt >= save.createdAt;
+    if (pastWatermark || laterAct) messageIds.push(r.id);
   }
   return { facts, moments, messageIds };
 }
@@ -631,11 +753,38 @@ export async function planRollback(save: StorySaveRow, targetSeq: number): Promi
   const { facts, moments, messageIds } = await collectCascade(save, restoredSeq, snapshot?.msgCursor);
   return {
     restoredSeq,
-    trimsMessages: (snapshot?.msgCursor ?? 0) > 0,
+    // V4: the act stamp can trim story lines even under a zero-cursor
+    // snapshot, so "does anything get cut" is answered by the actual row set,
+    // not by whether a watermark exists.
+    trimsMessages: (snapshot?.msgCursor ?? 0) > 0 || messageIds.length > 0,
     memory: facts.map((f) => ({ id: f.id, fact: f.fact })),
     moments: moments.map((m) => ({ id: m.id, text: m.text })),
     messageCount: messageIds.length,
     slotsLost: (save.slots ?? []).filter((s) => s.seq > restoredSeq).map((s) => s.name),
+  };
+}
+
+/**
+ * Preview a slot restore (V4). Same rule as `planRollback` — the preview runs
+ * the SAME query the execution will — but against the slot's OWN restore
+ * point, because that is what `restoreSlot` now lands on. Previewing through
+ * `planRollback(save, slot.seq)` would quote the nearest history snapshot's
+ * watermark and disagree with the deletion that then happens.
+ */
+export async function planSlotRestore(
+  save: StorySaveRow,
+  slotId: string,
+): Promise<RollbackPlan | null> {
+  const slot = (save.slots ?? []).find((s) => s.id === slotId);
+  if (!slot || !canRestoreSlot(save, slot)) return null;
+  const { facts, moments, messageIds } = await collectCascade(save, slot.seq, slot.msgCursor);
+  return {
+    restoredSeq: slot.seq,
+    trimsMessages: slot.msgCursor > 0 || messageIds.length > 0,
+    memory: facts.map((f) => ({ id: f.id, fact: f.fact })),
+    moments: moments.map((m) => ({ id: m.id, text: m.text })),
+    messageCount: messageIds.length,
+    slotsLost: (save.slots ?? []).filter((s) => s.seq > slot.seq).map((s) => s.name),
   };
 }
 
@@ -655,32 +804,63 @@ export async function rollbackTo(
   now: number,
 ): Promise<RollbackResult> {
   const snapshot = [...save.history].reverse().find((h) => h.seq <= targetSeq);
-  const restored: StorySaveRow = snapshot
+  return performRestore(save, snapshot, now);
+}
+
+/**
+ * The state a restore lands on. Two producers: a `history` snapshot (rollback
+ * to a past beat) and a 存档槽's OWN captured state (读档, V4) — structurally
+ * the same thing, and sharing the executor is what fixed the slot bug: the
+ * slot used to be translated into "the nearest history snapshot ≤ its seq",
+ * which both ignored the slot's msgCursor AND — when the run had not moved
+ * since the slot was written — landed one act EARLIER than the slot itself.
+ */
+interface RestorePoint {
+  seq: number;
+  nodeId: string;
+  vars: Vars;
+  msgCursor: number;
+}
+
+async function performRestore(
+  save: StorySaveRow,
+  point: RestorePoint | undefined,
+  now: number,
+): Promise<RollbackResult> {
+  const restored: StorySaveRow = point
     ? {
         ...save,
-        nodeId: snapshot.nodeId,
-        vars: { ...snapshot.vars },
-        seq: snapshot.seq,
+        nodeId: point.nodeId,
+        vars: { ...point.vars },
+        seq: point.seq,
         turnsInNode: 0,
         updatedAt: now,
-        history: save.history.filter((h) => h.seq < snapshot.seq),
+        // Snapshots at the point's seq or later describe departures from the
+        // deleted future (h.seq === point.seq is "how the run LEFT this beat"
+        // — a move that just un-happened).
+        history: save.history.filter((h) => h.seq < point.seq),
         // Slots pointing INTO the deleted future are dead: their seq no longer
         // exists on this timeline and their msgCursor names trimmed rows.
-        slots: (save.slots ?? []).filter((s) => s.seq <= snapshot.seq),
+        slots: (save.slots ?? []).filter((s) => s.seq <= point.seq),
       }
     : { ...save, updatedAt: now };
+  if (point) {
+    // A wait belonging to a rolled-away moment must not survive; if the
+    // restored node itself carries a choice, the next beat re-opens it.
+    delete restored.pendingChoice;
+  }
 
   // Every story-tagged row from a later beat OF THIS RUN, across all surfaces.
   // Missing one surface is exactly the failure the tests deliberately provoke.
-  // The transcript is trimmed by WATERMARK, not by tag: the undone scenes
-  // contain the user's own lines too, and a scene that "un-happens" with the
-  // user's half still standing reads like everyone else developed amnesia.
-  // Deletion leaves rowid holes; the surviving rows keep their ids and their
-  // timestamps byte-for-byte (rowid order == time order, constitution §3).
+  // The transcript is trimmed by WATERMARK plus (V4) the per-message ACT STAMP:
+  // the undone scenes contain the user's own lines too, and a scene that
+  // "un-happens" with the user's half still standing reads like everyone else
+  // developed amnesia. Deletion leaves rowid holes; the surviving rows keep
+  // their ids and timestamps byte-for-byte (rowid order == time order, §3).
   const { facts, moments, messageIds } = await collectCascade(
     save,
     restored.seq,
-    snapshot?.msgCursor,
+    point?.msgCursor,
   );
 
   const memoryRemoved: string[] = [];
@@ -823,8 +1003,15 @@ export function canRestoreSlot(save: StorySaveRow, slot: StorySlot): boolean {
 }
 
 /**
- * Restore a slot: a rollback to its seq. The slot itself survives (restoring a
- * checkpoint should not consume it — that is the whole point of a checkpoint).
+ * Restore a slot: land on the slot's OWN captured state — seq, node, vars and
+ * msgCursor all come from the slot, not from the nearest history snapshot
+ * (V4 fix). The old delegation to `rollbackTo(save, slot.seq)` had two real
+ * consequences: the slot's msgCursor was never read (a slot saved mid-beat
+ * restored the transcript to wherever the previous MOVE left it), and when the
+ * run had not moved since the slot was written, the newest snapshot with
+ * `seq <= slot.seq` was the one for seq-1 — 读档多回退一幕. The slot itself
+ * survives (restoring a checkpoint should not consume it — that is the whole
+ * point of a checkpoint).
  */
 export async function restoreSlot(
   save: StorySaveRow,
@@ -834,7 +1021,11 @@ export async function restoreSlot(
   const slot = (save.slots ?? []).find((s) => s.id === slotId);
   if (!slot) return { error: '存档槽不存在' };
   if (!canRestoreSlot(save, slot)) return { error: '这个存档在已被回滚掉的时间线上，无法读取' };
-  return rollbackTo(save, slot.seq, now);
+  return performRestore(
+    save,
+    { seq: slot.seq, nodeId: slot.nodeId, vars: slot.vars, msgCursor: slot.msgCursor },
+    now,
+  );
 }
 
 /**
