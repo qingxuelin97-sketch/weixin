@@ -20,17 +20,49 @@
  */
 import { useSyncExternalStore } from 'react';
 import { CallSession, type CallTurn, type CallSessionOpts } from '../../ai/call-script';
+import type { NsfwTier } from '../../llm/router';
 import { useAppStore } from '../../store/appStore';
 import { logError } from '../../lib/errlog';
 
+/**
+ * What the host (and both call pages) need from a live session — CallSession
+ * and GroupCallSession both satisfy it structurally. The host never cares
+ * which one it holds; hangup/mute/barge-in are one code path either way.
+ */
+export interface HostableCallSession {
+  readonly turns: CallTurn[];
+  readonly tier: NsfwTier;
+  readonly isMuted: boolean;
+  voiceOn: boolean;
+  start(): Promise<void>;
+  holdFloor(): void;
+  setMuted(m: boolean): void;
+  userSaid(text: string): Promise<void>;
+  finalize(): Promise<string>;
+  end(): void;
+}
+
+/** The UI callbacks the host owns; `makeSession` receives them pre-wired. */
+export interface SessionUiHooks {
+  onLine: (turn: CallTurn) => void;
+  onSpeaking: (speaking: boolean) => void;
+  /** 群语音 (M-J6c): who is talking (grid highlight); single calls never call it. */
+  onSpeakingId: (id: string | null) => void;
+  onReady: (voiceOn: boolean) => void;
+}
+
 export interface ActiveCallSnapshot {
-  session: CallSession;
+  session: HostableCallSession;
   convId: string;
   peerId: string;
   peerName: string;
   direction: 'in' | 'out';
   /** 视频通话 (M-J6b): drives the record label and the return-URL from the pill. */
   video: boolean;
+  /** 群语音 (M-J6c): picks the pill's return route (/group-call vs /call). */
+  group: boolean;
+  /** Group only: who is talking right now (avatar-grid highlight). */
+  speakingId: string | null;
   /** epoch ms of connect — the pill's ticking clock derives from this. */
   connectedAt: number;
   subs: readonly CallTurn[];
@@ -71,8 +103,18 @@ export interface AdoptCallOpts {
   peerName: string;
   direction: 'in' | 'out';
   video?: boolean;
+  /** 群语音 (M-J6c): the pill routes back to /group-call and the grid lights up. */
+  group?: boolean;
   /** Everything CallSession needs except the UI callbacks this host owns. */
-  sessionOpts: Omit<CallSessionOpts, 'onLine' | 'onSpeaking' | 'onReady'>;
+  sessionOpts?: Omit<CallSessionOpts, 'onLine' | 'onSpeaking' | 'onReady'>;
+  /**
+   * Alternative constructor for non-single sessions (GroupCallSession): gets
+   * the host-wired UI hooks, returns the session. Exactly one of
+   * sessionOpts / makeSession must be provided.
+   */
+  makeSession?: (ui: SessionUiHooks) => HostableCallSession;
+  /** Clock for connectedAt when makeSession is used (sessionOpts carries its own). */
+  now?: () => number;
 }
 
 /**
@@ -82,18 +124,28 @@ export interface AdoptCallOpts {
  */
 export function adoptCall(opts: AdoptCallOpts): ActiveCallSnapshot {
   if (current) return current;
-  const session = new CallSession({
-    ...opts.sessionOpts,
+  const ui: SessionUiHooks = {
     onLine: (t) => {
       if (current?.session === session) patch({ subs: [...current.subs, t] });
     },
     onSpeaking: (v) => {
       if (current?.session === session) patch({ speaking: v });
     },
+    onSpeakingId: (id) => {
+      if (current?.session === session) patch({ speakingId: id });
+    },
     onReady: (v) => {
       if (current?.session === session) patch({ voiceOn: v });
     },
-  });
+  };
+  const session: HostableCallSession = opts.makeSession
+    ? opts.makeSession(ui)
+    : new CallSession({
+        ...opts.sessionOpts!,
+        onLine: ui.onLine,
+        onSpeaking: ui.onSpeaking,
+        onReady: ui.onReady,
+      });
   current = {
     session,
     convId: opts.convId,
@@ -101,7 +153,9 @@ export function adoptCall(opts: AdoptCallOpts): ActiveCallSnapshot {
     peerName: opts.peerName,
     direction: opts.direction,
     video: opts.video ?? false,
-    connectedAt: opts.sessionOpts.now(),
+    group: opts.group ?? false,
+    speakingId: null,
+    connectedAt: (opts.sessionOpts?.now ?? opts.now ?? Date.now)(),
     subs: [],
     speaking: false,
     voiceOn: false,

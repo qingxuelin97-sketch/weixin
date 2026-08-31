@@ -45,6 +45,9 @@ export interface CallTurn {
   speaker: 'self' | 'peer';
   text: string;
   at: number;
+  /** 群语音 (M-J6c)：peer 行标注是谁说的；单聊通话恒缺省。 */
+  speakerId?: string;
+  speakerName?: string;
 }
 
 /** 铁律 6 的通话面：全开档台词绝不送 MiniMax TTS，退为字幕。 */
@@ -92,6 +95,8 @@ export async function buildCallSystem(opts: {
   now: number;
   /** 会话 id（周年纪念锚点用）；缺省只跳过 anniversary，不影响其他层。 */
   convId?: string;
+  /** 场景补充块覆盖（群语音换成群场景）；层序不动，只换殿后那一块。 */
+  scene?: string;
 }): Promise<string> {
   const { peer, persona, tier, recent, now } = opts;
   let facts: Awaited<ReturnType<typeof repo.getMemory>> = [];
@@ -137,7 +142,7 @@ export async function buildCallSystem(opts: {
     }),
   );
   if (occasionLine) system += `\n\n${occasionLine}`;
-  return `${system}\n\n${CALL_SCENE}`;
+  return `${system}\n\n${opts.scene ?? CALL_SCENE}`;
 }
 
 /* ==================================================================== */
@@ -490,7 +495,7 @@ export async function summarizeCall(opts: {
   try {
     const router = opts.router ?? (await getRouter());
     const transcript = turns
-      .map((t) => `${t.speaker === 'self' ? '我' : opts.peerName}: ${t.text}`)
+      .map((t) => `${t.speaker === 'self' ? '我' : (t.speakerName ?? opts.peerName)}: ${t.text}`)
       .join('\n')
       .slice(0, 3000);
     const r = await router.complete(

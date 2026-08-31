@@ -455,3 +455,62 @@
   color: var(--color-text-on-brand);
   opacity: 0.8;
 }
+
+/* ==================== 群语音 (M-J6c) ==================== */
+
+.call-page--group {
+  justify-content: flex-start;
+  gap: 18px;
+}
+
+.call-page--group .call-page__controls {
+  margin-top: auto;
+  flex-direction: row;
+  gap: 44px;
+  align-items: flex-start;
+}
+
+.gcall-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px 12px;
+  width: 100%;
+  max-width: 300px;
+  justify-items: center;
+}
+
+.gcall-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+/* 说话高亮：与真微信一致的绿描边（外扩 2px，不挤压头像）。 */
+.gcall-cell .avatar {
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow var(--dur-fast, 0.15s) ease;
+}
+
+.gcall-cell--speaking .avatar {
+  box-shadow: 0 0 0 2.5px var(--color-call-pill-bg);
+}
+
+.gcall-cell__name {
+  font-size: 12px;
+  opacity: 0.85;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-page--group .call-live {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}

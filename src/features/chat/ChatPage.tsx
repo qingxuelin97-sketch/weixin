@@ -1461,6 +1461,11 @@ export function ChatPage() {
                 else if (i === 1) navigate(`/call/${convId}`);
               });
             }
+            else if (key === 'call' && isGroup) {
+              // 群语音 (M-J6c)：这一格在群里从来是死的。群没有视频，直接进。
+              composer.closeAll();
+              navigate(`/group-call/${convId}`);
+            }
             else if (key === 'album') albumInputRef.current?.click();
             else if (key === 'location') {
               composer.closeAll();

@@ -103,7 +103,24 @@ M-D2 出通话壳（能响、能接、能挂），M-H1 让她会主动打来，*
 - 转红：`tests/unit/j6-call.test.ts`（16 条：holdFloor 不终结会话 / 预取时序 / 静音零
   play / 单例收养与唯一挂断 / video 旗三级断言 / 接线扫描）。
 
-### 群语音通话（J6 裁减位）
+### 群语音通话（J6c）
 
-未做，见 docs/rounds/m-j.md 的诚实清单。设计意向：导演决定谁接话、头像宫格 +
-说话高亮、每轮 ≤1 导演 + 1 演员发声的成本闸。
+- **成本闸是结构**：每轮（开场/你说一句）恰好 **1 次 LLM 生成**。「导演」是零成本
+  纯函数 `pickCallSpeaker`（seededRng 加权轮盘：proactivity 抬权、刚说过的 ×0.35、
+  被点名 ×25 几乎必接）——通话对延迟敏感，一次导演 LLM 往返就出戏。
+  转红：`j6-group-call.test.ts` 断言 opener 1 次、userSaid 再 1 次。
+- **每个人还是自己**（M-J1 纪律）：发言者 system 走 `buildCallSystem`（记忆/心情/
+  目标/纪念日全在，整通电话内按人缓存），殿后场景块换 `groupCallScene`（群名 +
+  在线名单 + 「某某：」前缀规则 + 别替别人说话）。接通前群聊近况经
+  `renderTranscript(nameOf)` 带名注入。
+- **铁律 6 分人**：tier 逐发言者 `effectiveTier` 推导落在 generate 调用上（转红：
+  permit=false 成员在 full 全局下仍以 off 发言）；全场最严 tier（`strictestTier`）
+  给入站 ASR 闸与纪要调用；全开档成员在场 → voiceOn 熄灭全程字幕。
+- **UI**（`GroupCallPage.tsx`，路由 `/group-call/:convId`，群里的通话格直通）：
+  头像宫格（我 + ≤`GROUP_CALL_MAX_MEMBERS`=6 名成员，缺人设的成员"没接"）+
+  说话绿描边（speakingId 经 host 快照）+ 带名字幕 + 与单聊同构的按住说话/打字条。
+  仅呼出（无 scheduled kind 就没有群来电——加一种 kind 必须走台账）。
+  会话归 call-host（`makeSession` 分支）；胶囊返回走 `/group-call`；挂断同一个
+  `hangupActiveCall`，群会话落一条 `type:'call'`。
+- **纪要**：`recordGroupCallOutcome`——conv-state 承诺 + conv_summaries「刚开了
+  群语音」+ **只给开过口的成员**各记一条 memory（没说话的不凭空长记忆）。

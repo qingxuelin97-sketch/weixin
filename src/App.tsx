@@ -50,6 +50,7 @@ import { GroupGeneratePage } from './features/contacts/GroupGeneratePage';
 import { ChatInfoPage } from './features/chat/ChatInfoPage';
 import { GroupListPage, NewFriendsPage, SimpleListPage } from './features/contacts/ContactListPages';
 import { CallPage } from './features/call/CallPage';
+import { GroupCallPage } from './features/call/GroupCallPage';
 import { SearchPage } from './features/search/SearchPage';
 import { NativePage } from './features/settings/NativePage';
 import { UsagePage } from './features/settings/UsagePage';
@@ -182,6 +183,7 @@ export function App() {
               <Route path="/contacts-chats-only" element={<Push><SimpleListPage kind="chats-only" /></Push>} />
               <Route path="/contacts-tags" element={<Push><SimpleListPage kind="tags" /></Push>} />
               <Route path="/call/:convId" element={<Push><CallPage /></Push>} />
+              <Route path="/group-call/:convId" element={<Push><GroupCallPage /></Push>} />
               <Route path="/rp/send/:convId" element={<Push><RedPacketSendPage /></Push>} />
               <Route path="/rp/open/:rpId" element={<Push><RedPacketOpenPage /></Push>} />
               <Route path="/rp/:rpId" element={<Push><RedPacketDetailPage /></Push>} />

@@ -113,6 +113,10 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
     exempt: 'live call surface (audio + session); 真机人验 per specs',
     smoke: { path: '/call/conv_lin' }, // boots into the dialing phase; smoke leaves before answer
   },
+  '/group-call/:convId': {
+    exempt: 'live call surface (audio + session), group flavor (M-J6c); 真机人验 per specs',
+    smoke: { path: '/group-call/conv_group' }, // dial beat only; smoke leaves before connect
+  },
   '/rp/send/:convId': { golden: 'rp-send', smoke: { path: '/rp/send/conv_lin' } },
   '/rp/open/:rpId': {
     golden: 'rp-open',

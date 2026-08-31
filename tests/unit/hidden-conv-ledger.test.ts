@@ -49,6 +49,13 @@ const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
       '计划动作执行器，不渲染任何 UI；往隐藏会话里写正是 agent_dm 的本职。' +
       '会外溢到可见群的路径（agent_forward / group_event）自带 isHidden 检查。',
   },
+  'features/call/GroupCallPage.tsx': {
+    via: 'filters',
+    why:
+      '群语音页 (M-J6c)：渲染前置闸 conv.type !== "group" || conv.isHidden 直接' +
+      '打回「群聊不存在」。隐藏 DM 都是 single 型本就进不来；isHidden 是第二道，' +
+      '防将来出现隐藏群。入口只在可见群聊的 + 面板里。',
+  },
   'components/ForwardSheet.tsx': {
     via: 'helper',
     helper: 'forwardableConversations',
