@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import 'fake-indexeddb/auto';
 import { repo } from '../../src/db/repo';
@@ -679,6 +679,49 @@ describe('call site 6 — generateImage 的全开档拒绝分支', () => {
     expect(moments).not.toMatch(/generateToLibrary\(\{[\s\S]{0,200}?tier:\s*'/);
     const service = readFileSync(resolve(__dirname, '../../src/ai/moments-service.ts'), 'utf8');
     expect(service).not.toMatch(/generateToLibrary\(\{[\s\S]{0,300}?tier:\s*'/);
+  });
+});
+
+/* ==================== 原生 SSE 桥是哑管道 (M-J5) ==================== */
+
+/**
+ * The native streaming bridge is the repo's THIRD network module (llm/http,
+ * llm/image, now native/sse-bridge). It carries full-tier chat content on a
+ * device, so rule #6 must hold for it the same way it holds for vision.ts:
+ * ARCHITECTURALLY. The bridge transports exactly the URL/headers/body the
+ * provider hands it — endpoint choice and tier routing stay in the router
+ * above. These scans pin that it CANNOT grow a route of its own, and that the
+ * seam has exactly one reader (the provider) and one writer (the bridge):
+ * a second consumer would be a channel the router never vetted.
+ */
+describe('原生 SSE 桥不许自带路由（M-J5）', () => {
+  it('sse-bridge / sse-transport 不 import 路由层，也不认识任何端点', () => {
+    for (const f of ['src/native/sse-bridge.ts', 'src/llm/sse-transport.ts']) {
+      const src = readFileSync(resolve(__dirname, '..', '..', f), 'utf8');
+      expect(src, `${f} 不得挑 provider`).not.toContain('getRouter');
+      expect(src, `${f} 不得 import router`).not.toMatch(/from '.*\/router'/);
+      expect(src, `${f} 不得 import service`).not.toMatch(/from '.*\/service'/);
+      expect(src, `${f} 不得 import presets`).not.toMatch(/from '.*\/presets'/);
+      // No endpoint of its own — the URL always arrives as a parameter.
+      expect(src, `${f} 里不该出现任何 API 域名`).not.toMatch(
+        /deepseek\.com|minimaxi?\.com|opencode\.ai|siliconflow/i,
+      );
+    }
+  });
+
+  it('seam 只有一个读者（openai-compatible）和一个写者（sse-bridge）', () => {
+    const root = resolve(__dirname, '..', '..', 'src');
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = resolve(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(e.name) && /from '[^']*sse-transport'/.test(readFileSync(p, 'utf8')))
+          hits.push(p.slice(root.length + 1).replace(/\\/g, '/'));
+      }
+    };
+    walk(root);
+    expect(hits.sort()).toEqual(['llm/openai-compatible.ts', 'native/sse-bridge.ts']);
   });
 });
 

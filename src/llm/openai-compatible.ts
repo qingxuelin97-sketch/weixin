@@ -13,6 +13,7 @@ import {
 import { httpJson } from './http';
 import { attachImages, modelSupportsVision } from './vision';
 import { parseBubbles } from './bubbles';
+import { getNativeSseTransport } from './sse-transport';
 import { recordLlmExchange } from '../lib/llm-recorder';
 
 export interface ProviderConfig {
@@ -71,6 +72,60 @@ interface OpenAiResponse {
   choices?: OpenAiChoice[];
   error?: { message?: string; code?: string | number };
   base_resp?: { status_code?: number; status_msg?: string }; // MiniMax envelope
+}
+
+/** An opened streaming connection, transport-agnostic (web fetch or native bridge). */
+interface OpenedStream {
+  /** Raw response lines; throws mid-iteration on a transport break. */
+  lines: AsyncIterable<string>;
+  /** Idempotent teardown — safe after normal completion. */
+  cancel: () => void;
+}
+
+/** Split a fetch body reader into lines; partial tails wait for their newline. */
+async function* linesFromReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): AsyncIterable<string> {
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        yield buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+      }
+    }
+    // A final line the server never newline-terminated still counts: the
+    // native path's readLine() delivers it at EOF, so the web path must too —
+    // the two transports have to be indistinguishable above this seam.
+    if (buf.trim()) yield buf;
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* already closed */
+    }
+  }
+}
+
+/** Drain a short (error-body) line stream into one string, capped defensively. */
+async function collectLines(lines: AsyncIterable<string>, capBytes = 65_536): Promise<string> {
+  const parts: string[] = [];
+  let size = 0;
+  try {
+    for await (const l of lines) {
+      parts.push(l);
+      size += l.length + 1;
+      if (size > capBytes) break;
+    }
+  } catch {
+    /* an error body that also broke mid-read: classify on what arrived */
+  }
+  return parts.join('\n');
 }
 
 export class OpenAiCompatibleProvider implements ChatProvider {
@@ -236,13 +291,17 @@ export class OpenAiCompatibleProvider implements ChatProvider {
   }
 
   /**
-   * Web-only true SSE (M-I5): can this provider stream RIGHT NOW?
+   * True SSE (M-I5 web, M-J5 native): can this provider stream RIGHT NOW?
    *
-   * Native says no: CapacitorHttp buffers whole responses and cannot be read
-   * incrementally (and, per CLAUDE.md, cannot even be aborted from JS) — on a
-   * device the one-shot path IS the correct transport. Browsers stream.
+   * Web streams over the browser's own fetch. Native streams ONLY when the
+   * OkHttp bridge is installed (src/native/sse-bridge.ts registers itself into
+   * the sse-transport seam at boot): CapacitorHttp still buffers whole
+   * responses and cannot be read incrementally, so a device WITHOUT the bridge
+   * — an old APK, a stripped build — keeps the one-shot path as the correct
+   * transport, not a degraded one.
    */
   canStream(): boolean {
+    if (getNativeSseTransport()?.available()) return true;
     const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
     if (cap?.isNativePlatform?.()) return false;
     return typeof fetch === 'function' && typeof ReadableStream === 'function';
@@ -267,24 +326,19 @@ export class OpenAiCompatibleProvider implements ChatProvider {
   async *generateStream(opts: GenerateOptions): AsyncIterable<Bubble> {
     const key = await this.cfg.getKey();
     if (!key) throw new LlmError('auth', `no API key for provider ${this.id}`, 401, this.id);
-    const body = { ...this.buildBody(opts), stream: true };
-    const res = await fetch(this.endpoint(this.cfg.baseUrl, opts), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        ...this.cfg.extraHeaders,
-      },
-      body: JSON.stringify(body),
-      signal: opts.signal,
-    });
-    if (!res.ok || !res.body) {
-      throw this.httpStatusToError(res.status, `HTTP ${res.status}`);
-    }
+    const headers = {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      ...this.cfg.extraHeaders,
+    };
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let sseBuf = '';
+    // Open phase (M-J5). EVERY retry this method will ever do happens in here,
+    // strictly before the first byte of usable stream: the fallbackBaseUrl hop
+    // and the bad_model catalog heal both mirror the one-shot path. Once the
+    // loop below starts yielding, the ladder is architecturally shut — a break
+    // after output can only ever become `truncated`, never a second request.
+    const conn = await this.openStream(opts, headers);
+
     let acc = '';
     let inThink = false;
     let emitted = 0;
@@ -296,7 +350,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     let truncation: unknown = null;
 
     /** Consume completed lines in `acc`, yielding whole bubbles. */
-    const drainLines = function* (self: OpenAiCompatibleProvider): Generator<Bubble> {
+    const drainLines = function* (): Generator<Bubble> {
       let nl: number;
       while ((nl = acc.indexOf('\n')) >= 0) {
         const line = acc.slice(0, nl).trim();
@@ -304,64 +358,56 @@ export class OpenAiCompatibleProvider implements ChatProvider {
         if (!line) continue;
         for (const b of parseBubbles(line)) yield b;
       }
-      void self;
     };
 
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        sseBuf += decoder.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = sseBuf.indexOf('\n')) >= 0) {
-          const frame = sseBuf.slice(0, idx).trim();
-          sseBuf = sseBuf.slice(idx + 1);
-          if (!frame.startsWith('data:')) continue;
-          const payload = frame.slice(5).trim();
-          if (payload === '[DONE]') continue;
-          let delta = '';
-          try {
-            const j = JSON.parse(payload) as {
-              choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>;
-            };
-            delta = j.choices?.[0]?.delta?.content ?? '';
-            // Read BEFORE the empty-delta skip: the frame that carries the
-            // finish reason usually carries no content at all, so skipping
-            // first is how "被截断" became indistinguishable from "说完了".
-            finishReason = j.choices?.[0]?.finish_reason ?? finishReason;
-          } catch {
-            continue; // partial frame or keepalive — never fatal
-          }
-          if (!delta) continue;
-          // Reasoning spans stream inline on some models; drop them whole.
-          let rest = delta;
-          while (rest) {
-            if (inThink) {
-              const end = rest.indexOf('</think>');
-              if (end < 0) {
-                rest = '';
-              } else {
-                rest = rest.slice(end + 8);
-                inThink = false;
-              }
+      for await (const rawFrame of conn.lines) {
+        const frame = rawFrame.trim();
+        if (!frame.startsWith('data:')) continue;
+        const payload = frame.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        let delta = '';
+        try {
+          const j = JSON.parse(payload) as {
+            choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>;
+          };
+          delta = j.choices?.[0]?.delta?.content ?? '';
+          // Read BEFORE the empty-delta skip: the frame that carries the
+          // finish reason usually carries no content at all, so skipping
+          // first is how "被截断" became indistinguishable from "说完了".
+          finishReason = j.choices?.[0]?.finish_reason ?? finishReason;
+        } catch {
+          continue; // partial frame or keepalive — never fatal
+        }
+        if (!delta) continue;
+        // Reasoning spans stream inline on some models; drop them whole.
+        let rest = delta;
+        while (rest) {
+          if (inThink) {
+            const end = rest.indexOf('</think>');
+            if (end < 0) {
+              rest = '';
             } else {
-              const start = rest.indexOf('<think>');
-              if (start < 0) {
-                acc += rest;
-                fullText += rest;
-                rest = '';
-              } else {
-                acc += rest.slice(0, start);
-                fullText += rest.slice(0, start);
-                rest = rest.slice(start + 7);
-                inThink = true;
-              }
+              rest = rest.slice(end + 8);
+              inThink = false;
+            }
+          } else {
+            const start = rest.indexOf('<think>');
+            if (start < 0) {
+              acc += rest;
+              fullText += rest;
+              rest = '';
+            } else {
+              acc += rest.slice(0, start);
+              fullText += rest.slice(0, start);
+              rest = rest.slice(start + 7);
+              inThink = true;
             }
           }
-          for (const b of drainLines(this)) {
-            emitted++;
-            yield b;
-          }
+        }
+        for (const b of drainLines()) {
+          emitted++;
+          yield b;
         }
       }
       // Flush whatever the final line held.
@@ -374,7 +420,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
       recordLlmExchange({
         providerId: this.id,
         providerKind: this.kind,
-        model: opts.model,
+        model: conn.model,
         latencyMs: Date.now() - t0,
         request: opts.messages.map((m) => ({ role: m.role, content: m.content })),
         text: fullText,
@@ -400,13 +446,107 @@ export class OpenAiCompatibleProvider implements ChatProvider {
       // is told the turn was cut off so it can close it in character.
       truncation = new LlmError('truncated', `stream broke: ${String(e)}`, undefined, this.id, e);
     } finally {
-      try {
-        await reader.cancel();
-      } catch {
-        /* already closed */
-      }
+      conn.cancel();
     }
     if (truncation) throw truncation;
+  }
+
+  /**
+   * Open a streaming connection, walking baseUrl → fallbackBaseUrl exactly like
+   * `completeOnce` walks them (M-J5): auth/content/rate failures throw at once
+   * (a second domain would fail identically and burn the same quota), anything
+   * transport-shaped tries the backup domain. A `bad_model` verdict after both
+   * domains runs the SAME catalog self-heal as `complete()` — once — and walks
+   * the bases again with the healed id. All of this is pre-first-byte by
+   * construction: nothing here has yielded anything yet.
+   */
+  private async openStream(
+    opts: GenerateOptions,
+    headers: Record<string, string>,
+  ): Promise<OpenedStream & { model: string }> {
+    const bases = [this.cfg.baseUrl, this.cfg.fallbackBaseUrl].filter(Boolean) as string[];
+    let model = opts.model;
+    let lastErr: unknown;
+    for (let pass = 0; ; pass++) {
+      for (const base of bases) {
+        try {
+          const c = await this.openStreamOnce(base, { ...opts, model }, headers);
+          return { ...c, model };
+        } catch (e) {
+          lastErr = e;
+          // An abort is the user talking, not the domain failing — the backup
+          // domain must not re-issue a request nobody wants answered.
+          if (opts.signal?.aborted) throw e;
+          if (e instanceof LlmError && ['auth', 'content_filter', 'rate_limit'].includes(e.kind)) {
+            throw e;
+          }
+        }
+      }
+      if (pass === 0 && lastErr instanceof LlmError && lastErr.kind === 'bad_model') {
+        const healed = await this.healModel(model);
+        if (healed) {
+          model = healed;
+          continue;
+        }
+      }
+      break;
+    }
+    throw lastErr instanceof LlmError
+      ? lastErr
+      : new LlmError('network', String(lastErr), undefined, this.id);
+  }
+
+  /** One connection attempt on one base — native OkHttp bridge if installed, else browser fetch. */
+  private async openStreamOnce(
+    base: string,
+    opts: GenerateOptions,
+    headers: Record<string, string>,
+  ): Promise<OpenedStream> {
+    const body = { ...this.buildBody(opts), stream: true };
+    const url = this.endpoint(base, opts);
+    const native = getNativeSseTransport();
+    if (native?.available()) {
+      const h = await native.open({ url, headers, body, signal: opts.signal });
+      if (h.status >= 400) {
+        // Error bodies are short and the server has already closed them: the
+        // lines ARE the body. Collecting them is what lets a streamed 4xx say
+        // "Model X is not supported" instead of a kind-less "HTTP 401" — the
+        // difference between the catalog heal firing and never firing.
+        const text = await collectLines(h.lines);
+        h.cancel();
+        throw this.streamOpenError(h.status, text);
+      }
+      return { lines: h.lines, cancel: h.cancel };
+    }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
+    if (!res.ok || !res.body) {
+      const text = res.body ? await res.text().catch(() => '') : '';
+      throw this.streamOpenError(res.status, text);
+    }
+    const reader = res.body.getReader();
+    return {
+      lines: linesFromReader(reader),
+      cancel: () => {
+        void reader.cancel().catch(() => {});
+      },
+    };
+  }
+
+  /** Classify a streaming open failure with the real error message, not just the status. */
+  protected streamOpenError(status: number, bodyText: string): LlmError {
+    let msg = `HTTP ${status}`;
+    try {
+      const j = JSON.parse(bodyText) as OpenAiResponse;
+      if (j?.error?.message) msg = j.error.message;
+    } catch {
+      if (bodyText.trim()) msg = bodyText.trim().slice(0, 300);
+    }
+    return this.httpStatusToError(status, msg);
   }
 
   /**

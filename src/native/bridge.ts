@@ -47,6 +47,12 @@ interface AiwxNativePlugin {
     preview: string;
     convId: string;
   }): Promise<void>;
+  sseStart(opts: { id: string; url: string; headersJson: string; bodyJson: string }): Promise<void>;
+  sseCancel(opts: { id: string }): Promise<void>;
+  addListener(
+    eventName: 'sseLine',
+    fn: (ev: unknown) => void,
+  ): Promise<{ remove: () => Promise<void> }>;
 }
 
 const plugin = registerPlugin<AiwxNativePlugin>('AiwxNative');
@@ -201,4 +207,53 @@ export async function updateWidget(data: {
 }): Promise<void> {
   if (!isNative()) return;
   await withDeadline(plugin.updateWidget(data), 'updateWidget');
+}
+
+// ------------------------------------------------------------- SSE (M-J5)
+
+/**
+ * True iff the streaming bridge can be driven at all: native platform AND the
+ * plugin actually registered in this binary. An old APK whose web assets are
+ * newer than its Kotlin cannot exist (assets ship inside the APK), so plugin
+ * presence is a faithful proxy for method presence.
+ */
+export function sseSupported(): boolean {
+  return isNative() && Capacitor.isPluginAvailable('AiwxNative');
+}
+
+/**
+ * Kick off a native streaming POST. Resolves as soon as the connection is
+ * DISPATCHED — response head, lines and completion all arrive as `sseLine`
+ * listener events keyed by `id`. The deadline here guards only the bridge
+ * round-trip itself (constitution 3.5: a hung bridge call must REJECT).
+ */
+export async function sseStart(opts: {
+  id: string;
+  url: string;
+  headersJson: string;
+  bodyJson: string;
+}): Promise<void> {
+  await withDeadline(plugin.sseStart(opts), 'sseStart');
+}
+
+/** Close one native stream. Best-effort: an already-finished id is a no-op. */
+export async function sseCancel(id: string): Promise<void> {
+  try {
+    await withDeadline(plugin.sseCancel({ id }), 'sseCancel');
+  } catch {
+    /* connection is dying anyway */
+  }
+}
+
+/**
+ * Subscribe to the shared `sseLine` event firehose. Returns a remover. The
+ * plugin proxy's addListener promise is consumed HERE and never re-exposed
+ * (thenable trap: the proxy must not become anyone's resolution value).
+ */
+export function addSseLineListener(fn: (ev: unknown) => void): () => void {
+  if (!isNative()) return () => {};
+  const handle = plugin.addListener('sseLine', fn);
+  return () => {
+    handle.then((h) => void h.remove()).catch(() => {});
+  };
 }

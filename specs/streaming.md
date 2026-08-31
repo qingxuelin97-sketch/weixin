@@ -1,13 +1,16 @@
-# specs/streaming.md — Web 流式（SSE）与降级链的交界
+# specs/streaming.md — 流式（SSE）与降级链的交界
 
-M-I5 交付。签名从 V1 起就是流式（`ChatProvider.generate(): AsyncIterable<Bubble>`），
-所以"上流式"没有改任何调用方——只是让 Web 路径真的逐气泡产出、并且**逐气泡上屏**。
+M-I5 交付 Web 路径；M-J5 交付原生路径 + 流式收口。签名从 V1 起就是流式
+（`ChatProvider.generate(): AsyncIterable<Bubble>`），所以"上流式"没有改任何调用方——
+只是让传输层真的逐气泡产出、并且**逐气泡上屏**。
 
 ## 契约
 
 - `ChatProvider.canStream?(): boolean`——**平台闸门**。浏览器 fetch 路径 true；
-  原生 CapacitorHttp **不支持** SSE（桥无法中断、无增量体），永远 false，
-  原生继续一次性 `generate()`。transport 检测复用现有开关，调用方零分支。
+  原生自 M-J5 起看 **sse-transport seam**：装了 OkHttp 桥（插件可用）即 true，
+  没装（旧 APK / 阉割构建 / 测试环境）仍是 false——CapacitorHttp 依旧不支持 SSE
+  （桥无法中断、无增量体），此时一次性 `generate()` 是正确传输而非降级。
+  transport 检测收在 provider 内，调用方零分支。
 - `generateStream?(opts): AsyncIterable<Bubble>`——按 **NDJSON 气泡边界**逐个 yield
   **完整气泡**，绝不吐半句。anti-AI scrub、zod 校验都按完整气泡跑。
   - **首气泡之前**失败 → 抛各自的 kind（auth/network/…），router 落到一次性降级链；
@@ -20,6 +23,48 @@ M-I5 交付。签名从 V1 起就是流式（`ChatProvider.generate(): AsyncIter
 - Router：只在**主 rung**上流式。首气泡产出前的拒答/失败仍走完整三级降级链
   （软化重试 → 宽松链 → 人设化拒绝）；**首气泡一旦上屏，降级链关闭**——已说出的话收不回，
   流中断走**人设化截断**，不重试、不换链。拒答检测在首气泡上做。
+
+## 原生路径（M-J5）
+
+CapacitorHttp 整包缓冲、不可中断，所以原生流式绕开它，走自己的 OkHttp 桥：
+
+- **Kotlin 侧** `android/.../aiwx/SseBridge.kt`：OkHttp 流式 POST，后台线程逐行读，
+  每行 `notifyListeners('sseLine', {id, line})`；响应头到达先发 `{id, open:true, status}`
+  （JS 因此在读任何行之前就知道 4xx，错误体才能被收集分类）；正常关闭发
+  `{id, done:true, status}`；一切失败（含取消与超时）发 `{id, error}`。超时钉死：
+  连接 20s / 读间隔 60s（OkHttp 默认读超时 10s，推理模型会想超过它）。连接以 id 入 Map，
+  `sseCancel(id)` 关单条，插件 `handleOnDestroy` 全关。OkHttp 版本在 app/build.gradle
+  钉具体版号。插件类只留 `@PluginMethod` 转发——OkHttp 细节不进单体。
+- **JS 侧** `src/native/sse-bridge.ts`：一个进程级 `sseLine` listener，`SseHub` 按 id
+  分发回 per-request `AsyncIterable<string>`（行缓冲队列 + pull promise 背压；未知/迟到
+  id 的事件直接丢弃）。**超时全是真拒绝**（宪法 3.5）：`sseStart` 桥调用走 `withDeadline`；
+  响应头有 open 死线（25s）；挂着的 pull 有停摆死线（90s，正常情况下原生 60s 读超时
+  先触发）——桥整个死掉也不会让一轮回复永远 await。
+- **接线**：`native → llm` 是合法方向、反向禁止，所以 provider 不 import 桥——桥在启动时
+  （main.tsx `installNativeSse()`）把自己装进 `src/llm/sse-transport.ts` 的 seam，
+  与 cost-gate 装进 router 的 preflight 同一个模式。seam 是**哑管道**：只运 provider
+  给的 URL/headers/body，不挑端点不认路由——铁律 6 的判定全部留在 router
+  （tests/unit/nsfw-callsite.test.ts 扫描锁死：seam 仅 openai-compatible 一个读者、
+  sse-bridge 一个写者）。
+- **取消语义（双向）**：`signal.abort` → JS 立刻本地断流（不等原生回包，消费方马上
+  看到拒绝）+ `sseCancel` 通知 Kotlin 关连接；Kotlin 侧随后的 `error` 事件因 id 已
+  drop 而被丢弃。预先已 abort 的 signal 一个字节都不发。消费方 for-await 早退
+  （iterator return）同样 drop 通道 + 关原生连接，不漏 socket 不漏 Map 条目。
+
+## 流式收口（两端共享，M-J5）
+
+`generateStream` 的**所有重试都发生在 open 阶段**——严格在首个可用字节之前：
+
+- **fallbackBaseUrl**：与一次性 `completeOnce` 同规则——auth / content_filter /
+  rate_limit 立即抛（第二个域只会烧同一把坏钥匙），网络/服务器/超时类失败换备用域
+  重试一次。用户 abort 不换域（被中断的请求不由备用域替他答完）。
+- **bad_model 自愈**：流式打开拿到 4xx 时**收集错误体的行**再分类（此前只有
+  `HTTP 401` 字样，`bad_model` 在流式路径上永远点不了火）。判为 bad_model → 走既有
+  catalog 自愈（同一个 `healModel`，同一个 10 分钟冷却）→ 换最近 id 把 base 列表再走
+  一遍，只愈一次。
+- **交界不动**：首气泡一旦产出，以上全部关闭——之后只可能是 `truncated`
+  （tests/unit/sse-stream.test.ts 与 i5-progressive.test.ts 是不许回归的基线；
+  j5-native-sse.test.ts 额外钉死「配了备用域也不许在首气泡后发第二个请求」）。
 - `GenerateContext.personaTruncation?()`——被打断时的收尾台词，与 `personaRefusal`
   **同源但不同语气**：拒答是「我现在不想聊这个」，截断是「……先不说了，这边有点事」。
   两者混用会读成「说到一半突然翻脸」，比没有还糟。单聊引擎提供它（种子化选句，
@@ -49,7 +94,12 @@ M-I5 交付。签名从 V1 起就是流式（`ChatProvider.generate(): AsyncIter
 ## 转红测试
 
 - SSE fixture 流出 ≥2 个独立气泡（`tests/unit/sse-stream.test.ts`）
-- 原生 transport 路径不引用 SSE reader（源码级断言）
+- 一次性 transport（llm/http.ts）不引用 SSE reader（源码级断言）
+- M-J5（`tests/unit/j5-native-sse.test.ts`）：SseHub 乱序 id / 错误 / 取消 / 背压 /
+  两个真拒绝死线；原生 transport 装上后整轮零 fetch；4xx 错误体被收集分类；
+  fallbackBaseUrl 只换网络类失败、abort 与 auth 不换；bad_model 自愈两端各一条；
+  首气泡后配了备用域也只有一次请求；Kotlin 侧源码守卫（事件协议、超时常数、
+  handleOnDestroy 全关、OkHttp 钉版本、插件类不长 OkHttp）
 - 首气泡后不得触发重试链（fixture：首气泡后断流 → 断言无第二次请求）
 - 首气泡后断流 → `LlmError('truncated')`；abort → 不是截断；`finish_reason=length`
   → 是截断（`tests/unit/sse-stream.test.ts`）
@@ -60,8 +110,9 @@ M-I5 交付。签名从 V1 起就是流式（`ChatProvider.generate(): AsyncIter
 
 ## 陷阱（已录 CLAUDE.md 的沿用）
 
-- 原生桥的"超时"必须是真拒绝（`Promise.race` 一个会 reject 的定时器）——SSE 不适用于
-  原生正是因为桥挂起不可中断。
+- 原生桥的"超时"必须是真拒绝（`Promise.race` 一个会 reject 的定时器）——CapacitorHttp
+  不能流式正是因为桥挂起不可中断；M-J5 的 OkHttp 桥每一段等待（sseStart、响应头、
+  每次 pull）都各配一个会 reject 的死线，缺一段就是一种新的永远卡住。
 - 半个 JSON 行绝不能进 `parseBubbles`：reader 按行缓冲，未闭合的行留在缓冲区等下一个 chunk。
 - `finish_reason` 要在「delta 为空就 continue」**之前**读：带 finish_reason 的那一帧
   通常根本没有 content，先跳过就等于永远看不见"被截断"。

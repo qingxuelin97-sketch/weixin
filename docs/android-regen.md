@@ -9,7 +9,7 @@
 | 类 | 例 | 处置 |
 |---|---|---|
 | **模板原样**（`cap add` 生成后未改） | `gradlew`、`variables.gradle`、`res/mipmap-*`、`styles.xml`、splash 图 | 入库，升级 Capacitor 时可整体换新 |
-| **模板+手改**（在模板文件上叠加了我们的行） | `app/build.gradle`（kotlin 插件 + jvmTarget 21）、`android/build.gradle`（kotlin classpath）、`AndroidManifest.xml`（权限/组件/深链）、`MainActivity.kt`（替换模板 `.java`，注册插件） | 入库；升级时需**三方对比**（见下） |
+| **模板+手改**（在模板文件上叠加了我们的行） | `app/build.gradle`（kotlin 插件 + jvmTarget 21 + okhttp 依赖钉版本，M-J5）、`android/build.gradle`（kotlin classpath）、`AndroidManifest.xml`（权限/组件/深链）、`MainActivity.kt`（替换模板 `.java`，注册插件） | 入库；升级时需**三方对比**（见下） |
 | **纯手写**（模板里根本没有） | `app/src/main/java/com/personal/weixinai/aiwx/*.kt`、`res/**/aiwx_*`、`res/drawable/ic_stat_aiwx.xml`、`app/src/debug/**` | 入库；升级时原样保留 |
 | **生成物**（`cap sync` 产出，含本机 pnpm 路径） | `capacitor.settings.gradle`、`app/capacitor.build.gradle`、`app/src/main/assets/public/`、`assets/capacitor.config.json`、`assets/capacitor.plugins.json`、`res/xml/config.xml`、`capacitor-cordova-android-plugins/` | **不入库**（`android/.gitignore` 收口），CI 每次 `npx cap sync android` 重新生成 |
 
