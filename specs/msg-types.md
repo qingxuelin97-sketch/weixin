@@ -7,6 +7,10 @@
 - [x] `location` / `contact_card` / `file` / `link` / `game` 五种 `MessageType`
       （schema enum + VM union 同步），MessageBubble 各有专属渲染，
       render-msg 各有投影——**模型永远看不到 `[object]` 或内部 id**。
+- [x] `group_bill`（M-J8 群收款/AA）：同一纪律——schema enum + VM union 同步、
+      MessageBubble 白卡（发起人/人均/已付未付名单，名字发起时定格）、render-msg
+      投影（总额/人均/未付名单，金额公开是 AA 的语义）、previewOf `[群收款]`。
+      结算真源在 settings `bill:<convId>`（见 specs/money.md），meta 只是镜像。
 - [x] AI 能发：`BubbleSchema` 扩展 `location｜contact｜file｜link｜dice｜rps`，
       `parseBubbles` 修复路径同源（`BUBBLE_TYPES` 唯一列表）；
       prompt 基底告知模型可用类型与 content 写法。
