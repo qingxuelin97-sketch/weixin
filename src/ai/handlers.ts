@@ -63,6 +63,14 @@ import {
   type EventPhase,
 } from './group-events';
 import { pickImages } from '../data/moments-images';
+import { getGroupCfg } from './group-config';
+import {
+  scheduleGroupChatter,
+  pickChatterSpeaker,
+  pickChatterTopic,
+  rememberTopic,
+  CHATTER_MIN_QUIET_MS,
+} from './group-chatter';
 
 /**
  * Everything the handlers are allowed to touch. Narrow on purpose: adding a
@@ -410,6 +418,89 @@ export async function handleGroupMsg(
 
   const tier = await d.getGlobalTier();
   const hint = typeof payload.hint === 'string' ? payload.hint : undefined;
+  await d.sendGroupProactiveMessage(conv, speaker, members, tier, d.hooks, d.contactById, at, hint);
+}
+
+/* ------------------------- ambient group life ------------------------- */
+
+/**
+ * Chain step for `group_chatter` (M-J2): queue the NEXT ambient line before
+ * this one's work can fail. The activity knob is re-read at every step, so
+ * turning a group down (or up) takes effect one round later — no re-arm dance.
+ * A deleted conversation ends the chain here, deliberately.
+ */
+export async function chainGroupChatter(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  if (!convId || !d.conversationExists(convId)) return;
+  const conv = d.conversationById(convId);
+  if (!conv || conv.type !== 'group') return;
+  const cfg = await getGroupCfg(convId);
+  // Recompute what the work step is ABOUT to do (same payload, same pure
+  // functions, same seed) so the successor's carried state includes THIS
+  // round's speaker and topic even though the work has not run yet.
+  const { speakerId, topic } = plannedChatter(d, conv, payload, cfg.topics);
+  await scheduleGroupChatter(
+    convId,
+    cfg.activity,
+    d.now(),
+    {
+      recentTopics: rememberTopic(payload.recentTopics, topic),
+      lastSpeaker: speakerId ?? (str(payload.lastSpeaker) || undefined),
+    },
+    (opts) => d.enqueue(opts),
+  );
+}
+
+/** The seeded round plan, shared verbatim by chain and work. Pure. */
+function plannedChatter(
+  d: HandlerDeps,
+  conv: ConversationVM,
+  payload: Record<string, unknown>,
+  topics: string[],
+): { speakerId?: string; topic?: string; members: GroupMember[] } {
+  const seed = `${conv.id}:${optNum(payload.at) ?? 0}`;
+  const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
+    const c = d.contactById(id);
+    return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: d.personaFor(id) };
+  });
+  const speakerId = pickChatterSpeaker(members, str(payload.lastSpeaker) || undefined, seed);
+  const topic = pickChatterTopic(
+    topics,
+    Array.isArray(payload.recentTopics) ? (payload.recentTopics as string[]) : [],
+    seed,
+  );
+  return { speakerId, topic, members };
+}
+
+/**
+ * Work step: one seeded member says one ambient thing, unless the room was
+ * active in the last few minutes — interjecting mid-conversation reads as a
+ * bot on a timer, which is exactly what this is and exactly what it must not
+ * look like. A held round is not lost: the chain step already queued the next.
+ */
+export async function handleGroupChatter(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+  action: ScheduledAction,
+): Promise<void> {
+  const convId = str(payload.convId);
+  if (!convId) return;
+  const conv = d.conversationById(convId);
+  if (!conv || conv.type !== 'group' || conv.isHidden) return;
+  const at = action.fireAt;
+  // Someone (the user, an engine round, spill-over) spoke moments ago → hold.
+  if (conv.lastMsgAt && at - conv.lastMsgAt < CHATTER_MIN_QUIET_MS) return;
+
+  const cfg = await getGroupCfg(convId);
+  const { speakerId, topic, members } = plannedChatter(d, conv, payload, cfg.topics);
+  const speaker = members.find((m) => m.contactId === speakerId);
+  if (!speaker?.persona) return;
+
+  const tier = await d.getGlobalTier();
+  const hint = topic ? `找个由头把话题往「${topic}」带，一两句就好，别像报幕。` : undefined;
   await d.sendGroupProactiveMessage(conv, speaker, members, tier, d.hooks, d.contactById, at, hint);
 }
 

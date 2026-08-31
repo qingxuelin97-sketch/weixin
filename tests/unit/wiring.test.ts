@@ -49,6 +49,8 @@ const SELF_CHAINING = [
   'group_event',
   // M-I17: a failed export must cost one package, never the habit.
   'auto_backup',
+  // M-J2: the room's pulse — one flaky generation costs one round, not the chain.
+  'group_chatter',
 ] as const;
 
 describe('self-chaining kinds are actually chained', () => {
@@ -142,6 +144,11 @@ describe('a self-chaining kind schedules itself from the chain, never from the w
       file: 'src/ai/auto-backup.ts',
       work: 'export async function runAutoBackup',
       scheduler: 'ensureAutoBackupScheduled(',
+    },
+    group_chatter: {
+      file: 'src/ai/handlers.ts',
+      work: 'export async function handleGroupChatter',
+      scheduler: 'scheduleGroupChatter(',
     },
   };
 

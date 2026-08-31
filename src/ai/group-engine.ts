@@ -646,14 +646,18 @@ async function cliqueLineFor(
         if (e && e.aff >= 65) warm.push([nameOf(ids[i]), nameOf(ids[j])]);
       }
     }
+    // All directed pairs in ONE parallel batch (M-J2). This used to be an
+    // await inside a double loop — up to 30 SERIAL storage reads sitting on
+    // the critical path between the user pressing send and the director even
+    // being asked. Same reads, same order of results, one round-trip depth.
+    const pairs: Array<[string, string]> = [];
     for (const from of ids) {
-      for (const to of ids) {
-        if (from === to) continue;
-        if (stanceTier(await getStance(from, to, now)) === 'hostile') {
-          cold.push([nameOf(from), nameOf(to)]);
-        }
-      }
+      for (const to of ids) if (from !== to) pairs.push([from, to]);
     }
+    const stances = await Promise.all(pairs.map(([from, to]) => getStance(from, to, now)));
+    pairs.forEach(([from, to], i) => {
+      if (stanceTier(stances[i]) === 'hostile') cold.push([nameOf(from), nameOf(to)]);
+    });
     return socialDirective(warm, cold) || undefined;
   } catch {
     return undefined;

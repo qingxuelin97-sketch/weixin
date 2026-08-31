@@ -39,7 +39,7 @@ import { sendGroupMessage, replyToLatestInGroup } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
 import { payBill } from '../../ai/bill-service';
 import { BillSheet } from './BillSheet';
-import { fenToYuan } from '../../lib/money';
+import { fenToYuan, seededRng } from '../../lib/money';
 import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
 import { renderMessageBody } from '../../ai/render-msg';
@@ -278,7 +278,7 @@ export function ChatPage() {
         // person: "群里说下周要一起吃饭" belongs to the group, and every member
         // should be able to refer to it. Without this the group had no memory at
         // all — every round started from the last 30 messages and nothing else.
-        void maybeScheduleMemExtract(convId, convId, Date.now()).catch(() => {});
+        void maybeScheduleMemExtract(convId, convId, Date.now(), { group: true }).catch(() => {});
       }
     };
   }, [convId]);
@@ -762,6 +762,41 @@ export function ChatPage() {
         const c = contactById(id);
         return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
       });
+      // 群斗图 (M-J2): the battle was single-chat-only, which is backwards —
+      // a group is where sticker wars actually happen. Same seeded, zero-LLM
+      // decision as the single branch; a few members "reach for their phone"
+      // in seeded order and the first hit posts the comeback. A miss falls
+      // through to the ordinary director round, so the sticker still lands
+      // an answer in words.
+      const tail = useAppStore.getState().messagesFor(convId);
+      const streak = stickerStreak(tail.map((m) => m.type));
+      const order = [...members]
+        .filter((m) => m.persona)
+        .sort(
+          (a, b) =>
+            seededRng(`gbattle:${convId}:${saved.id}:${a.contactId}`)() -
+            seededRng(`gbattle:${convId}:${saved.id}:${b.contactId}`)(),
+        )
+        .slice(0, 3);
+      for (const m of order) {
+        const pool = await agentStickerPool(m.contactId).catch(() => [] as string[]);
+        const reply = battleReply(
+          { seed: `${convId}:${saved.id}:${m.contactId}`, streak, rate: m.persona?.stickerRate },
+          pool,
+          ref,
+        );
+        if (reply) {
+          const fireAt = Date.now() + reply.delayMs;
+          await enqueue({
+            kind: 'sticker_reply',
+            fireAt,
+            payload: { convId, contactId: m.contactId, content: reply.content, at: fireAt },
+            now: Date.now(),
+            id: `stkbattle_${convId}_${saved.id}`,
+          });
+          return;
+        }
+      }
       await replyToLatestInGroup(conv, members, globalTier, hooks, contactById);
     }
   };

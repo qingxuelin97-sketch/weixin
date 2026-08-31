@@ -11,8 +11,16 @@
 import { repo } from '../db/repo';
 import { enqueue, actionExists } from './scheduler';
 
-/** New messages required since the last extraction before we spend a call. */
+/**
+ * New messages required since the last extraction before we spend a call —
+ * calibrated PER ROOM SHAPE (M-J2). The single value 6 was set to single-chat
+ * cadence and never re-examined when groups came online: one group round can
+ * emit up to 9 lines (3 actors × 3 bubbles), so groups cleared the bar on
+ * almost every visit — one memory-role LLM call per peek — while a 1:1 that
+ * traded four thoughtful messages never cleared it at all.
+ */
 export const MEM_EXTRACT_MIN_NEW = 6;
+export const MEM_EXTRACT_MIN_NEW_GROUP = 14;
 /** Fires shortly after the user leaves — feels like "she thought about it later". */
 const EXTRACT_DELAY_MS = 2 * 60_000;
 
@@ -34,11 +42,13 @@ export async function maybeScheduleMemExtract(
   convId: string,
   contactId: string,
   now: number,
+  opts: { group?: boolean } = {},
 ): Promise<boolean> {
   const marker = await getExtractMarker(convId);
   const recent = await repo.getMessages(convId, { limit: 60 });
   const fresh = recent.filter((m) => m.id > marker && !m.isRecalled && m.type === 'text');
-  if (fresh.length < MEM_EXTRACT_MIN_NEW) return false;
+  const minNew = opts.group ? MEM_EXTRACT_MIN_NEW_GROUP : MEM_EXTRACT_MIN_NEW;
+  if (fresh.length < minNew) return false;
 
   const lastId = fresh[fresh.length - 1].id;
   const id = `mem_${convId}_${lastId}`;

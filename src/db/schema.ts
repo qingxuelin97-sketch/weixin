@@ -434,6 +434,14 @@ export const SCHEDULED_ACTION_KINDS = [
    * the amounts and the roster were fixed at creation.
    */
   'bill_pay',
+  /**
+   * 群的自发闲聊 (M-J2)。Self-chaining ambient life for a group while the app
+   * is open — until now a group only ever spoke after the user did (the sole
+   * live producer of group_msg was DM spill-over). Chain payload carries the
+   * topic rotation and last speaker; work delegates to the SAME
+   * sendGroupProactiveMessage the offline planner uses.
+   */
+  'group_chatter',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

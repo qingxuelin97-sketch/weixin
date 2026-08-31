@@ -79,3 +79,22 @@
   同一批 id 重新播种），残留的边会让下一个「林」直接继承死者攒的 fam/aff，第一天就是
   老关系的心跳频率与点赞率。所以按 `pairKey`（分隔符 `REL_PAIR_SEP`，定义在 repo.ts
   以防与写入侧漂移）逐条删。`groupNick:<convId>` 同理：群活下来，死者那条昵称不能活。
+
+## M-J2 · 群的自发生命
+
+- **`group_chatter`（第 24 个 kind，自续链）**：App 开着的时候群终于会先开口。此前
+  live `group_msg` 的唯一生产者是私信外溢——前台的群没有自己的脉搏。前台 pass 给每个
+  「可见且有 persona 成员」的群武装一条链（pending 判据，不是 actionExists——id 带
+  fireAt 无复活陷阱；链步失败恰好留不下 pending 行，正是该重新武装的时刻）。
+- **链步与工作步的确定性协议**：链步先于工作步运行却要携带「本轮谁说了什么话题」给
+  后继——两步用同一 payload（内含 `at` 种子）跑同一批纯函数（`plannedChatter`），
+  算出同一个答案。话题轮换与上一位发言人都在链 payload 里随行，链随会话删除而终结，
+  无需 settings 台账。
+- **节流**：`CHATTER_MIN_QUIET_MS`（5 分钟）内有人说过话就按住不插嘴（链已续，
+  只是这拍不响）；activity 0 冷清但不死（3-6h 一拍），3 热闹（15-40 分钟）。
+- **群斗图**：battleReply 从单聊专属搬进群分支——seeded 顺序最多三个成员「摸手机」，
+  第一个命中的贴出回击（零 LLM，走 `sticker_reply`），全空则落回正常导演轮。
+- **记忆抽取按房型标定**：群阈值 `MEM_EXTRACT_MIN_NEW_GROUP=14`（一轮最多 9 条，
+  6 的阈值等于每次路过都花一次 memory 调用），单聊维持 6。
+- **cliqueLineFor 批量化**：敌意扫描的 30 次串行存储读改一批 `Promise.all`——它坐在
+  「用户发送 → 导演开拍」的关键路径上。

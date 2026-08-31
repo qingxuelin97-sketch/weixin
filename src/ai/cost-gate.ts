@@ -200,6 +200,7 @@ export const ACTION_LLM_BOUND: Record<ScheduledActionKind, boolean> = {
   transfer_return: false,
   rp_return: false, // pure bookkeeping: status flip + ledger row + template line
   bill_pay: false, // amount/roster fixed at creation; delivery only
+  group_chatter: true, // one ambient line = one generation round
 };
 
 /**

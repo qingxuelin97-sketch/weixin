@@ -15,6 +15,7 @@ import {
   hasPendingOfKind,
   pendingActions,
   isPendingForIn,
+  payloadOf,
   enqueue,
   actionExists,
 } from '../ai/scheduler';
@@ -90,6 +91,8 @@ import {
   chainHeartbeat as chainHeartbeatStep,
   chainAgentDm as chainAgentDmStep,
   chainMomentPost as chainMomentPostStep,
+  chainGroupChatter as chainGroupChatterStep,
+  handleGroupChatter,
 } from '../ai/handlers';
 import { Capacitor } from '@capacitor/core';
 import { getRouter } from '../llm/service';
@@ -103,6 +106,7 @@ import { startBackgroundNotify } from '../native/background-notify';
 import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
 import { getGroupCfg, activityMultiplier } from '../ai/group-config';
+import { scheduleGroupChatter } from '../ai/group-chatter';
 import { maybeGroupEvent } from '../ai/group-events';
 import { maybeGroupInvite } from '../ai/agent-invite';
 import { repo } from '../db/repo';
@@ -413,6 +417,12 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerChainedHandler('group_event', {
       chain: (p) => chainGroupEventStep(deps, p),
       work: (p) => handleGroupEvent(deps, p),
+    });
+    // 群的自发生命 (M-J2): with the app open a group finally speaks first.
+    // Chained so one flaky generation costs one round, never the room's pulse.
+    registerChainedHandler('group_chatter', {
+      chain: (p) => chainGroupChatterStep(deps, p),
+      work: (p, a) => handleGroupChatter(deps, p, a),
     });
     // Periodic backups (M-I17): the successor is queued before the export, so
     // one failed write costs one package, never the habit.
@@ -740,6 +750,24 @@ async function runForegroundPass(): Promise<void> {
   const queuedHere = new Set<string>();
   const alreadyQueued = (kind: 'heartbeat' | 'moment_post', contactId: string) =>
     queuedHere.has(`${kind}:${contactId}`) || isPendingForIn(pending, kind, contactId);
+
+  // 群的自发生命 (M-J2): arm ONE chatter chain per visible group that has at
+  // least one persona member. Pending-check, not actionExists — the ids carry
+  // fireAt (no stable-id revival trap), and a chain whose chain-step failed
+  // leaves no pending row, which is exactly when re-arming is wanted.
+  for (const conv of s.conversations) {
+    if (conv.type !== 'group' || conv.isHidden) continue;
+    if (!(conv.memberIds ?? []).some((id) => s.personaFor(id))) continue;
+    const hasChain =
+      queuedHere.has(`group_chatter:${conv.id}`) ||
+      pending.some(
+        (a) => a.kind === 'group_chatter' && payloadOf(a)?.convId === conv.id,
+      );
+    if (hasChain) continue;
+    queuedHere.add(`group_chatter:${conv.id}`);
+    const cfg = await getGroupCfg(conv.id);
+    await scheduleGroupChatter(conv.id, cfg.activity, now);
+  }
 
   for (const conv of s.conversations) {
     if (conv.type !== 'single' || !conv.peerId) continue;
