@@ -16,6 +16,11 @@
       （按类型筛选）；me 页入口接活。
 - [x] 表情游戏：composer 表情面板可发；AI 可发（dice/rps 气泡）；
       结果进投影（"掷出了骰子，点数是 3 点"），AI 能接梗。
+- [x] 收藏二期（M-J12）：/favorites 全文搜索（正文/来源/meta 可读值，
+      `lib/favorites.filterFavorites`）；「笔记」= `type:'note'` 的收藏行
+      （右上角 + → 编辑 Sheet；长按可编辑，编辑不换 id 不动 favedAt）；
+      长按菜单「转发到聊天」复用 `components/ForwardSheet`（自 ChatPage
+      抽出的"发送给"选择器），note 以 text 出门、meta 克隆不别名。
 
 ## 设计要点
 
@@ -31,6 +36,13 @@
   结果下一轮经投影可见，接梗发生在下一轮。
 - **收藏零泄漏**：隐藏会话过滤在 `repo.getFavorites()` 内部（同 search()），
   UI 忘了也漏不出去。转红测试直接向 store 塞一条隐藏会话行验证。
+  M-J12 起转发**目标**列表同纪律：`forwardableConversations` 在 helper 内部
+  滤 isHidden（tests/unit/j12-favorites.test.ts 转红），隐藏会话既当不了
+  来源也当不了去处。
+- **`note` 是收藏专属 kind**（M-J12）：`FavoriteVM.type = MessageType | 'note'`，
+  绝不进消息表——转发时映射为 `text`。ChatPage 的收藏闸门 FAVORITABLE 与
+  FavoriteBody 渲染器的同口径守卫（i18-contacts-gaps）对 note 显式豁免。
+  笔记行 senderId='self'、convId=''，因此删联系人级联永远扫不到它。
 - **deleteContact 级联**：收藏行按 senderId 或死亡会话 convId 清除，
   台账 `DELETE_CONTACT_CASCADE.favorites = 'cascade'`（守卫测试盯着）。
 

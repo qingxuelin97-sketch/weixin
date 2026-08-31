@@ -280,7 +280,13 @@ export interface FavoriteVM {
   senderName: string;
   /** Conversation title at favoriting time. */
   convTitle: string;
-  type: MessageType;
+  /**
+   * Snapshot kind. `'note'` (M-J12) is a favorites-only kind: a piece of text
+   * the user wrote directly on the favorites page, with no source message
+   * (msgId 0, empty convId). It must never leak back out as a MESSAGE type —
+   * forwarding a note sends `'text'` (src/lib/favorites.ts).
+   */
+  type: MessageType | 'note';
   content?: string;
   meta?: Record<string, unknown>;
   /** When the original message was sent. */
