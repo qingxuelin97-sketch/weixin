@@ -256,6 +256,46 @@ export async function recordTease(
   await recordStance(target, teaser, REL_SCORES.teased.aff * 3, now);
 }
 
+/* ------------------- stance writers 2–4 (M-J1) ------------------- */
+
+/**
+ * Negative / combative tone, by keyword. Deliberately a cheap lexicon and not
+ * an LLM call — every writer below rides an existing bookkeeping moment, and
+ * stance is a garnish that must never cost a turn (nor a token).
+ */
+const HOSTILE_TONE_RE =
+  /(讨厌|烦死|好烦|真烦|无语|气死|气人|吵架|吵了一架|生气|受不了|拉黑|绝交|翻脸|阴阳怪气|靠不住|骗人|骗我|放鸽子|恶心|小气|抠门|欺负|吹牛|得瑟|嘚瑟|凡尔赛|呵呵|就这|谁信|别吹|得了吧|辣眼睛|少来|瞎说|看不惯|烦透|讨嫌|嫌弃)/;
+
+export function hostileTone(text: string): boolean {
+  return HOSTILE_TONE_RE.test(text);
+}
+
+/** Amplitudes for the three new writers. Small on purpose — recordStance
+ * decays 12%/day and clamps at ±100; one remark is a nudge, not a verdict. */
+export const STANCE_MENTION_DELTA = -4; // a third party badmouthed in a 1:1
+export const STANCE_CLASH_DELTA = -5; // a combative Moments comment
+export const STANCE_GOSSIP_DELTA = 2; // being talked ABOUT keeps you salient…
+export const STANCE_GOSSIP_NEG_DELTA = -3; // …unless the talk was unkind
+
+/**
+ * Did this text badmouth one of `peers`? Returns the first named peer when the
+ * tone around the mention is negative; null otherwise. Names shorter than two
+ * characters never match — 「小」 appearing in a sentence is not a person.
+ */
+export function detectStanceMention(
+  text: string,
+  peers: Array<{ contactId: string; name: string }>,
+): { contactId: string; name: string } | null {
+  const t = text.trim();
+  if (!t || !hostileTone(t)) return null;
+  for (const p of peers) {
+    const name = p.name?.trim();
+    if (!name || name.length < 2) continue;
+    if (t.includes(name)) return { contactId: p.contactId, name };
+  }
+  return null;
+}
+
 export type StanceTier = 'hostile' | 'cool' | 'neutral' | 'warm';
 
 export function stanceTier(value: number): StanceTier {

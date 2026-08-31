@@ -8,6 +8,7 @@ import {
   registerHandler,
   registerChainedHandler,
   setHandlerErrorSink,
+  setBudgetGate,
   gcActions,
   startScheduler,
   stopScheduler,
@@ -17,6 +18,7 @@ import {
   enqueue,
   actionExists,
 } from '../ai/scheduler';
+import { installCostGate, uninstallCostGate, schedulerBudgetGate } from '../ai/cost-gate';
 import { claimRedPacket, acceptTransfer, returnTransfer } from '../ai/money-service';
 import {
   runGift,
@@ -28,7 +30,8 @@ import {
 import { sendProactiveMessage } from '../ai/engine';
 import { sendGroupProactiveMessage } from '../ai/group-engine';
 import { scheduleHeartbeat, shouldNudge } from '../ai/heartbeat';
-import { getEdge, effectiveAffinity, heartbeatAffinityMul } from '../ai/relationship';
+import { getEdge, getAllEdges, effectiveAffinity, heartbeatAffinityMul } from '../ai/relationship';
+import { REL_PAIR_SEP } from '../db/repo';
 import { noteProactiveSent, getAgentState } from '../ai/agent-state';
 import { extractMemory, maintainMemory } from '../ai/memory';
 import { getExtractMarker, setExtractMarker } from '../ai/memory-service';
@@ -223,6 +226,11 @@ export function useSchedulerRuntime(enabled: boolean): void {
     // they are no longer silent, which is how "她突然不说话了" stayed invisible.
     setHandlerErrorSink(logError);
 
+    // 全局成本闸 (M-J1): every router dispatch checks the hourly/daily budget,
+    // and the queue defers LLM-bound kinds (keeps them PENDING) while over it.
+    installCostGate();
+    setBudgetGate(schedulerBudgetGate);
+
     registerHandler('rp_grab', (p) => handleRpGrab(deps, p));
     registerHandler('transfer_accept', (p) => handleTransferAccept(deps, p));
     registerHandler('transfer_return', (p) => handleTransferReturn(deps, p));
@@ -405,6 +413,8 @@ export function useSchedulerRuntime(enabled: boolean): void {
       clearTimeout(restoreWarnTimer);
       stopBackgroundNotify();
       stopScheduler();
+      setBudgetGate(null);
+      uninstallCostGate();
     };
   }, [enabled]);
 
@@ -839,7 +849,19 @@ async function scheduleNextAgentDm(): Promise<void> {
     .filter((c) => c.type === 'group' && !c.isHidden)
     .map((c) => ({ convId: c.id, memberIds: c.memberIds ?? [] }));
   const now = Date.now();
-  const plan = planNextDm(roster, groups, now, 'dm');
+  // 无群兜底 (M-J1): with no shared room, pairs that already have a
+  // relationship edge (rel_edges) can still talk — resolved here because
+  // planNextDm is pure and must not read storage. Failure = no fallback lane.
+  const rosterIds = new Set(roster.map((r) => r.contactId));
+  const edgePairs = await getAllEdges(now)
+    .then((edges) =>
+      Object.keys(edges).flatMap((key) => {
+        const [a, b] = key.split(REL_PAIR_SEP);
+        return a && b && rosterIds.has(a) && rosterIds.has(b) ? [{ a, b }] : [];
+      }),
+    )
+    .catch(() => []);
+  const plan = planNextDm(roster, groups, now, 'dm', edgePairs);
   if (!plan) return;
   await enqueue({
     kind: 'agent_dm',

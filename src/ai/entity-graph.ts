@@ -459,6 +459,65 @@ export interface Selection {
 }
 
 /**
+ * 实体档案 (M-J1): facts about the SAME entity fold into one profile line.
+ *
+ * Thirty flat lines about eight different people read as noise; a person's
+ * memory of your sister is one dossier, not five scattered sentences. So when
+ * the selected set holds `PROFILE_MIN_FACTS` or more facts about one entity
+ * (grouped by `groupByEntity` — its second consumer, after the memory page),
+ * they compress to `名字：要点；要点`. The character budget is unchanged: the
+ * compression only ever REMOVES characters, and per-profile points are capped.
+ */
+export const PROFILE_MIN_FACTS = 3;
+export const PROFILE_MAX_POINTS = 4;
+export const PROFILE_POINT_CHARS = 24;
+
+/** The fact minus its redundant leading entity name, clipped for the profile. */
+function profilePoint(fact: string, entity: string): string {
+  const t = fact.trim();
+  const body = t.startsWith(entity) ? t.slice(entity.length).replace(/^[的:：，,\s]+/, '') : t;
+  const kept = (body || t).slice(0, PROFILE_POINT_CHARS);
+  return kept + ((body || t).length > PROFILE_POINT_CHARS ? '…' : '');
+}
+
+/**
+ * Compress a rank-ordered fact list into prompt lines: entities with enough
+ * facts become one profile line (emitted at the first member's rank position),
+ * everything else stays a plain line. Returns the lines AND the ids that
+ * actually reached the prompt — facts squeezed out past `PROFILE_MAX_POINTS`
+ * are not "referenced" and must not be touch-counted.
+ */
+export function profileLines(rest: MemoryFactVM[]): { lines: string[]; ids: string[] } {
+  const groups = groupByEntity(rest);
+  const entityOfFact = new Map<string, string>();
+  const groupSize = new Map<string, number>();
+  for (const g of groups) {
+    groupSize.set(g.entity, g.facts.length);
+    for (const f of g.facts) entityOfFact.set(f.id, g.entity);
+  }
+
+  const lines: string[] = [];
+  const ids: string[] = [];
+  const emitted = new Set<string>();
+  for (const f of rest) {
+    const entity = entityOfFact.get(f.id) ?? UNGROUPED;
+    const size = groupSize.get(entity) ?? 1;
+    if (entity === UNGROUPED || size < PROFILE_MIN_FACTS) {
+      lines.push(f.fact);
+      ids.push(f.id);
+      continue;
+    }
+    if (emitted.has(entity)) continue; // folded into the profile line already
+    emitted.add(entity);
+    // Members in RANK order (rest is rank-ordered), capped.
+    const members = rest.filter((x) => entityOfFact.get(x.id) === entity).slice(0, PROFILE_MAX_POINTS);
+    lines.push(`${entity}：${members.map((m) => profilePoint(m.fact, entity)).join('；')}`);
+    ids.push(...members.map((m) => m.id));
+  }
+  return { lines, ids };
+}
+
+/**
  * The injection set: pinned facts first (they are the user's explicit word),
  * then the highest-ranked remainder that has not been forgotten.
  *
@@ -480,10 +539,14 @@ export function selectForInjection(
     .filter((r) => !pinnedIds.has(r.fact.id) && !isForgotten(r.fact, now))
     .slice(0, topK);
 
+  // Entity dossiers (M-J1): same-entity facts fold into one line. Pinned facts
+  // are the user's explicit word and are never rewritten.
+  const folded = profileLines(rest.map((r) => r.fact));
+
   return {
     pinned: pinned.map((r) => r.fact.fact),
-    topK: rest.map((r) => r.fact.fact),
-    ids: [...pinned, ...rest].map((r) => r.fact.id),
+    topK: folded.lines,
+    ids: [...pinned.map((r) => r.fact.id), ...folded.ids],
   };
 }
 

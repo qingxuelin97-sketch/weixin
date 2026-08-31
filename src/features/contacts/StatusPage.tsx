@@ -15,6 +15,13 @@ import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
 import { useNow } from '../../lib/useNow';
 import { agentEpoch, goalStateAt, type GoalState } from '../../ai/goals';
+import {
+  goalStateFor,
+  ensureGoalTemplates,
+  renameCurrentGoal,
+  abandonCurrentGoal,
+} from '../../ai/goal-service';
+import { showPrompt, showConfirm } from '../../components/dialog';
 import { lifelineAt, type ArcState } from '../../ai/lifeline';
 import { getDrift, explainDrift, type DriftExplanation } from '../../ai/drift';
 import { moodOf } from '../../lib/mood';
@@ -53,6 +60,11 @@ export function StatusPage() {
   // is where the per-dimension `reason` below comes from.
   const [affect, setAffect] = useState<AffectState | null>(null);
   const [drifted, setDrifted] = useState<DriftExplanation[]>([]);
+  // Goal state now reads through goal-service (M-J1): per-persona generated
+  // templates + the user's own renames/abandons. The sync seeded derivation
+  // below stays as the first-paint fallback.
+  const [liveGoal, setLiveGoal] = useState<GoalState | null>(null);
+  const [goalRev, setGoalRev] = useState(0);
   useEffect(() => {
     let alive = true;
     void getAffect(contactId, now)
@@ -65,10 +77,29 @@ export function StatusPage() {
         if (alive) setDrifted(explainDrift(d));
       })
       .catch(() => {});
+    void goalStateFor(contactId, now)
+      .then((g) => {
+        if (alive) setLiveGoal(g);
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [contactId, now]);
+  }, [contactId, now, goalRev]);
+
+  // 目标模板按人设生成，一辈子一次（M-J1）。The page a user opens to look at
+  // her life is the honest moment to spend that one call; failure silently
+  // keeps the built-in templates — 不许空目标.
+  const personaCore = persona?.core;
+  const personaStyle = persona?.speechStyle;
+  useEffect(() => {
+    if (!personaCore) return;
+    void ensureGoalTemplates(contactId, { core: personaCore, speechStyle: personaStyle })
+      .then((generated) => {
+        if (generated) setGoalRev((r) => r + 1);
+      })
+      .catch(() => {});
+  }, [contactId, personaCore, personaStyle]);
 
   if (!contact || contact.type !== 'ai' || !persona) {
     return (
@@ -82,10 +113,35 @@ export function StatusPage() {
   }
 
   const epoch = agentEpoch(contactId);
-  const goal = goalStateAt(contactId, now, epoch);
+  const goal = liveGoal ?? goalStateAt(contactId, now, epoch);
   const arcs = lifelineAt({ contactId }, now, epoch);
   const mood = moodOf(contactId, now);
   const name = contact.remark ?? contact.name;
+
+  const editTitle = async () => {
+    const title = await showPrompt({
+      title: '改个说法',
+      body: '她自己会怎么叫这个目标？（只改叫法，不改进度）',
+      initial: goal.title,
+      placeholder: '2~24 字',
+    });
+    if (title == null || !title.trim()) return;
+    await renameCurrentGoal(contactId, now, title);
+    setGoalRev((r) => r + 1);
+  };
+
+  const dropGoal = async () => {
+    const ok = await showConfirm({
+      title: '让她放下这个目标？',
+      body: `「${goal.title}」会就此搁置，她过阵子自然会有下一件事。`,
+      confirmText: '放下',
+      cancelText: '再想想',
+      danger: true,
+    });
+    if (!ok) return;
+    await abandonCurrentGoal(contactId, now);
+    setGoalRev((r) => r + 1);
+  };
 
   return (
     <>
@@ -101,7 +157,7 @@ export function StatusPage() {
           </div>
         </div>
 
-        <GoalCard goal={goal} now={now} />
+        <GoalCard goal={goal} now={now} onRename={editTitle} onAbandon={dropGoal} />
         <MoodCard moodLine={mood.line} affect={affect} />
         <LifelineCard arcs={arcs} />
         <DriftCard drifted={drifted} />
@@ -116,7 +172,17 @@ export function StatusPage() {
 
 /* ==================================================================== */
 
-function GoalCard({ goal, now }: { goal: GoalState; now: number }) {
+function GoalCard({
+  goal,
+  now,
+  onRename,
+  onAbandon,
+}: {
+  goal: GoalState;
+  now: number;
+  onRename: () => void;
+  onAbandon: () => void;
+}) {
   const pct = Math.round(goal.progress * 100);
   const ended = goal.status !== 'active';
   return (
@@ -126,6 +192,16 @@ function GoalCard({ goal, now }: { goal: GoalState; now: number }) {
         <span className={`status__badge status__badge--${goal.status}`}>
           {GOAL_STATUS_LABELS[goal.status]}
         </span>
+        {!ended && (
+          <span className="status__goal-actions">
+            <button className="status__goal-btn" onClick={onRename}>
+              改标题
+            </button>
+            <button className="status__goal-btn status__goal-btn--drop" onClick={onAbandon}>
+              放弃
+            </button>
+          </span>
+        )}
       </div>
       <div className="status__goal-name">「{goal.title}」</div>
       <div className="status__goal-stage">

@@ -123,6 +123,26 @@ export const PROMPT_LIMITS = {
   totalWarn: 6000,
 } as const;
 
+/**
+ * Layer-aware trim floors (M-J1). When the assembled prompt crosses
+ * `totalWarn`, layers are cut IN THIS ORDER — memory tail first, then low-score
+ * worldbook lines, then few-shots beyond three, then relations beyond the
+ * floor — and never below these floors. The base rules and the persona's own
+ * voice (core / speechStyle / catchphrases) are constitutionally untrimmable:
+ * a prompt that fits the budget by deleting who she is has optimized away the
+ * product.
+ */
+export const TRIM_FLOORS = {
+  /** Scored memory lines kept at minimum (pinned facts are never touched). */
+  memoryTopK: 4,
+  /** Worldbook lines may all go — lore is garnish, memory is identity. */
+  world: 0,
+  /** Few-shots kept at minimum; beyond this they are style reinforcement. */
+  fewShots: 3,
+  /** Relations kept at minimum; `user` is pinned first and never dropped. */
+  relations: 4,
+} as const;
+
 /** Trim to `max` chars, marking the cut so the model doesn't read a hard stop as intent. */
 function clip(s: string, max: number): string {
   const t = s.trim();
@@ -201,12 +221,12 @@ function nsfwLayer(tier: NsfwTier, samples?: string[]): string {
   }
 }
 
-function personaBlock(p: PersonaView): string {
+function personaBlock(p: PersonaView, fewShotCap: number = PROMPT_LIMITS.fewShots): string {
   const parts = [`# 你的人设\n你叫${p.name}。${clip(p.core ?? '', PROMPT_LIMITS.core)}`];
   if (p.speechStyle) parts.push(`说话风格：${clip(p.speechStyle, PROMPT_LIMITS.speechStyle)}`);
   const phrases = clipList(p.catchphrases, PROMPT_LIMITS.catchphrases, PROMPT_LIMITS.catchphraseChars);
   if (phrases.length) parts.push(`口头禅：${phrases.join('、')}`);
-  const shots = clipList(p.fewShots, PROMPT_LIMITS.fewShots, PROMPT_LIMITS.fewShotChars);
+  const shots = clipList(p.fewShots, Math.min(fewShotCap, PROMPT_LIMITS.fewShots), PROMPT_LIMITS.fewShotChars);
   if (shots.length) parts.push(`你平时会这样说话：\n${shots.map((s) => `- ${s}`).join('\n')}`);
   const sticker = stickerHabitLine(p.stickerRate);
   if (sticker) parts.push(sticker);
@@ -231,10 +251,18 @@ function sceneBlock(scene: SceneContext): string {
   return lines.join('\n');
 }
 
-/** Build the full system prompt. Returns a single string for the `system` message. */
-export function assembleSystemPrompt(input: AssembleInput): string {
+/** Per-layer caps the budget loop may lower. `undefined` world cap = keep all. */
+interface LayerCaps {
+  topK: number;
+  world: number;
+  fewShots: number;
+  relations: number;
+}
+
+/** One assembly pass under the given caps. Layer ORDER is constitutional. */
+function buildPrompt(input: AssembleInput, caps: LayerCaps): string {
   const { persona, relations, nsfwTier, memory, scene } = input;
-  const blocks: string[] = [BASE_REALISM, personaBlock(persona)];
+  const blocks: string[] = [BASE_REALISM, personaBlock(persona, caps.fewShots)];
 
   if (relations && Object.keys(relations).length) {
     // O(contacts) and unbounded before M-G0 — every AI friend added a line to
@@ -243,7 +271,7 @@ export function assembleSystemPrompt(input: AssembleInput): string {
     const entries = Object.entries(relations).filter(([, v]) => v?.trim());
     entries.sort((a, b) => (a[0] === 'user' ? -1 : b[0] === 'user' ? 1 : 0));
     const rel = entries
-      .slice(0, PROMPT_LIMITS.relations)
+      .slice(0, Math.min(caps.relations, PROMPT_LIMITS.relations))
       .map(([k, v]) => `${k === 'user' ? '用户' : k}：${clip(v, PROMPT_LIMITS.relationChars)}`)
       .join('；');
     if (rel) blocks.push(`# 关系\n${rel}`);
@@ -253,12 +281,54 @@ export function assembleSystemPrompt(input: AssembleInput): string {
   blocks.push(`# 边界\n${nsfwLayer(nsfwTier, persona.nsfwStyleSamples)}`);
 
   if (memory && (memory.pinned.length || memory.topK.length || memory.world?.length)) {
-    const facts = [...memory.pinned, ...memory.topK, ...(memory.world ?? [])]
+    const facts = [
+      ...memory.pinned,
+      ...memory.topK.slice(0, caps.topK),
+      ...(memory.world ?? []).slice(0, caps.world),
+    ]
       .map((f) => `- ${f}`)
       .join('\n');
-    blocks.push(`# 你记得的事\n${facts}`);
+    if (facts) blocks.push(`# 你记得的事\n${facts}`);
   }
 
   blocks.push(sceneBlock(scene));
   return blocks.join('\n\n');
+}
+
+/**
+ * Build the full system prompt. Returns a single string for the `system` message.
+ *
+ * 分层预算器 (M-J1): when the assembled prompt crosses `PROMPT_LIMITS.totalWarn`
+ * it is TRIMMED back under budget instead of merely logged about — in the fixed
+ * order memory tail → worldbook (low score = tail, `worldLinesFor` returns them
+ * score-ordered) → few-shots beyond 3 → relations beyond the floor, each with a
+ * hard floor (`TRIM_FLOORS`). The base realism rules and the persona layer are
+ * never cut. Under budget the output is byte-identical to the untrimmed build,
+ * so the common path keeps its cacheable prefix.
+ */
+export function assembleSystemPrompt(input: AssembleInput): string {
+  const caps: LayerCaps = {
+    topK: input.memory?.topK.length ?? 0,
+    world: input.memory?.world?.length ?? 0,
+    fewShots: PROMPT_LIMITS.fewShots,
+    relations: PROMPT_LIMITS.relations,
+  };
+  let out = buildPrompt(input, caps);
+  if (out.length <= PROMPT_LIMITS.totalWarn) return out;
+
+  // Trim stages in constitutional order; each pops one unit and re-measures.
+  const stages: Array<{ key: keyof LayerCaps; floor: number }> = [
+    { key: 'topK', floor: TRIM_FLOORS.memoryTopK },
+    { key: 'world', floor: TRIM_FLOORS.world },
+    { key: 'fewShots', floor: TRIM_FLOORS.fewShots },
+    { key: 'relations', floor: TRIM_FLOORS.relations },
+  ];
+  for (const { key, floor } of stages) {
+    while (out.length > PROMPT_LIMITS.totalWarn && caps[key] > floor) {
+      caps[key] -= 1;
+      out = buildPrompt(input, caps);
+    }
+    if (out.length <= PROMPT_LIMITS.totalWarn) break;
+  }
+  return out;
 }

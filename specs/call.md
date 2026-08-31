@@ -51,3 +51,18 @@ M-D2 出通话壳（能响、能接、能挂），M-H1 让她会主动打来，*
   `await resume()`，否则在挂起态排的音窗永远无声。一次性的 unlocked 标志挡不住第二次挂起。
 - 通话是**双生产者**页面：app 内接听（`?in=1`）与来电全屏（`?incoming=1&accept=1`）
   都进同一个 CallPage，改参数解析时两条路径都要走一遍。
+
+## M-J1 · 通话同脑
+
+- **buildCallSystem 补层**：mood/affect 进场景层（与引擎同源 `affectLine`），
+  lifeline → goal → occasion 依引擎惯例追加在 scene 之后、`CALL_SCENE` 补充块之前。
+  goal 走 goal-service（按人设生成的模板 + 用户改名/放弃覆盖），电话里聊到的
+  是她微信里正在忙的同一件事。关系层仍然只带 user 一条（通话是两个人的事）。
+- **纪要三落**：`recordCallOutcome(convId, contactId, summary, promises, now, tier)`
+  除 conv-state 承诺外，加写 `memory_facts` 一条（importance 3、evidenceMsgIds 空——
+  通话轮次不落消息本无 msgId 可引；sensitivity 按通话 tier 分级，全开档纪要进不了
+  群/朋友圈注入白名单）+ 更新 `conv_summaries`（「刚通了电话：…」并入滚动摘要）。
+- **先落纪要再 end**：`CallSession.finalize()` 幂等（memo 同一个 promise），
+  `end()` 第一件事就是 fire 它——CallPage 卸载路径（返回手势）只调 `end()`，
+  此前纪要整个丢失；挂断按钮分支 join 同一个 promise，绝不双写。
+  转红：`j1-mind.test.ts`（end() 单独落纪要 / summarize 只跑一次 / memory 只一行）。

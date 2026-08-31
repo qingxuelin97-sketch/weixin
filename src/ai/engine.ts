@@ -10,7 +10,16 @@
 import type { MessageVM, PersonaVM, ContactVM, NsfwTierVM } from '../data/types';
 import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
-import { getEdge, effectiveAffinity, relationTier, tierDirective, recordRelEvent } from './relationship';
+import {
+  getEdge,
+  effectiveAffinity,
+  relationTier,
+  tierDirective,
+  recordRelEvent,
+  recordStance,
+  detectStanceMention,
+  STANCE_MENTION_DELTA,
+} from './relationship';
 import { noteUserReplied } from './agent-state';
 import { assembleSystemPrompt, promptStats, relationsForPrompt, type PersonaView } from './prompt';
 import { selectFactsForInjection, touchFacts, withConvSummary } from './memory';
@@ -36,18 +45,14 @@ import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
 import { arcAwareness, freshArc, arcOpener, type PeerRef } from './rel-arcs';
 import { ownLines, styleNote, makeScrubber } from './anti-ai';
 import { playbackFeed } from './bubble-feed';
-import { noteDrift } from './drift';
+import { noteDrift, getDrift, applyDrift, driftToneLine } from './drift';
+import { isBudgetError } from '../llm/router';
 import { voiceDirective } from './voice-send';
 import { agentStickerPool, maybeAgentSticker } from './sticker-taste';
 import { refreshConvState, convStateDirective } from './conv-state';
 import { worldLinesFor } from './worldbook';
-import {
-  agentEpoch,
-  goalStateAt,
-  goalDirective,
-  latestTerminalEvent,
-  goalShareDirective,
-} from './goals';
+import { goalDirective, goalShareDirective } from './goals';
+import { goalStateFor, latestTerminalEventFor } from './goal-service';
 import {
   detectThreads,
   threadsFromFacts,
@@ -114,8 +119,9 @@ async function markGoalEventTold(contactId: string, eventId: string): Promise<vo
   await repo.putSetting(`goal_told:${contactId}`, next.slice(-50));
 }
 
-/** Threads already followed up on. One question per thread, ever. */
-async function usedThreadIds(contactId: string): Promise<Set<string>> {
+/** Threads already followed up on. One question per thread, ever. Exported for
+ * the group engine (M-J1) — one ledger per contact, whichever room asks. */
+export async function usedThreadIds(contactId: string): Promise<Set<string>> {
   const rows = (await repo.getSetting<string[]>(`threads:${contactId}`)) ?? [];
   return new Set(Array.isArray(rows) ? rows : []);
 }
@@ -178,6 +184,20 @@ function personaRefusalBubbles(persona: PersonaVM): Bubble[] {
 
 /** 收尾的几种说法；具体选哪句由种子决定。 */
 const TRUNCATION_LINES = ['先不说了，这边有点事', '我这边有点事，回头说', '先这样，我一会儿再说'];
+
+/** 预算耗尽的在戏收场（M-J1）：不是拒答也不是断流，是「今天聊够了」。 */
+const TIRED_LINES = [
+  '今天说了好多话，有点累了，晚点再找你聊',
+  '我有点累了，先歇会儿，回头聊',
+  '脑子有点转不动了，晚点再聊哈',
+];
+
+/** Seeded like the truncation lines: the same turn replays to the same words. */
+function personaTiredBubbles(persona: PersonaVM, seed: string): Bubble[] {
+  const pick = TIRED_LINES[Math.floor(seededRng(`tired:${seed}`)() * TIRED_LINES.length)];
+  const head = persona.catchphrases[0] ?? '嗯';
+  return [{ type: 'text', content: `${head}…${pick}` }];
+}
 
 /**
  * 被打断时的收尾话（M-I5）——和 `personaRefusalBubbles` 同源，语气不同。
@@ -301,6 +321,19 @@ export async function sendUserMessage(
   // the difference between a bad evening and someone who has learned that
   // reaching out to you works.
   void noteDrift(peer.id, affectEvent, hooks.now());
+  // Stance writer 2 of 4 (M-J1): you badmouth a mutual friend to her, and her
+  // view of that friend cools a notch. Rides this same bookkeeping moment —
+  // no new LLM call, keyword-judged, fire-and-forget like everything above.
+  void (async () => {
+    const contacts = await repo.getContacts();
+    const hit = detectStanceMention(
+      text,
+      contacts
+        .filter((c) => c.type === 'ai' && c.id !== peer.id)
+        .map((c) => ({ contactId: c.id, name: c.remark ?? c.name })),
+    );
+    if (hit) await recordStance(peer.id, hit.contactId, STANCE_MENTION_DELTA, hooks.now());
+  })().catch(() => {});
 
   // 2) Build context, 3) generate and play.
   await generateAndPlay(convId, peer, persona, globalTier, hooks, ctrl);
@@ -408,8 +441,13 @@ async function generateAndPlayInner(
   // Falls back to the plain mood line when the pulse is small — a prompt that
   // describes a feeling she does not have is worse than saying nothing.
   const { affect } = await affectFor(peer.id, hooks.now());
+  // 双轨消灭 (M-J1): the CONVERSATION now speaks from the same drifted persona
+  // every behavioural read has used since M-H1 — the gift planner warmed up
+  // while the words stayed frozen at the card. One read, applied purely.
+  const drift = await getDrift(peer.id, hooks.now());
+  const livePersona = applyDrift(persona, drift);
   let system = assembleSystemPrompt({
-    persona: toPersonaView(persona, peer.remark ?? peer.name),
+    persona: toPersonaView(livePersona, peer.remark ?? peer.name),
     relations: relationsRec,
     nsfwTier: tier,
     memory: memory.pinned.length || memory.topK.length || memory.world?.length ? memory : undefined,
@@ -427,11 +465,13 @@ async function generateAndPlayInner(
   // The long arc on top of the weekly texture (M-I14): what she is working
   // toward. One line, appended after the lifeline for the same reason the
   // lifeline is appended after the scene — the prefix stays cacheable.
-  const goalLine = goalDirective(
-    goalStateAt(peer.id, hooks.now(), agentEpoch(peer.id)),
-    hooks.now(),
-  );
+  // Read through goal-service (M-J1): per-persona templates + user edits.
+  const goalLine = goalDirective(await goalStateFor(peer.id, hooks.now()), hooks.now());
   if (goalLine) system += `\n\n${goalLine}`;
+  // Relationship temperature (M-J1): the drift the prompt now embodies gets
+  // ONE explicable line — direction, never mechanism.
+  const toneLine = driftToneLine(drift);
+  if (toneLine) system += `\n\n${toneLine}`;
   // What this conversation is still in the middle of (M-E6). Channel 1: this
   // refresh runs on EVERY turn, so an unanswered question is actionable during
   // the same conversation rather than minutes after you have left it.
@@ -493,7 +533,7 @@ async function generateAndPlayInner(
   // it as available but cannot say WHEN a person would use one, because that
   // depends on the hour, her mood and what was just said.
   const voiceLine = voiceDirective(
-    persona,
+    livePersona,
     {
       now: hooks.now(),
       mood: mood.key,
@@ -548,6 +588,8 @@ async function generateAndPlayInner(
   // M-I5 a turn can fail HALFWAY, and appending the persona's "信号不太好" on
   // top of three bubbles she already sent reads as her having a stroke.
   let played = 0;
+  /** Her own words this turn, for the stance bookkeeping after playback. */
+  const spoken: string[] = [];
   try {
     const router = await getRouter();
     // What she can actually SEE this turn. Rides the same message list, the
@@ -616,6 +658,7 @@ async function generateAndPlayInner(
       await sleep(delay, ctrl.signal);
       if (ctrl.signal.aborted) return;
       played++;
+      if (b.type === 'text' || b.type === 'voice') spoken.push(b.content);
 
       if (b.type === 'recall') {
         // Send-then-recall for a human touch: post it, then queue the flip.
@@ -724,13 +767,36 @@ async function generateAndPlayInner(
     if (played > 0 && memory.ids.length > 0) {
       void touchFacts(peer.id, memory.ids, hooks.now()).catch(() => {});
     }
-  } catch {
+    // Stance writer 2 (M-J1), her side of it: SHE badmouths a mutual friend in
+    // her own reply, and her view of them cools — same lexicon, same ledger,
+    // fire-and-forget garnish like every other piece of bookkeeping here.
+    if (spoken.length > 0) {
+      const hit = detectStanceMention(
+        spoken.join(' '),
+        contacts
+          .filter((c) => c.type === 'ai' && c.id !== peer.id)
+          .map((c) => ({ contactId: c.id, name: c.remark ?? c.name })),
+      );
+      if (hit) void recordStance(peer.id, hit.contactId, STANCE_MENTION_DELTA, hooks.now()).catch(() => {});
+    }
+  } catch (e) {
     // Router threw past its own ladder — emit the persona refusal so the thread
     // never breaks. Only when NOTHING was shown: a turn that already put lines
     // on screen was closed by the router's own cut-off line, and a second
     // apology under it is one bubble too many.
+    //
+    // 预算耗尽 (M-J1) is its own voice: it is not an outage, and 「信号不太好」
+    // would misreport it. A REPLY closes in character with a tired line; a
+    // proactive turn that trips mid-flight simply stays silent — nobody was
+    // waiting for it, and a message that exists only to say "I'm tired" is
+    // spending attention to explain why we stopped spending money.
     if (!ctrl.signal.aborted && played === 0) {
-      for (const b of personaRefusalBubbles(persona)) {
+      const bubbles = isBudgetError(e)
+        ? mode === 'reply'
+          ? personaTiredBubbles(persona, `${convId}:${recent.at(-1)?.id ?? 0}`)
+          : []
+        : personaRefusalBubbles(persona);
+      for (const b of bubbles) {
         await hooks.appendMessage({
           convId,
           senderId: peer.id,
@@ -823,16 +889,22 @@ export async function sendProactiveMessage(
   const ctrl = new AbortController();
   inFlight.set(convId, ctrl);
 
-  // Backfilled messages carry their planned past timestamp; live ones use now().
-  const stamped: EngineHooks = at == null ? hooks : { ...hooks, now: () => at };
-
   let gap: string;
   let material = '';
+  // Backfilled messages carry their planned past timestamp; live ones use now().
+  let stampAt = at;
   // Every storage read below runs while we hold the slot. A throw here used to
   // escape without releasing it — one transient IDB error and this AI never
   // reached out again.
   try {
     const lastMsg = (await repo.getMessages(convId, { limit: 1 }))[0];
+    // 时间戳不得倒挂 (constitution §3.5): a queued past stamp can fire AFTER
+    // newer live rows — e.g. the budget gate (M-J1) deferring a backfilled
+    // heartbeat an hour while the user chats. Clamp forward, never insert
+    // behind the conversation's newest message (rowid order == time order).
+    if (stampAt != null && lastMsg && stampAt <= lastMsg.createdAt) {
+      stampAt = Math.min(hooks.now(), lastMsg.createdAt + 1000);
+    }
     const silentMs = lastMsg ? (at ?? hooks.now()) - lastMsg.createdAt : 0;
     gap = describeGap(silentMs);
 
@@ -847,8 +919,9 @@ export async function sendProactiveMessage(
       // A goal that just ended (M-I14) outranks everything: "我考过了！" is the
       // single strongest reason a friend reaches out first. Once-ever, and the
       // ledger is written BEFORE generation so a failed attempt cannot make
-      // her announce the same ending twice.
-      const goalEvent = latestTerminalEvent(peer.id, at ?? hooks.now(), agentEpoch(peer.id));
+      // her announce the same ending twice. Override-aware (M-J1): a goal the
+      // user abandoned by hand is never announced as a seeded ending.
+      const goalEvent = await latestTerminalEventFor(peer.id, at ?? hooks.now());
       if (goalEvent && !(await goalEventTold(peer.id, goalEvent.id))) {
         await markGoalEventTold(peer.id, goalEvent.id);
         material = goalShareDirective(goalEvent);
@@ -897,6 +970,8 @@ export async function sendProactiveMessage(
     return;
   }
 
+  const fixedAt = stampAt;
+  const stamped: EngineHooks = fixedAt == null ? hooks : { ...hooks, now: () => fixedAt };
   await generateAndPlay(
     convId,
     peer,

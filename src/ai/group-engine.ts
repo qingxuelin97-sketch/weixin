@@ -19,9 +19,33 @@ import { refreshConvState, convStateDirective } from './conv-state';
 import { collectTurnImages } from './vision-context';
 import { logError } from '../lib/errlog';
 import { selectFactsForInjection, withConvSummary } from './memory';
-import { effectiveTier, voiceMeta, preferredRoute, cardResolver, type EngineHooks } from './engine';
+import {
+  effectiveTier,
+  voiceMeta,
+  preferredRoute,
+  cardResolver,
+  toPersonaView,
+  peersOf,
+  usedThreadIds,
+  type EngineHooks,
+} from './engine';
 import { materializeBubble } from './bubble-materialize';
 import { gameDirective } from './game-react';
+import { getDrift, applyDrift, driftToneLine } from './drift';
+import { goalDirective } from './goals';
+import { goalStateFor } from './goal-service';
+import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
+import { arcAwareness } from './rel-arcs';
+import { voiceDirective } from './voice-send';
+import { isTtsAvailable } from '../llm/tts';
+import { resolvePhotoBubble, photoDirective } from './photo-send';
+import {
+  detectThreads,
+  threadsFromFacts,
+  pickThread,
+  shouldSurfaceThread,
+  threadAwareness,
+} from './threads';
 import { getRouter } from '../llm/service';
 import { prefilter, callDirector, type GroupMember, type SpeakerPlan } from './director';
 import {
@@ -277,11 +301,26 @@ export async function sendGroupMessage(
           playMessageSound(hooks.now());
           continue;
         }
+        // A photo bubble resolves against the shared pool exactly as in the
+        // single chat (M-J1) — the prompt now offers photos to group actors,
+        // and an offer the playback cannot honour would render as a bug.
+        const photo =
+          b.type === 'image'
+            ? resolvePhotoBubble(b, persona, convId, `${convId}:${member.contactId}:${at}:${bi}`)
+            : null;
         await hooks.appendMessage({
           convId,
           senderId: member.contactId,
-          type: b.type === 'sticker' ? 'sticker' : b.type === 'voice' ? 'voice' : 'text',
-          content: b.content,
+          type:
+            b.type === 'sticker'
+              ? 'sticker'
+              : b.type === 'voice'
+                ? 'voice'
+                : photo
+                  ? 'image'
+                  : 'text',
+          content: photo ? photo.ref : b.content,
+          ...(photo ? { meta: { caption: photo.caption } } : {}),
           ...(b.type === 'voice'
             ? { meta: await voiceMeta(b.content, persona, effectiveTier(globalTier, persona.nsfwPermit), b.emotion) }
             : {}),
@@ -369,7 +408,11 @@ async function startActorLines(
   /** This room's knob-derived tone/topics line (M-I1), computed once per round. */
   cfgLine = '',
 ): Promise<BubbleFeed> {
-  const persona = member.persona as PersonaVM;
+  const rawPersona = member.persona as PersonaVM;
+  // 双轨消灭 (M-J1): the group actor speaks from the same drifted persona her
+  // behavioural reads (heartbeat pacing, gifts, moments) have used since M-H1.
+  const drift = await getDrift(member.contactId, now);
+  const persona = applyDrift(rawPersona, drift);
   const tier = effectiveTier(globalTier, persona.nsfwPermit);
   const facts = await repo.getMemory(member.contactId);
   // The GROUP's own memory, keyed by convId (M-E4): shared history every member
@@ -411,14 +454,11 @@ async function startActorLines(
   });
 
   let system = assembleSystemPrompt({
-    persona: {
-      name: member.name,
-      core: persona.core,
-      speechStyle: persona.speechStyle,
-      fewShots: persona.fewShots,
-      catchphrases: persona.catchphrases,
-      nsfwStyleSamples: persona.nsfwStyleSamples,
-    },
+    // Through toPersonaView (M-J1) — the same funnel the single chat and the
+    // Moments generators use. The hand-rolled inline view this replaces had
+    // silently dropped `stickerRate`, so the "群聊继承表情使用率" the M-I18
+    // comment promised was a broken wire: 高冷 in your DM, 斗图狂魔 in the room.
+    persona: toPersonaView(persona, member.name),
     // In a group, knowing who the others ARE to you is what turns turn-taking
     // into banter — 互称、拆台、护短 all come from here.
     relations: relationsForPrompt(persona.relations, (id) => {
@@ -444,7 +484,30 @@ async function startActorLines(
   // fixed (constitution §2) and the prefix has to stay cacheable.
   const arcLine = lifelineDirective(lifelineAt(persona, now, personaEpoch(member.contactId)));
   if (arcLine) system += `\n\n${arcLine}`;
+  // 群演员补脑 (M-J1): the six layers the single chat has carried since M-H/I
+  // and the group actor never got — goal, drift temperature, loose threads,
+  // occasions, social arcs, voice & photo urges. Same sources, same order
+  // convention (appended after scene, mirroring engine.ts), so the same
+  // character stops splitting into a DM self and a poorer group self.
+  const goalLine = goalDirective(await goalStateFor(member.contactId, now), now);
+  if (goalLine) system += `\n\n${goalLine}`;
+  const toneLine = driftToneLine(drift);
+  if (toneLine) system += `\n\n${toneLine}`;
   if (convStateLine) system += `\n\n${convStateLine}`;
+  // A loose thread she still remembers — same once-ever ledger as the 1:1
+  // (`threads:<contactId>`), surfaced as background, never marked used here.
+  if (shouldSurfaceThread(recent, now)) {
+    const openThread = pickThread(
+      [...detectThreads(recent, conv.id), ...threadsFromFacts(facts, member.contactId)],
+      recent,
+      now,
+      {
+        used: await usedThreadIds(member.contactId),
+        seed: `${conv.id}:${member.contactId}:${recent.at(-1)?.id ?? 0}`,
+      },
+    );
+    if (openThread) system += `\n\n${threadAwareness(openThread, now)}`;
+  }
 
   // The director's staging note rides at the end, where recency weighs most.
   const direction = [
@@ -464,12 +527,38 @@ async function startActorLines(
   // The room's own tone (火药味/常聊话题, M-I1) — appended after the scene
   // layer like every other room-level directive, never inserted into it.
   if (cfgLine) system += `\n\n${cfgLine}`;
+  // Only advertised when a pool exists (M-J1) — same rule as the single chat;
+  // the playback below resolves image bubbles against the same pool.
+  const photoLine = photoDirective(persona);
+  if (photoLine) system += `\n\n${photoLine}`;
+  // What day it is — her memory of the members' dates rides her own facts.
+  const occasionLine = occasionDirective(
+    occasionsFor({ now, facts, firstMsgAt: await firstSpokeAt(conv.id) }),
+  );
+  if (occasionLine) system += `\n\n${occasionLine}`;
+  // Where she stands with the people SHE knows — the falling-out that colours
+  // how she picks someone up in the room today.
+  const arcAware = await arcAwareness(member.contactId, await peersOf(persona), now);
+  if (arcAware) system += `\n\n${arcAware}`;
   // Her own habits in THIS room (M-H1). Group turns are short, which makes
   // repetition far more visible than in a DM: three "哈哈哈" from the same
   // member inside one screen is the loudest tell a group chat has.
   const ownRecent = ownLines(recent, member.contactId);
   const habit = styleNote(ownRecent, persona.catchphrases);
   if (habit) system += `\n\n${habit}`;
+  // Reaching for the mic in the room too (M-J1) — same urges as the 1:1.
+  const voiceLine = voiceDirective(
+    persona,
+    {
+      now,
+      mood: moodOf(member.contactId, now).key,
+      lastUserText: [...recent].reverse().find((m) => m.senderId === 'self' && m.type === 'text')
+        ?.content,
+      seed: `${conv.id}:${member.contactId}:${recent.at(-1)?.id ?? 0}`,
+    },
+    await isTtsAvailable().catch(() => false),
+  );
+  if (voiceLine) system += `\n\n${voiceLine}`;
   // A live game at the tail (M-I13): same etiquette line as the single chat —
   // in a group the thrower may be the user OR another member.
   const gameLine = gameDirective(recent, member.contactId);
@@ -645,8 +734,13 @@ export async function sendGroupProactiveMessage(
   const ctrl = new AbortController();
   inFlight.set(conv.id, ctrl);
   try {
-    const stamp = at ?? hooks.now();
     const recent = await repo.getMessages(conv.id, { limit: RECENT_WINDOW });
+    // 时间戳不得倒挂: a queued past stamp firing after newer live rows (e.g. a
+    // budget-deferred backfill line, M-J1) clamps forward instead of breaking
+    // rowid order — same rule as the single-chat proactive path.
+    const lastAt = recent.at(-1)?.createdAt ?? 0;
+    const raw = at ?? hooks.now();
+    const stamp = raw <= lastAt ? Math.min(hooks.now(), lastAt + 1000) : raw;
     const nameOf = (id: string) =>
       id === 'self'
         ? (contactById('self')?.name ?? '我')

@@ -17,6 +17,8 @@ import { totalUnread } from '../../src/lib/unread';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { makePersona } from '../../src/data/persona-defaults';
+import { moodOf } from '../../src/lib/mood';
+import { lifelineAt, lifelineDirective, personaEpoch } from '../../src/ai/lifeline';
 import type {
   ContactVM,
   ConversationVM,
@@ -202,6 +204,7 @@ describe('DM prompt', () => {
         { name: 'Ada', persona: b },
       ],
       '最近的展',
+      NOON,
     )[0].content;
     expect(sys).toContain('全年龄向');
     expect(sys).toContain('插画师');
@@ -210,6 +213,30 @@ describe('DM prompt', () => {
     expect(sys).toContain('最近的展');
     // nsfwPermit on a participant must have no effect here.
     expect(sys).not.toContain('nsfw');
+  });
+
+  it('换脑 (M-J1)：主讲人走完整装配线，带基底/心情/生活线/目标层', () => {
+    const a = makePersona({ contactId: 'ai_lin', core: '插画师', relations: { user: '老朋友' } });
+    const b = makePersona({ contactId: 'ai_ada', core: '程序员' });
+    const sys = buildDmPrompt(
+      [
+        { name: '小雨', persona: a },
+        { name: 'Ada', persona: b },
+      ],
+      '最近的展',
+      NOON,
+    )[0].content;
+    // The same base-realism header the chat engines use — the DM is no longer
+    // a three-line side-brain.
+    expect(sys).toContain('扮演一个真实的人');
+    expect(sys).toContain('# 你的人设');
+    // Mood rides the scene layer; the lifeline directive is always non-empty.
+    expect(sys).toContain(moodOf('ai_lin', NOON).line);
+    expect(sys).toContain(lifelineDirective(lifelineAt({ contactId: 'ai_lin' }, NOON, personaEpoch('ai_lin'))));
+    // The user relation enters the relations layer.
+    expect(sys).toContain('老朋友');
+    // And the writing-room framing survives.
+    expect(sys).toContain('编剧视角');
   });
 });
 

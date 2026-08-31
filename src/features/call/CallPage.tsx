@@ -25,13 +25,7 @@ import { logError } from '../../lib/errlog';
 import { cancelNotify } from '../../native/bridge';
 import { callNotifId } from '../../native/background-notify';
 import { repo } from '../../db/repo';
-import {
-  CallSession,
-  summarizeCall,
-  extractCallPromises,
-  recordCallOutcome,
-  type CallTurn,
-} from '../../ai/call-script';
+import { CallSession, type CallTurn } from '../../ai/call-script';
 import { isAsrReady, transcribe, friendlyAsrError, AsrError } from '../../llm/asr';
 import {
   isRecordingSupported,
@@ -220,27 +214,25 @@ export function CallPage() {
   const hangUp = async () => {
     if (finished.current) return;
     finished.current = true;
-    // Freeze the transcript before tearing the session down — the summary runs
-    // after we have already navigated away.
+    // The session owns its own 纪要 since M-J1: `end()` triggers the idempotent
+    // finalize (summary → conv-state promises → memory → rolling summary), so
+    // the unmount path and this button write the SAME record exactly once.
     const sess = sessionRef.current;
     sessionRef.current = null;
-    const turns = sess ? [...sess.turns] : [];
-    const tier = sess?.tier ?? 'off';
+    const hadTurns = (sess?.turns.length ?? 0) > 0;
     sess?.end();
     setPhase('ended');
     const durationMs = connectedAt.current ? Date.now() - connectedAt.current : undefined;
     const saved = await recordCall(durationMs, incoming ? '未接听' : '已取消');
     setTimeout(() => navigate(-1), 400);
 
-    // 通话纪要 (M-I16): one LLM call, rule-based fallback inside summarizeCall.
-    // Fire-and-forget — the user is off this screen; a failed summary loses a
-    // nicety, never the call record.
-    if (saved && durationMs != null && turns.length > 0) {
-      const peerName = peer?.remark ?? peer?.name ?? '对方';
+    // Stamp the summary onto the call record's meta once the (shared) finalize
+    // resolves. Fire-and-forget — the user is off this screen; a failed summary
+    // loses a nicety, never the call record.
+    if (saved && durationMs != null && hadTurns && sess) {
       void (async () => {
         try {
-          const summary = await summarizeCall({ convId, peerName, tier, turns, durationMs });
-          await recordCallOutcome(convId, summary, extractCallPromises(turns), Date.now());
+          const summary = await sess.finalize();
           if (summary) await updateMessage({ ...saved, meta: { ...saved.meta, summary } });
         } catch (e) {
           logError('call.finalize', e);

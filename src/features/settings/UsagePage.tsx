@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
 import { getUsage, clearUsage, KIND_LABELS, type DayUsage, type UsageKind } from '../../lib/usage';
+import { budgetStatus } from '../../ai/cost-gate';
 import { useAppStore } from '../../store/appStore';
 import './settings.css';
 
@@ -29,11 +30,15 @@ function kindRows(u: DayUsage): Array<{ label: string; n: number }> {
 export function UsagePage() {
   const showToast = useAppStore((s) => s.showToast);
   const [usage, setUsage] = useState<{ today: DayUsage; history: DayUsage[] } | null>(null);
+  const [budget, setBudget] = useState<Awaited<ReturnType<typeof budgetStatus>> | null>(null);
   const [open, setOpen] = useState<number | null>(null);
 
   const refresh = () => {
     void getUsage(Date.now())
       .then(setUsage)
+      .catch(() => {});
+    void budgetStatus(Date.now())
+      .then(setBudget)
       .catch(() => {});
   };
   useEffect(refresh, []);
@@ -46,6 +51,27 @@ export function UsagePage() {
     <>
       <SubNav title="用量明细" />
       <div className="page-body settings">
+        {/* 成本闸 (M-J1)：今日消耗对着预算看，超了它会替你踩刹车。 */}
+        {budget && (
+          <div className="settings__group">
+            <div className="settings__group-title">预算</div>
+            <div className="settings__row settings__row--divided">
+              <span className="settings__label">今日</span>
+              <span className="settings__value">
+                {budget.dayUsed} / {budget.dayBudget} 次
+              </span>
+            </div>
+            <div className="settings__row settings__row--divided">
+              <span className="settings__label">本小时</span>
+              <span className="settings__value">
+                {budget.hourUsed} / {budget.hourBudget} 次
+              </span>
+            </div>
+            <p className="settings__hint">
+              超出预算后：聊天里她会说累了晚点聊；后台动作原地等到下一个时段再跑，不会丢。
+            </p>
+          </div>
+        )}
         <div className="settings__group">
           <div className="settings__group-title">
             最近 {history.length || 0} 天 · 共 {total} 次调用

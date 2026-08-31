@@ -260,6 +260,16 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
     row: 'cascade',
     why: 'I-H1 防刷屏冷却；残留会让复用 id 的新人一出生就在 24h 静默里',
   },
+  'goalTpl:': {
+    scope: 'contact',
+    row: 'cascade',
+    why: 'J1 按人设生成的目标模板；残留会让复用 id 的新人继承前任的人生',
+  },
+  'goalOvr:': {
+    scope: 'contact',
+    row: 'cascade',
+    why: 'J1 用户对目标的改名/放弃覆盖，随人消亡',
+  },
 
   /* ---- per conversation (deleted when that conversation dies with the contact) ---- */
   'convstate:': { scope: 'conv', row: 'cascade', why: '会话话题/未答问题/承诺，随会话消亡' },
@@ -306,6 +316,8 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
   asrConfig: { scope: 'global', row: 'exempt', why: 'App 级 ASR 配置' },
   stickerSent: { scope: 'global', row: 'exempt', why: '本人发过的表情台账（主语是我，不是联系人）' },
   'usage:daily': { scope: 'global', row: 'exempt', why: '按天聚合的用量，键是日期不是 id' },
+  llmBudget: { scope: 'global', row: 'exempt', why: 'J1 成本闸的小时/日预算配置' },
+  llmSpend: { scope: 'global', row: 'exempt', why: 'J1 成本闸的滚动计数器（小时/日桶）' },
   lastSelftest: { scope: 'global', row: 'exempt', why: '自检结果' },
   lastForegroundAt: { scope: 'global', row: 'exempt', why: '回填屏障时间戳' },
   lastBackupAt: { scope: 'global', row: 'exempt', why: '备份时间戳' },

@@ -63,3 +63,22 @@ HEAD 那侧（M-H1 的事件驱动版），整块联动随之消失——`grep g
 - 未到达的里程碑文案是剧透，状态页只显示已达成文案，未来的显示为锁定点。
 - 「放弃」结局在进行中不可见（progress 用计划总时长做分母），避免"提前知道会放弃"。
 - goals/drift 不 import repo——讲没讲过的记账放在 engine（有 storage 的层）。
+
+## M-J1 · goals 活化（按人设生成 + 用户之手）
+
+- **模板按人设生成**：`goal-service.ensureGoalTemplates` 复用 generate-chain 一次调用
+  产 4~6 个模板（domain/title/milestones/setbacks/typicalDays/abandonRate），
+  `sanitizeGoalTemplates` 值域校验（天数 20~180、放弃率 ≤0.6、里程碑 3~5 条……），
+  不合格整组拒收。存 `goalTpl:<contactId>`（台账 contact/cascade）。触发点是
+  StatusPage 打开（用户注视她生活的时刻），一辈子一次；生成失败退回内建六模板——
+  **不许空目标**。
+- **纯函数推进保留**：`goalStateAt/goalEventsBetween/latestTerminalEvent` 全部加
+  `templates` 参数（默认内建），epoch/种子/回放性质原封不动。drift 的目标联动
+  经 `getDrift` 读同一份模板，三面永不打架。
+- **编辑入口**（StatusPage）：改标题 / 放弃，存 `goalOvr:<contactId>`
+  （台账 contact/cascade），由纯函数 `applyGoalOverrides` 应用——改名进 prompt 与
+  状态页；放弃把当前 cycle 翻成 abandoned、遮住未来里程碑，且
+  `latestTerminalEventFor` 对该 cycle 闭嘴（用户亲手放下的事，她不会再当种子结局
+  播报）。
+- 所有读取面（engine 目标层、主动分享、moments 素材、drift、StatusPage）统一走
+  goal-service——一个角色一套人生。转红：`j1-mind.test.ts` goals 活化块。

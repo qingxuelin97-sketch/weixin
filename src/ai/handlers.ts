@@ -383,11 +383,19 @@ export async function handleMemExtract(
 ): Promise<void> {
   const convId = str(payload.convId);
   const contactId = str(payload.contactId);
-  const uptoMsgId = Number(payload.uptoMsgId ?? 0);
-  if (!convId || !contactId || !uptoMsgId) return;
+  let uptoMsgId = Number(payload.uptoMsgId ?? 0);
+  if (!convId || !contactId) return;
   // A deleted conversation has nothing to remember, and extracting from a
   // half-deleted one would write facts citing messages that no longer exist.
   if (!d.conversationExists(convId)) return;
+  // Backfilled rows (M-J1) carry no frontier — the messages they cover did not
+  // exist at planning time. The frontier is whatever the conversation holds
+  // when the row fires; the drain runs in time order, so the fabricated
+  // chatter has already landed by the time the window-tail extraction does.
+  if (!uptoMsgId) {
+    uptoMsgId = (await d.getMessages(convId, { limit: 1 })).at(-1)?.id ?? 0;
+  }
+  if (!uptoMsgId) return;
   await d.runMemExtract({ convId, contactId, uptoMsgId });
 
   // Channel 2 of the conversation state (M-G0). `specs/agents.md` specified a
@@ -414,14 +422,18 @@ export function dmPlanFrom(payload: Record<string, unknown>, fallbackNow: number
   // names the same person twice, or one the plan already has, collapses back to
   // a pair — `participantsOf` dedupes and caps at MAX_DM_PARTICIPANTS.
   const third = str(payload.c);
+  // `groupId` went optional in M-J1 (无群兜底): a session between friends who
+  // share no room has nothing to quote and nowhere to spill, but it is a
+  // legal session — the pair alone is the identity now.
+  const groupId = str(payload.groupId);
   const plan: DmPlan = {
     a: str(payload.a),
     b: str(payload.b),
     ...(third ? { c: third } : {}),
-    groupId: str(payload.groupId),
+    ...(groupId ? { groupId } : {}),
     fireAt: optNum(payload.fireAt) ?? fallbackNow,
   };
-  return plan.a && plan.b && plan.groupId ? plan : null;
+  return plan.a && plan.b ? plan : null;
 }
 
 /** Chain the next DM session. Runs first: one failed exchange must not end the mechanism. */
@@ -458,8 +470,9 @@ export async function handleAgentDm(
     // A forward quotes the user's own words into the group — allowed ONLY
     // from a user-visible thread. The hidden DM that triggered this handler
     // is never a quotable source; `maybeForward` re-checks that too.
-    const src = d.visibleConvWithUser(plan.a);
-    if (src) {
+    // No shared group (M-J1 兜底 session) = nowhere to forward INTO.
+    const src = plan.groupId ? d.visibleConvWithUser(plan.a) : undefined;
+    if (src && plan.groupId) {
       const lastUser = [...d.messagesFor(src.id)]
         .reverse()
         .find((m) => m.senderId === 'self' && m.type === 'text' && m.content && !m.isRecalled);
