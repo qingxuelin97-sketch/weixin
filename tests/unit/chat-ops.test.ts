@@ -74,10 +74,17 @@ describe('W2 · sending a photo asks for a reply', () => {
     const body = fn.slice(0, fn.indexOf('\n  };'));
     // It used to end at `appendMessage`, so **she never answered a picture** —
     // and every richer plan for images was downstream of a reply nobody asked
-    // for.
+    // for. M-J7a 把「请求回复」抽成了共享尾巴 requestReplyToLatest（语音消息
+    // 复用同一条），所以这里认帮手调用，另断言帮手本身真的通到引擎。
     expect(
-      body.includes('replyToLatest'),
+      body.includes('requestReplyToLatest'),
       'sendImages 必须在落库后请求一次回复，否则发图永远等不到回应',
+    ).toBe(true);
+    const helper = page.slice(page.indexOf('const requestReplyToLatest ='));
+    const helperBody = helper.slice(0, helper.indexOf('\n  };'));
+    expect(
+      helperBody.includes('replyToLatest') && helperBody.includes('replyToLatestInGroup'),
+      'requestReplyToLatest 必须真的通到单聊/群聊引擎，否则抽出来的是个空壳',
     ).toBe(true);
   });
 

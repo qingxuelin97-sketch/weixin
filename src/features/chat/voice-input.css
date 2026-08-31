@@ -128,6 +128,7 @@
   align-items: center;
   gap: 8px;
   padding-bottom: 26px;
+  position: relative;
 }
 .vrec__cancel-blob {
   width: 56px;
@@ -150,6 +151,35 @@
 .vrec__cancel-hint {
   font-size: var(--fs-small-gray);
   color: var(--color-voice-text);
+}
+/* 语音消息模式 (M-J7a)：两个圆盘——× 在左、文 在右，与真微信 8.0.x 一致。
+   有 文 盘时 × 盘让位到左侧对称位。 */
+.vrec__totext-blob {
+  position: absolute;
+  right: 15vw;
+  top: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-on-color-fill);
+  color: var(--color-voice-text);
+  font-size: 22px;
+  line-height: 56px;
+  text-align: center;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.vrec__totext-blob--armed {
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  transform: scale(1.15);
+}
+.vrec__cancelzone:has(.vrec__totext-blob) .vrec__cancel-blob {
+  position: absolute;
+  left: 15vw;
+  top: 0;
+}
+.vrec__cancelzone:has(.vrec__totext-blob) .vrec__cancel-hint {
+  margin-top: 64px; /* clear the absolutely-positioned blobs */
 }
 
 /* ---- Bottom half-moon "release" zone ---- */

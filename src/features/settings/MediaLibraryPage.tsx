@@ -19,7 +19,8 @@ import { useAppStore } from '../../store/appStore';
 import type { MediaItemVM } from '../../data/types';
 import './settings.css';
 
-type Kind = MediaItemVM['kind'];
+// 素材库只管"能看的"：'voice' 剪辑（M-J7a）是聊天工件不是复用素材，不进这页。
+type Kind = Exclude<MediaItemVM['kind'], 'voice'>;
 
 const KIND_LABEL: Record<Kind, string> = {
   avatar: '头像',

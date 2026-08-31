@@ -1,11 +1,14 @@
 /**
- * 按住说话 — WeChat hold-to-talk voice input (M-I9).
+ * 按住说话 — WeChat hold-to-talk (M-I9 语音输入 → M-J7a 语音消息).
  *
  * The mic button inside the composer pill. Press and hold → full-screen
- * recording overlay (dark scrim, green waveform bubble, slide-up-to-cancel);
- * release → transcribe via the configured ASR provider → the text lands in
- * the INPUT BOX for editing, it is never auto-sent (WeChat's 转文字 behavior,
- * and the safer default for a model-written message).
+ * recording overlay (dark scrim, green waveform bubble). Release resolves by
+ * ZONE, exactly like WeChat 8.0.x:
+ *   - plain release        → **send the clip as a voice message** (onClip);
+ *   - drag up-left onto ×  → cancel;
+ *   - drag up-right onto 文 → transcribe → text lands in the INPUT BOX for
+ *     editing, never auto-sent (I9's behavior, now the secondary zone).
+ * Without an `onClip` handler the old I9 contract holds: release = transcribe.
  *
  * Hard constraints honored here:
  *   - the waveform is pure CSS keyframes — no rAF loops (the screenshot gate
@@ -43,6 +46,11 @@ export interface VoiceInputButtonProps {
   /** Receives the recognized text; the caller appends it to the draft. */
   onText: (text: string) => void;
   /**
+   * 语音消息 (M-J7a): receives the raw clip on a plain release. When present,
+   * recording no longer requires ASR to be configured — only the 文 zone does.
+   */
+  onClip?: (blob: Blob, durationMs: number) => void;
+  /**
    * NSFW tier of THIS conversation (M-I18). Forwarded to `transcribe`, which
    * refuses to upload full-tier speech to an endpoint the user has not marked
    * permissive — 铁律 6 applies to what goes out of the microphone too.
@@ -50,10 +58,11 @@ export interface VoiceInputButtonProps {
   tier?: 'off' | 'ambiguous' | 'full';
 }
 
-export function VoiceInputButton({ onText, tier }: VoiceInputButtonProps) {
+export function VoiceInputButton({ onText, onClip, tier }: VoiceInputButtonProps) {
   const showToast = useAppStore((s) => s.showToast);
   const [phase, setPhase] = useState<Phase>('idle');
   const [cancelArmed, setCancelArmed] = useState(false);
+  const [toTextArmed, setToTextArmed] = useState(false);
   const [elapsedS, setElapsedS] = useState(0);
 
   /** Mutable per-press state; a ref so pointer handlers never see stale closures. */
@@ -79,6 +88,7 @@ export function VoiceInputButton({ onText, tier }: VoiceInputButtonProps) {
     if (p?.ticker) clearInterval(p.ticker);
     press.current = null;
     setCancelArmed(false);
+    setToTextArmed(false);
     setElapsedS(0);
     setPhaseBoth('idle');
   };
@@ -128,26 +138,30 @@ export function VoiceInputButton({ onText, tier }: VoiceInputButtonProps) {
     setPhaseBoth('starting');
 
     void (async () => {
-      // Check config BEFORE claiming the mic: recording 30s only to learn it
-      // can't be transcribed is the worst possible order of operations.
-      let ready = false;
-      try {
-        ready = await isAsrReady();
-      } catch {
-        ready = false;
-      }
-      if (press.current !== p || p.released || p.cancelled) return;
-      if (!ready) {
-        showToast('先在 设置 → 语音输入 里配置识别服务');
-        cleanupPress();
-        return;
+      // 语音消息模式 (M-J7a) records regardless — the clip IS the deliverable,
+      // ASR only matters if the finger lands on 文. Text-only mode (no onClip)
+      // keeps I9's order: check config BEFORE claiming the mic — recording 30s
+      // only to learn it can't be transcribed is the worst possible order.
+      if (!onClip) {
+        let ready = false;
+        try {
+          ready = await isAsrReady();
+        } catch {
+          ready = false;
+        }
+        if (press.current !== p || p.released || p.cancelled) return;
+        if (!ready) {
+          showToast('先在 设置 → 语音输入 里配置识别服务');
+          cleanupPress();
+          return;
+        }
       }
       try {
         const handle = await startRecording({
           maxMs: MAX_CLIP_MS,
           onAutoStop: () => {
-            // Cap hit while still holding: finish as if the finger lifted.
-            if (press.current === p && !p.released) void finishPress(p);
+            // Cap hit while still holding: finish as a plain release (send).
+            if (press.current === p && !p.released) void finishPress(p, false);
           },
         });
         if (press.current !== p || p.released || p.cancelled) {
@@ -172,17 +186,24 @@ export function VoiceInputButton({ onText, tier }: VoiceInputButtonProps) {
   const onPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
     const p = press.current;
     if (!p || e.pointerId !== p.id || phaseRef.current === 'transcribing') return;
-    setCancelArmed(p.startY - e.clientY > CANCEL_DRAG_PX);
+    // Lifted enough to leave the talk zone → which bottom blob is the finger
+    // over? Left half = × (cancel), right half = 文 (to-text) — WeChat 8.0.x's
+    // two-blob layout. Without onClip there is no 文 blob; any lift cancels
+    // nothing extra — the old slide-up-to-cancel semantics stand.
+    const lifted = p.startY - e.clientY > CANCEL_DRAG_PX;
+    const rightHalf = e.clientX > window.innerWidth / 2;
+    setCancelArmed(lifted && (!onClip || !rightHalf));
+    setToTextArmed(lifted && Boolean(onClip) && rightHalf);
   };
 
-  const finishPress = async (p: NonNullable<typeof press.current>) => {
+  const finishPress = async (p: NonNullable<typeof press.current>, wantText: boolean) => {
     if (p.released) return;
     p.released = true;
 
     if (phaseRef.current === 'starting' || !p.handle) {
       // Lifted before the mic even opened — a tap. Teach the gesture.
       cleanupPress();
-      showToast('按住说话，松开转文字');
+      showToast(onClip ? '按住说话，松开发送' : '按住说话，松开转文字');
       return;
     }
     if (p.ticker) {
@@ -198,12 +219,33 @@ export function VoiceInputButton({ onText, tier }: VoiceInputButtonProps) {
       return;
     }
 
+    // Plain release in clip mode: the recording IS the message. No ASR, no
+    // network — stop, hand over, done.
+    if (onClip && !wantText) {
+      try {
+        const clip = await p.handle.stop();
+        if (!p.cancelled) onClip(clip, heldMs);
+      } catch {
+        if (!p.cancelled) showToast('录音失败，再试一次？');
+      } finally {
+        if (press.current === p) cleanupPress();
+      }
+      return;
+    }
+
     setPhaseBoth('transcribing');
     const abort = new AbortController();
     p.abort = abort;
     try {
       const clip = await p.handle.stop();
       if (p.cancelled) return;
+      // 文 zone without ASR configured: the words were meant to be SENT — a
+      // hard failure here throws them away, so degrade to the voice message.
+      if (onClip && !(await isAsrReady().catch(() => false))) {
+        showToast('未配置识别服务，已作为语音发送');
+        onClip(clip, heldMs);
+        return;
+      }
       const text = await transcribe(clip, { signal: abort.signal, tier });
       if (p.cancelled) return;
       if (text) onText(text);
@@ -221,12 +263,14 @@ export function VoiceInputButton({ onText, tier }: VoiceInputButtonProps) {
     const p = press.current;
     if (!p || e.pointerId !== p.id || phaseRef.current === 'transcribing') return;
     // Re-derive from the event too: a fast flick can deliver its last move and
-    // the up in one React batch, where `cancelArmed` state is one frame stale.
-    if (cancelArmed || p.startY - e.clientY > CANCEL_DRAG_PX) {
+    // the up in one React batch, where armed state is one frame stale.
+    const lifted = p.startY - e.clientY > CANCEL_DRAG_PX;
+    const rightHalf = e.clientX > window.innerWidth / 2;
+    if (lifted && (!onClip || !rightHalf)) {
       cancelAll();
       return;
     }
-    void finishPress(p);
+    void finishPress(p, lifted && Boolean(onClip) && rightHalf);
   };
 
   const onPointerCancel = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -272,10 +316,31 @@ export function VoiceInputButton({ onText, tier }: VoiceInputButtonProps) {
                 <span className="vrec__cancel-blob" aria-hidden>
                   ×
                 </span>
-                <span className="vrec__cancel-hint">{cancelArmed ? '松开手指，取消发送' : '上滑取消'}</span>
+                {onClip && (
+                  <span className={`vrec__totext-blob${toTextArmed ? ' vrec__totext-blob--armed' : ''}`} aria-hidden>
+                    文
+                  </span>
+                )}
+                <span className="vrec__cancel-hint">
+                  {cancelArmed
+                    ? '松开手指，取消发送'
+                    : toTextArmed
+                      ? '松开 转文字'
+                      : onClip
+                        ? '左滑取消，右滑转文字'
+                        : '上滑取消'}
+                </span>
               </div>
               <div className="vrec__talkzone">
-                <span className="vrec__talk-label">{cancelArmed ? '松开 取消' : '松开 转文字'}</span>
+                <span className="vrec__talk-label">
+                  {cancelArmed
+                    ? '松开 取消'
+                    : toTextArmed
+                      ? '松开 转文字'
+                      : onClip
+                        ? '松开 发送'
+                        : '松开 转文字'}
+                </span>
               </div>
             </>
           ) : (

@@ -245,6 +245,9 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
   // therefore several hundred megabytes held for the life of the process,
   // behind a white screen while it was built.
   for (const item of await repo.getMedia()) {
+    // 'voice' rows (M-J7a) are audio — they never need an object URL in the
+    // image registry; playback resolves the blob on demand (playVoiceRef).
+    if (item.kind === 'voice') continue;
     registerMediaMeta(item.id, { kind: item.kind, tags: item.tags });
     if (item.kind === 'avatar') materializeMedia(item.id, item.blob);
   }

@@ -31,10 +31,11 @@ import { logError } from '../lib/errlog';
 export async function putGeneratedMedia(
   blob: Blob,
   mime: string,
-  opts: { now: number; seed: string; tags?: string[]; kind?: MediaItemVM['kind'] },
+  // 生成的是画面——'voice' 剪辑（M-J7a）不走这条路，也别让它走（注册表是图像面）。
+  opts: { now: number; seed: string; tags?: string[]; kind?: Exclude<MediaItemVM['kind'], 'voice'> },
 ): Promise<string> {
   const id = `gen_${opts.now.toString(36)}_${fnv(opts.seed)}`;
-  const item: MediaItemVM = {
+  const item: MediaItemVM & { kind: Exclude<MediaItemVM['kind'], 'voice'> } = {
     id,
     kind: opts.kind ?? 'generated',
     tags: opts.tags ?? [],
@@ -58,7 +59,7 @@ export interface GenerateToLibraryOptions {
   now: number;
   seed: string;
   tags?: string[];
-  kind?: MediaItemVM['kind'];
+  kind?: Exclude<MediaItemVM['kind'], 'voice'>;
   size?: string;
   timeoutMs?: number;
 }

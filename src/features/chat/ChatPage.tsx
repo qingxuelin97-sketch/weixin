@@ -8,6 +8,8 @@ import {
   IconPlus,
 } from '../../components/icons';
 import { VoiceInputButton } from './VoiceInput';
+import { saveVoiceClip, voiceClipBlob } from '../../lib/voice';
+import { transcribe, isAsrReady } from '../../llm/asr';
 import { Avatar } from '../../components/Avatar';
 import { Badge } from '../../components/Badge';
 import { MessageBubble } from './MessageBubble';
@@ -840,6 +842,12 @@ export function ChatPage() {
     // the line above, so **sending a photo never started a generation** — she
     // simply never answered a picture. One reply for the whole batch, after
     // every file is persisted, so sending three photos is one turn not three.
+    await requestReplyToLatest();
+  };
+
+  /** The shared "she answers whatever just landed" tail (photos, voice clips). */
+  const requestReplyToLatest = async () => {
+    if (!conv) return;
     const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
     const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
     if (conv.type === 'group') {
@@ -855,6 +863,46 @@ export function ChatPage() {
     if (peer && persona) {
       await replyToLatest(convId, peer, persona, globalTier, hooks);
     }
+  };
+
+  /**
+   * 发语音消息 (M-J7a): the clip lands in the media library (kind 'voice' —
+   * durable, backed up, outside the TTS cache's eviction), the message carries
+   * the ref, and a SILENT transcription fills `content` when ASR is around —
+   * that is what lets her actually "hear" you (the projection's
+   * includeVoiceText) and what 转文字 reveals. No ASR → she reacts to
+   * [语音 X秒] like a person who hasn't listened yet, which is honest.
+   */
+  const sendVoiceClip = async (blob: Blob, durationMs: number) => {
+    if (!conv) return;
+    let saved: MessageVM | null = null;
+    try {
+      const audioRef = await saveVoiceClip(blob, durationMs);
+      saved = await appendMessage({
+        convId,
+        senderId: 'self',
+        type: 'voice',
+        content: '',
+        meta: { durationMs, audioRef },
+        status: 'sent',
+        createdAt: Date.now(),
+      });
+    } catch (err) {
+      showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    try {
+      if (await isAsrReady()) {
+        const text = await transcribe(blob, { tier: micTier });
+        if (text && saved) {
+          saved = { ...saved, content: text };
+          await updateMessage(saved);
+        }
+      }
+    } catch {
+      /* 转写是锦上添花，失败不挡发送——她就当还没点开听 */
+    }
+    await requestReplyToLatest();
   };
 
   /**
@@ -1039,10 +1087,38 @@ export function ChatPage() {
       items.push({
         label: m.meta?.voiceTextShown ? '收起转写' : '转文字',
         onSelect: () =>
-          void updateMessage({
-            ...m,
-            meta: { ...m.meta, voiceTextShown: !m.meta?.voiceTextShown },
-          }),
+          void (async () => {
+            // 自己发的剪辑 (M-J7a) 可能还没有转写文本——第一次点 转文字 时
+            // 按需跑一次 ASR，写回 content 再展示；之后就是纯开关。
+            let content = m.content;
+            const audioRef = m.meta?.audioRef as string | undefined;
+            if (!m.meta?.voiceTextShown && !content?.trim() && audioRef) {
+              if (!(await isAsrReady().catch(() => false))) {
+                showToast('先在 设置 → 语音输入 里配置识别服务');
+                return;
+              }
+              const blob = await voiceClipBlob(audioRef);
+              if (!blob) {
+                showToast('语音文件不存在');
+                return;
+              }
+              try {
+                content = await transcribe(blob, { tier: micTier });
+              } catch {
+                showToast('转写失败，再试一次？');
+                return;
+              }
+              if (!content) {
+                showToast('没有听清');
+                return;
+              }
+            }
+            await updateMessage({
+              ...m,
+              ...(content !== m.content ? { content } : {}),
+              meta: { ...m.meta, voiceTextShown: !m.meta?.voiceTextShown },
+            });
+          })(),
       });
     }
     items.push({
@@ -1424,7 +1500,15 @@ export function ChatPage() {
               }}
               placeholder=""
             />
-            <VoiceInputButton tier={micTier} onText={(t) => setDraft((d) => (d ? d + t : t))} />
+            <VoiceInputButton
+              tier={micTier}
+              onText={(t) => setDraft((d) => (d ? d + t : t))}
+              onClip={(blob, ms) =>
+                void sendVoiceClip(blob, ms).catch((err) =>
+                  showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+                )
+              }
+            />
           </div>
           <button className="composer__icon" aria-label="表情" onClick={composer.toggleEmoji}>
             <IconEmoji />

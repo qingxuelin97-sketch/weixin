@@ -34,9 +34,11 @@ export interface MediaItemVM {
    * generated 饼干 resurfacing as a random 晚霞 is an instant tell). Row-level
    * field — adding a kind needs NO idb migration, only UI awareness.
    */
-  kind: 'avatar' | 'photo' | 'sticker' | 'generated';
+  kind: 'avatar' | 'photo' | 'sticker' | 'generated' | 'voice';
   /** Free-form persona tags (风景/美食/自拍…). Empty = usable by everyone. */
   tags: string[];
+  /** 'voice' rows only (M-J7a): clip length, so the bubble needs no decode. */
+  durationMs?: number;
   mime: string;
   blob: Blob;
   createdAt: number;

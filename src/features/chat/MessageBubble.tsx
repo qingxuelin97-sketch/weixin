@@ -3,7 +3,7 @@ import { Avatar } from '../../components/Avatar';
 import { useLongPress } from '../../components/useLongPress';
 import { stickerGlyph } from '../../data/stickers';
 import { fenToYuan } from '../../lib/money';
-import { playVoice } from '../../lib/voice';
+import { playVoice, playVoiceRef } from '../../lib/voice';
 import { canReEdit } from '../../lib/recall';
 import { resolveImageRef } from '../../data/moments-images';
 import { RPS_GLYPHS, diceResult, rpsResult } from '../../lib/game';
@@ -203,6 +203,8 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
 function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
   const durMs = (msg.meta?.durationMs as number) ?? 2000;
   const audioKey = msg.meta?.audioKey as string | undefined;
+  // 用户录音 (M-J7a): a media-library clip ref, played from its blob.
+  const audioRef = msg.meta?.audioRef as string | undefined;
   const dur = Math.max(1, Math.round(durMs / 1000));
   const width = Math.min(60 + dur * 8, 180);
   const [played, setPlayed] = useState(Boolean(msg.meta?.played));
@@ -211,6 +213,12 @@ function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
 
   const onTap = async () => {
     setPlayed(true);
+    if (audioRef) {
+      setPlaying(true);
+      const ok = await playVoiceRef(audioRef, () => setPlaying(false));
+      if (!ok) setPlaying(false);
+      return;
+    }
     if (!audioKey) return; // no audio (TTS unconfigured) — bubble still behaves
     setPlaying(true);
     const ok = await playVoice(audioKey, () => setPlaying(false));
