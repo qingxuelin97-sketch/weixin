@@ -94,6 +94,29 @@ export function isRefusal(result: CompletionResult): boolean {
   return false;
 }
 
+/**
+ * Pre-dispatch gate (M-J1): runs before ANY provider call this router makes.
+ *
+ * Installed by the app shell with `cost-gate.checkBudget` — it lives behind a
+ * setter because the dependency direction is `ai → llm`, never the reverse
+ * (constitution §1): the router cannot import the gate, so the gate installs
+ * itself into the router. Throwing `LlmError('budget')` here aborts the call
+ * BEFORE the degradation ladder — every rung of that ladder is itself a call,
+ * so laddering an over-budget request would spend money to honour a spending
+ * limit. Unset (tests, cold paths) = no gate.
+ */
+export type LlmPreflight = (now: number) => Promise<void>;
+
+let preflight: LlmPreflight | null = null;
+
+export function setLlmPreflight(fn: LlmPreflight | null): void {
+  preflight = fn;
+}
+
+export function isBudgetError(e: unknown): boolean {
+  return e instanceof LlmError && e.kind === 'budget';
+}
+
 export interface GenerateContext {
   /** Rewrite a user turn more obliquely for a same-model retry (tier 1). */
   softenLastUserTurn?: (messages: GenerateOptions['messages']) => GenerateOptions['messages'];
@@ -144,6 +167,10 @@ export class LlmRouter {
     const stickyKey = `${convKey}::${req.nsfwTier}`;
     const pinned = this.sticky.get(stickyKey);
     const primary = pinned ?? { provider: plan.provider, model: plan.model };
+
+    // The global cost gate (M-J1) — checked before anything leaves the
+    // process, and before the counter below, so a rejected call is not billed.
+    if (preflight) await preflight(Date.now());
 
     // Every call the app makes passes through here — the one honest place to
     // count them. The user's own key pays for the heartbeats, memory passes and
@@ -232,6 +259,9 @@ export class LlmRouter {
     if (!opts.json && primary.provider.canStream?.() && primary.provider.generateStream) {
       let released = 0;
       try {
+        // Same gate as complete(): a budget rejection here falls through to the
+        // one-shot path below, which re-checks and throws it out to the caller.
+        if (preflight) await preflight(Date.now());
         void recordUsage(usageKindFor(req.role, convKey), Date.now()).catch(() => {});
         for await (const b of primary.provider.generateStream({ ...opts, model: primary.model })) {
           if (released === 0 && isRefusal({ text: b.content, finishReason: null, raw: null })) {
@@ -267,6 +297,11 @@ export class LlmRouter {
       const r = await this.complete(req, opts, ctx, convKey);
       for (const b of parseBubbles(r.text)) yield b;
     } catch (e) {
+      // A budget rejection is not a refusal (M-J1): the persona-refusal line
+      // ("信号不太好") would misreport a spending limit as an outage, and the
+      // caller needs the real kind — the engine answers it in character, the
+      // scheduler keeps the action pending for a cheaper hour.
+      if (isBudgetError(e)) throw e;
       if (ctx.personaRefusal) {
         for (const b of ctx.personaRefusal()) yield b;
         return;

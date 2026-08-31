@@ -54,6 +54,25 @@
   color: var(--color-text-on-brand);
 }
 
+/* 目标编辑入口（M-J1）：改标题 / 放弃，靠右收在卡片标题行里 */
+.status__goal-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+}
+
+.status__goal-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--fs-small-gray);
+  color: var(--color-link);
+}
+
+.status__goal-btn--drop {
+  color: var(--color-swipe-danger);
+}
+
 .status__badge--active {
   background: var(--color-brand);
 }

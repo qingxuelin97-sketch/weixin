@@ -21,6 +21,10 @@ import { agendaAt } from './lifeline';
 import { planGift } from './money-motive';
 import { maybeGroupEvent } from './group-events';
 import { maybeGroupInvite } from './agent-invite';
+// The live trigger's own threshold (a const — importing it pulls no storage
+// call into this pure module): offline and online must agree on what counts
+// as "enough conversation to be worth remembering".
+import { MEM_EXTRACT_MIN_NEW } from './memory-service';
 import type { MomentVisibility, PersonaVM } from '../data/types';
 import { canSeeMoment } from '../lib/moment-visibility';
 
@@ -75,14 +79,17 @@ export const LIMITS = {
  * Counting free kinds as calls is not a conservative rounding — it spends the
  * budget on work that never happens, and the thing it crowds out is always a
  * real message. Keyed by kind so a new kind cannot be added without deciding.
+ * Exported (M-J1) so the budget tests bill a plan with the SAME table the
+ * planner spends by, instead of a hand-copied one that can drift.
  */
-const LLM_COST: Record<SimEvent['kind'], number> = {
+export const LLM_COST: Record<SimEvent['kind'], number> = {
   heartbeat: 1,
   moment_post: 1,
   group_msg: 1,
   moment_comment: 1,
   agent_dm: 1,
   group_event: 1, // the propose line is generated in her voice
+  mem_extract: 1, // one extraction call per busy conversation (M-J1)
   moment_like: 0,
   ai_money: 0, // line + note come from the planner
   agent_invite: 0, // `inviteLine` is a template
@@ -105,6 +112,9 @@ const KEEP_ORDER: Record<SimEvent['kind'], number> = {
   agent_dm: 1,
   heartbeat: 2,
   moment_post: 3,
+  // Remembering a busy absence outranks its twentieth line of chatter (M-J1):
+  // the chatter is scenery, the extraction is what makes tomorrow coherent.
+  mem_extract: 4,
   moment_comment: 4,
   moment_like: 4,
   group_msg: 5,
@@ -188,7 +198,8 @@ export interface SimEvent {
     | 'agent_dm'
     | 'ai_money'
     | 'group_event'
-    | 'agent_invite';
+    | 'agent_invite'
+    | 'mem_extract';
   contactId: string;
   convId?: string;
   at: number;
@@ -495,6 +506,29 @@ export function simulate(t0: number, t1: number, input: SimInput, seed: string):
       id: inv.id,
       payload: { friend1: inv.friends[0], friend2: inv.friends[1] },
     });
+  }
+
+  // --- 离线也产记忆 (M-J1). A conversation the absence filled with enough
+  // chatter deserves one memory pass at the window's tail — otherwise "she
+  // remembers our talks" is true only for talks the user watched happen. The
+  // threshold is the live trigger's own (MEM_EXTRACT_MIN_NEW); the subject id
+  // follows the live convention (ChatPage): the contact for a single chat, the
+  // conversation itself for a group. No `uptoMsgId` — the messages do not
+  // exist yet at planning time; the handler resolves the frontier at fire
+  // time, and the drain runs in time order so the chatter lands first. ---
+  const groupConvIds = new Set(input.groups.map((g) => g.convId));
+  const contactByConv = new Map(input.singles.map((c) => [c.convId, c.contactId]));
+  const perConv = new Map<string, number>();
+  for (const e of events) {
+    if (!e.convId) continue; // DMs live in hidden threads; reactions have no conv
+    if (e.kind !== 'heartbeat' && e.kind !== 'group_msg' && e.kind !== 'group_event') continue;
+    perConv.set(e.convId, (perConv.get(e.convId) ?? 0) + 1);
+  }
+  for (const [convId, n] of perConv) {
+    if (n < MEM_EXTRACT_MIN_NEW) continue;
+    const subject = groupConvIds.has(convId) ? convId : contactByConv.get(convId);
+    if (!subject) continue;
+    events.push({ kind: 'mem_extract', contactId: subject, convId, at: to });
   }
 
   // Chronological: the drain inserts in this order, keeping rowid == time order.

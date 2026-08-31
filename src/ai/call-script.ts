@@ -29,6 +29,13 @@ import { isTtsAvailable, DEFAULT_VOICE } from '../llm/tts';
 import { ensureVoiceAudio, playVoice, stopVoice } from '../lib/voice';
 import { repo } from '../db/repo';
 import { logError } from '../lib/errlog';
+import { moodOf } from '../lib/mood';
+import { affectFor, affectLine } from '../lib/affect';
+import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
+import { goalDirective } from './goals';
+import { goalStateFor } from './goal-service';
+import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
+import { sensitivityForTier } from '../lib/nsfw-tier';
 
 /* ==================================================================== */
 /* 台词与场景                                                            */
@@ -71,6 +78,11 @@ const REPLY_DIRECTIVE = '对方刚在电话里说了最后那句话，直接接�
 /**
  * 组装通话的 system prompt：persona + 关系 + NSFW 边界 + 记忆 + 场景，
  * 全部复用 `assembleSystemPrompt`（层序不动），场景补充块殿后。
+ *
+ * 同脑 (M-J1)：接电话的和发微信的是同一个人——mood/affect 进场景层，
+ * lifeline → goal → occasion 依引擎惯例追加在 scene 之后、通话补充块之前。
+ * 此前通话只有 persona+关系+记忆：同一天里她在聊天里备考、心情低落，
+ * 电话一接却对两件事都毫无知觉。
  */
 export async function buildCallSystem(opts: {
   peer: ContactVM;
@@ -78,6 +90,8 @@ export async function buildCallSystem(opts: {
   tier: NsfwTier;
   recent: MessageVM[];
   now: number;
+  /** 会话 id（周年纪念锚点用）；缺省只跳过 anniversary，不影响其他层。 */
+  convId?: string;
 }): Promise<string> {
   const { peer, persona, tier, recent, now } = opts;
   let facts: Awaited<ReturnType<typeof repo.getMemory>> = [];
@@ -94,13 +108,35 @@ export async function buildCallSystem(opts: {
   const memory = selectFactsForInjection(facts, now, { surface: 'single', tier, query });
   // 关系层只带"用户是谁"——通话是两个人的事，社交图谱的其余部分留给聊天。
   const userRel = persona.relations?.user?.trim();
-  const system = assembleSystemPrompt({
+  // 心情 + 情绪脉冲，与引擎同一条线（affectFor 失败退回纯 mood）。
+  const mood = moodOf(peer.id, now);
+  const moodLine = await affectFor(peer.id, now)
+    .then(({ affect }) => affectLine(mood.line, affect))
+    .catch(() => mood.line);
+  let system = assembleSystemPrompt({
     persona: toPersonaView(persona, peer.remark ?? peer.name),
     relations: userRel ? { user: userRel } : undefined,
     nsfwTier: tier,
     memory: memory.pinned.length || memory.topK.length ? memory : undefined,
-    scene: { kind: 'single', now: new Date(now) },
+    scene: { kind: 'single', now: new Date(now), moodLine },
   });
+  const arcLine = lifelineDirective(lifelineAt(persona, now, personaEpoch(peer.id)));
+  if (arcLine) system += `\n\n${arcLine}`;
+  let goalLine = '';
+  try {
+    goalLine = goalDirective(await goalStateFor(peer.id, now), now);
+  } catch {
+    /* 目标层读不出来也要能接电话 */
+  }
+  if (goalLine) system += `\n\n${goalLine}`;
+  const occasionLine = occasionDirective(
+    occasionsFor({
+      now,
+      facts,
+      firstMsgAt: opts.convId ? await firstSpokeAt(opts.convId).catch(() => undefined) : undefined,
+    }),
+  );
+  if (occasionLine) system += `\n\n${occasionLine}`;
   return `${system}\n\n${CALL_SCENE}`;
 }
 
@@ -164,6 +200,8 @@ export class CallSession {
   private ctrl: AbortController | null = null;
   private ended = false;
   private system = '';
+  private startedAt = 0;
+  private finalizePromise: Promise<string> | null = null;
 
   constructor(private o: CallSessionOpts) {
     // tier 在此推导一次，之后所有 LLM 调用都用它——调用点不得自造。
@@ -173,6 +211,7 @@ export class CallSession {
   /** 接通：定档 voiceOn → 组装 system → 她先开口。 */
   async start(): Promise<void> {
     if (this.ended) return;
+    this.startedAt = this.o.now();
     const tts = this.o.tts ?? DEFAULT_TTS;
     this.voiceOn = callTtsAllowed(this.tier) && (await tts.available().catch(() => false));
     this.o.onReady?.(this.voiceOn);
@@ -182,6 +221,7 @@ export class CallSession {
       tier: this.tier,
       recent: this.o.recent,
       now: this.o.now(),
+      convId: this.o.convId,
     });
     await this.respond(openerDirective(this.o.direction));
   }
@@ -196,9 +236,49 @@ export class CallSession {
     await this.respond(REPLY_DIRECTIVE);
   }
 
-  /** 挂断：一切在飞的生成与播放立即停。幂等。 */
+  /**
+   * 纪要落库（M-J1），幂等：第一次调用起跑，之后的调用（挂断分支、卸载分支、
+   * 双击挂断）都拿同一个 promise——纪要绝不双写。返回纪要文本（空串 = 没
+   * 什么可记）。挂断按钮之外的退出路径（返回手势→组件卸载→`end()`）此前
+   * 根本不落纪要：电话里说好的事像没说过一样。
+   */
+  finalize(): Promise<string> {
+    this.finalizePromise ??= this.runFinalize().catch((e) => {
+      logError('call.finalize', e);
+      return '';
+    });
+    return this.finalizePromise;
+  }
+
+  private async runFinalize(): Promise<string> {
+    const turns = [...this.turns];
+    if (turns.length === 0) return '';
+    const durationMs = Math.max(0, this.o.now() - (this.startedAt || this.o.now()));
+    const summary = await summarizeCall({
+      convId: this.o.convId,
+      peerName: this.o.peer.remark ?? this.o.peer.name,
+      tier: this.tier,
+      turns,
+      durationMs,
+      router: this.o.router,
+    });
+    await recordCallOutcome(
+      this.o.convId,
+      this.o.peer.id,
+      summary,
+      extractCallPromises(turns),
+      this.o.now(),
+      this.tier,
+    );
+    return summary;
+  }
+
+  /** 挂断：先落纪要（幂等、异步、不阻塞），再停掉一切在飞的生成与播放。 */
   end(): void {
     if (this.ended) return;
+    // 纪要先行：turns 的快照在 finalize 里取，end 不清空它们，所以卸载路径
+    // （CallPage cleanup 只调 end()）也一样落纪要——这正是 M-J1 修的洞。
+    void this.finalize();
     this.ended = true;
     this.ctrl?.abort();
     (this.o.tts ?? DEFAULT_TTS).stop();
@@ -400,12 +480,21 @@ export async function summarizeCall(opts: {
  * 纪要落 conv-state 的承诺/待办通道：「电话里说好了周五见」从此可被后续
  * 聊天引用（convStateDirective 的"之前说过"行）。承诺优先；一条没有时
  * 用纪要本身垫上。上限与 conv-state 的 MAX_PROMISES 对齐（2）。
+ *
+ * 同脑扩容 (M-J1)：一通电话此前只在 conv-state 留两条承诺——记忆层对它
+ * 一无所知，第二天聊天时那通电话就像没打过。现在同一次落库还写：
+ *   - `memory_facts` 一条（importance 3，evidenceMsgIds 空——通话轮次
+ *     本来就不落消息，没有可引的 msgId；sensitivity 按通话 tier 分级，
+ *     全开档的纪要绝不流入朋友圈/群 prompt 的注入白名单）；
+ *   - `conv_summaries` 的滚动摘要，让「上次你们聊到」也覆盖电话。
  */
 export async function recordCallOutcome(
   convId: string,
+  contactId: string,
   summary: string,
   promises: string[],
   now: number,
+  tier: NsfwTier = 'off',
 ): Promise<void> {
   const entries = (promises.length ? promises : summary ? [summary] : []).map((s) =>
     s.trim().slice(0, 30),
@@ -414,4 +503,39 @@ export async function recordCallOutcome(
   const prev = await getConvState(convId);
   const merged = [...entries, ...prev.promises.filter((p) => !entries.includes(p))].slice(0, 2);
   await putConvState(convId, { ...prev, promises: merged, updatedAt: now });
+
+  const line = (summary || entries[0]).trim().slice(0, 50);
+  if (!line) return;
+  try {
+    await repo.putMemory({
+      id: `mem_call_${convId}_${now}`,
+      subjectId: contactId,
+      fact: line.startsWith('电话') ? line : `电话里聊到：${line}`.slice(0, 50),
+      importance: 3,
+      sensitivity: sensitivityForTier(tier),
+      evidenceMsgIds: [],
+      status: 'confirmed',
+      isPinned: false,
+      createdAt: now,
+      source: 'chat',
+      confidence: 0.9,
+    });
+  } catch (e) {
+    logError('call.memory', e);
+  }
+  try {
+    const prevSummary = await repo.getConvSummary(convId);
+    const combined = [prevSummary?.summary?.trim(), `刚通了电话：${line}`]
+      .filter(Boolean)
+      .join('；')
+      .slice(-80);
+    await repo.putConvSummary({
+      convId,
+      summary: combined,
+      uptoMsgId: prevSummary?.uptoMsgId ?? 0,
+      updatedAt: now,
+    });
+  } catch (e) {
+    logError('call.summaryRow', e);
+  }
 }

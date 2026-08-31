@@ -308,3 +308,49 @@ I15 的转红清单里写了「表情使用率联动 persona」，但只交付�
 - `rate = 0` 两条闸都彻底不发
 - 默认档的 `battleUrge` 与 M-I18 前的常数一致
 - 人设层只在两端出提示词行
+
+## M-J1 · 心智一致性（一个角色一套脑子）
+
+同一个角色此前在不同面上是不同的「脑子」：单聊 13 层、群聊 8 层、AI↔AI 私信 3 层、
+通话 4 层。J1 把它们收敛到同一条装配线：
+
+- **群演员补 6 层**：goalDirective / occasionDirective / threadAwareness / arcAwareness /
+  voiceDirective / photoDirective 全部接进 `startActorLines`，只追加在 scene 之后（层序宪法）。
+  同时群演员改走 `toPersonaView()` 唯一漏斗——此前手写的内联 PersonaView 丢了
+  `stickerRate`，「群聊继承表情使用率」是注释里的断路。群播放侧同步接
+  `resolvePhotoBubble`（prompt 提供的能力播放端必须接得住）。
+- **DM 换脑**：`buildDmPrompt(cast, topic, now)`——主讲人（slot A）走完整
+  `assembleSystemPrompt`（含基底/人设/关系/边界/场景+心情），再按引擎惯例追加
+  lifeline → goal；B/C 卡带各自的心情与目标一行。exchange 内容仍然全年龄向
+  （边界层按 'off' 组装），**路由 tier** 照旧由参与者 permit 推导（铁律 6 不动）。
+- **DM 记忆读取走白名单**：`getMemory().slice(0,2)` 换成
+  `selectFactsForInjection(surface:'dm')`——archived 与 sensitive/nsfw 敏感度的事实
+  **进不了**私聊话题（隐藏私信是八卦源头，八卦会在群里当着用户的面复现，这是一条
+  敏感度泄漏通道）。`mayInjectFact('dm')` 自 M-E0 定义以来第一次有了调用方。
+- **八卦 hop-2**：讲述者手里的「听X说：…」记忆（source=hearsay 且 confidence ≥ 0.4）
+  在种子化少数场次里成为下一场 DM 的话题再传一跳；听者拿到
+  `confidence × 0.6 = 0.24 < 0.4` 的二手行——**门槛本身就是「仅一跳」**，不存在
+  会被忘记检查的第三跳开关。
+- **无群兜底**：`planNextDm(..., edgePairs)`——没有任何共同群时，从 `rel_edges`
+  有边的好友对里选（调用方解析，纯函数不碰存储）。这类会话 `groupId` 缺省：
+  没有可引用的群聊素材、没有外溢（`enqueueGroupSpill` 不可能被调）、不出三人局。
+- **stance 写入方 1→4**：既有的群导演 disagree 之外新增三处，全部走 `recordStance`、
+  幅度小（≤6）、keyword 判负面（`hostileTone`，零 LLM）：
+  ① 单聊里用户/AI 点名第三者且语气负面（engine 反应记账处搭车，`detectStanceMention`）；
+  ② 朋友圈互怼（`runMomentComment` 落库处，作者对呛声评论者降温——与 recordTease 同向）；
+  ③ DM 八卦落 gossipFacts 时讲述者对 about 对象（负面 -3 / 中性 +2 惦记加温）。
+- **drift 进 prompt**：两个引擎组 prompt 一律 `applyDrift` 后的人设（消灭「礼物用漂移
+  人设、对话用原始人设」双轨），并加一行 `driftToneLine`——只按方向措辞
+  （「走得更近」/「有点心凉」），不点破机制；|proactivity| < 0.05 时空串，默认 prompt
+  逐字节不变。
+- **全局成本闸**（`src/ai/cost-gate.ts`）：小时/日 LLM 调用预算（默认 60/600，settings
+  键 `llmBudget`，计数器 `llmSpend`，都是 global 台账项）。router 派发前经
+  `setLlmPreflight(checkBudget)` 询问（依赖方向 ai→llm，闸自己装进 router），超限抛
+  `LlmError('budget')` 且**不入账**、不走降级梯（每一级都是一次调用）。引擎捕获：
+  reply 转人设化「累了晚点聊」（种子化 TIRED_LINES），proactive 静默；调度器经
+  `setBudgetGate(schedulerBudgetGate)` 把 LLM-bound kind（`ACTION_LLM_BOUND`，
+  编译器逼每个 kind 表态）**保留 pending 顺延**到预算窗口翻转，免费 kind 照常。
+  用量页显示今日/本小时消耗对预算。
+
+转红测试：`tests/unit/j1-mind.test.ts`（六层源码守卫、DM 泄漏、hop-2 端到端、
+无群兜底、stance 四写入方、预算第 N+1 次被拒、调度器顺延不丢）。

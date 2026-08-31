@@ -126,6 +126,12 @@ export type LlmErrorKind =
   // reaches the degradation ladder: what was said cannot be unsaid, so the
   // router appends the persona's cut-off line and ends the turn.
   | 'truncated'
+  // The GLOBAL cost gate said no before anything left the process (M-J1):
+  // the hourly/daily LLM-call budget is spent. Not a provider failure — the
+  // degradation ladder must NOT run on it (every rung would be another call),
+  // and the persona-refusal fallback must not swallow it either: the engine
+  // turns it into a "tired" line, the scheduler defers the action.
+  | 'budget'
   | 'server' // 5xx
   | 'unknown';
 

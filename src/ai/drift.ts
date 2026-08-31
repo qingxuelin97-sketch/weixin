@@ -40,7 +40,15 @@ import type { PersonaVM } from '../data/types';
 import type { AffectEvent } from '../lib/affect';
 import { repo } from '../db/repo';
 import { logError } from '../lib/errlog';
-import { agentEpoch, goalEventsBetween, type GoalEvent, type GoalEventKind } from './goals';
+import {
+  GOAL_TEMPLATES,
+  agentEpoch,
+  goalEventsBetween,
+  type GoalEvent,
+  type GoalEventKind,
+  type GoalTemplate,
+} from './goals';
+import { goalTemplatesFor } from './goal-service';
 
 const DAY = 86_400_000;
 
@@ -252,10 +260,15 @@ export function applyGoalDrift(
   contactId: string,
   now: number,
   epoch = agentEpoch(contactId),
+  templates: readonly GoalTemplate[] = GOAL_TEMPLATES,
 ): Drift {
-  const events = goalEventsBetween(contactId, now - GOAL_DRIFT_WINDOW_MS, now + 1, epoch).filter(
-    (e) => e.at <= now,
-  );
+  const events = goalEventsBetween(
+    contactId,
+    now - GOAL_DRIFT_WINDOW_MS,
+    now + 1,
+    epoch,
+    templates,
+  ).filter((e) => e.at <= now);
   if (events.length === 0) return prev;
 
   const d = { ...prev.d };
@@ -366,10 +379,46 @@ export async function getDrift(contactId: string, now: number): Promise<Drift> {
     stored = EMPTY;
   }
   try {
-    return applyGoalDrift(stored, contactId, now);
+    // Per-persona goal templates (M-J1): drift's goal linkage must derive from
+    // the SAME template set the prompt line and the share channel use, or
+    // 「她刚考完所以更主动」 points at a goal she is not actually on.
+    return applyGoalDrift(stored, contactId, now, agentEpoch(contactId), await goalTemplatesFor(contactId));
   } catch {
     return stored;
   }
+}
+
+/* ------------------------ prompt surface (M-J1) ------------------------ */
+
+/** Below this, the movement is not worth a prompt line. Matches explainDrift. */
+export const TONE_FLOOR = 0.05;
+
+/**
+ * One line of relationship temperature for the system prompt.
+ *
+ * Drift has been READ for behaviour since M-H1 (pacing, gifts, moments) while
+ * the conversation itself kept using the original card — the gift arrived
+ * warmer than the words around it. This is the words' side of the same delta:
+ * phrased as a felt disposition toward 用户, direction only, mechanism never
+ * named — 「你们最近走得更近」 is a feeling, not a stat readout.
+ */
+export function driftToneLine(drift: Drift | undefined): string {
+  if (!drift) return '';
+  const p = drift.d.proactivity ?? 0;
+  const warmth = p + (drift.d.generosity ?? 0) * 0.5 + (drift.d.likeRate ?? 0) * 0.25;
+  if (p >= TONE_FLOOR || warmth >= TONE_FLOOR * 1.5) {
+    return (
+      '【你们的温度】相处下来，你最近跟用户走得更近了，心里比刚认识时热络，' +
+      '说话自然更主动、更亲近些——这是感觉，别说破。'
+    );
+  }
+  if (p <= -TONE_FLOOR || warmth <= -TONE_FLOOR * 1.5) {
+    return (
+      '【你们的温度】你最近对用户有点心凉，回消息还是回，但不太上赶着了，' +
+      '语气比以前淡一点——不点破原因，也别阴阳怪气。'
+    );
+  }
+  return '';
 }
 
 /**

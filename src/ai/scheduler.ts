@@ -277,6 +277,22 @@ export function setHandlerErrorSink(fn: (scope: string, err: unknown) => void): 
   onHandlerError = fn;
 }
 
+/**
+ * 成本闸的调度器面 (M-J1). Registered by the app shell (`cost-gate.ts` supplies
+ * the implementation — this module stays dependency-free). Returning a
+ * timestamp means "not now": the row is left PENDING with `fireAt` moved
+ * there, so an over-budget hour pauses the world instead of spending through
+ * it, and the queue itself stays the single time-evolution path (rule #5) —
+ * nothing is dropped, nothing grows a second timer.
+ */
+export type BudgetGate = (kind: ActionKind, now: number) => Promise<number | null>;
+
+let budgetGate: BudgetGate | null = null;
+
+export function setBudgetGate(fn: BudgetGate | null): void {
+  budgetGate = fn;
+}
+
 let running = false;
 
 /**
@@ -308,6 +324,20 @@ export async function runDueActions(now: number): Promise<number> {
       return fa - fb || a.fireAt - b.fireAt;
     });
     for (const action of due) {
+      // Budget deferral runs BEFORE markDone: the row must stay pending, or
+      // the deferral would be a silent drop. A gate failure gates nothing.
+      if (budgetGate) {
+        let retryAt: number | null = null;
+        try {
+          retryAt = await budgetGate(action.kind, now);
+        } catch {
+          retryAt = null;
+        }
+        if (retryAt != null && retryAt > now) {
+          await idbPut('scheduled_actions', { ...action, fireAt: retryAt });
+          continue;
+        }
+      }
       const fn = handlers.get(action.kind);
       // Mark done BEFORE running so a throwing handler can't loop forever.
       await markDone(action);

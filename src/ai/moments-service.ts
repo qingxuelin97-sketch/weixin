@@ -19,6 +19,7 @@ import {
 } from './moments-engine';
 import { repostMoment } from './moment-repost';
 import { canSeeMoment } from '../lib/moment-visibility';
+import { recordStance, hostileTone, STANCE_CLASH_DELTA } from './relationship';
 import { repo } from '../db/repo';
 
 export interface MomentsHooks {
@@ -210,4 +211,11 @@ export async function runMomentComment(
     text,
     createdAt: stamp,
   });
+  // Stance writer 3 of 4 (M-J1): a combative comment lands, and the AUTHOR
+  // cools toward the sniper — same direction as recordTease (the needled cools
+  // toward the needler). Keyword-judged at the落库 moment, never a new LLM
+  // call; the user has no stance row, so their posts record nothing.
+  if (moment.authorId !== 'self' && moment.authorId !== commenter.id && hostileTone(text)) {
+    void recordStance(moment.authorId, commenter.id, STANCE_CLASH_DELTA, stamp).catch(() => {});
+  }
 }

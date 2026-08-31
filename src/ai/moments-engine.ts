@@ -23,6 +23,7 @@ import { getRouter } from '../llm/service';
 import { pickImages } from '../data/moments-images';
 import { isActiveAt } from './heartbeat';
 import { agentEpoch, goalStateAt, goalMomentMaterial, type GoalDomain, type GoalState } from './goals';
+import { goalStateFor } from './goal-service';
 import { getAllEdges, pairKey, effectiveAffinity } from './relationship';
 import { repo } from '../db/repo';
 
@@ -382,8 +383,11 @@ export async function generateMomentPost(
 
   // Goal-arc material (M-I14): a fresh milestone or a completed goal sometimes
   // becomes the post. Seeded gate inside — the feed must not turn into a
-  // progress log, so this is empty most of the time.
-  const goal = goalStateAt(peer.id, now, agentEpoch(peer.id));
+  // progress log, so this is empty most of the time. Read through goal-service
+  // (M-J1): per-persona templates + the user's own renames/abandons.
+  const goal = await goalStateFor(peer.id, now).catch(() =>
+    goalStateAt(peer.id, now, agentEpoch(peer.id)),
+  );
   let goalBg = goalMomentMaterial(goal, now, `${peer.id}:${now}`);
   // 连续剧式发帖 (M-I15): when the post IS goal material and this is not the
   // first installment, ask for continuity with the previous one.

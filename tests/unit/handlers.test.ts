@@ -338,8 +338,14 @@ describe('mem_extract', () => {
 });
 
 describe('agent_dm', () => {
-  it('needs all three ids before it will run', () => {
-    expect(dmPlanFrom({ a: 'x', b: 'y' }, T0)).toBeNull();
+  it('needs both participants; the group is optional since M-J1 (无群兜底)', () => {
+    expect(dmPlanFrom({ a: 'x' }, T0)).toBeNull();
+    expect(dmPlanFrom({ b: 'y' }, T0)).toBeNull();
+    // A pair with no shared room is a legal session now — it simply has no
+    // group to quote from and nowhere to spill.
+    const noGroup = dmPlanFrom({ a: 'x', b: 'y' }, T0);
+    expect(noGroup?.fireAt).toBe(T0);
+    expect(noGroup?.groupId).toBeUndefined();
     expect(dmPlanFrom({ a: 'x', b: 'y', groupId: 'g1' }, T0)?.fireAt).toBe(T0);
   });
 

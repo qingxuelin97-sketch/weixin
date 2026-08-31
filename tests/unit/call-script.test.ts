@@ -302,7 +302,7 @@ describe('纪要落 conv-state 的承诺/待办通道', () => {
   it('承诺进 promises，后续聊天的 directive 能引用到', async () => {
     const convId = 'c_call_state1';
     await putConvState(convId, { ...EMPTY_STATE });
-    await recordCallOutcome(convId, '说好周五见', ['说好周五见，我带蛋糕'], T0);
+    await recordCallOutcome(convId, 'ai_call', '说好周五见', ['说好周五见，我带蛋糕'], T0);
     const state = await getConvState(convId);
     expect(state.promises[0]).toBe('说好周五见，我带蛋糕');
     // 「电话里说好了周五见」被后续聊天引用的形态：
@@ -312,7 +312,7 @@ describe('纪要落 conv-state 的承诺/待办通道', () => {
   it('没抓到承诺时用纪要本身垫上，并与旧承诺合并、上限 2', async () => {
     const convId = 'c_call_state2';
     await putConvState(convId, { ...EMPTY_STATE, promises: ['旧承诺A', '旧承诺B'], updatedAt: T0 - 1 });
-    await recordCallOutcome(convId, '电话里聊到：搬家的事', [], T0);
+    await recordCallOutcome(convId, 'ai_call', '电话里聊到：搬家的事', [], T0);
     const state = await getConvState(convId);
     expect(state.promises).toEqual(['电话里聊到：搬家的事', '旧承诺A']);
     expect(state.updatedAt).toBe(T0);
@@ -321,7 +321,7 @@ describe('纪要落 conv-state 的承诺/待办通道', () => {
   it('空纪要 + 空承诺 = 不动 conv-state', async () => {
     const convId = 'c_call_state3';
     await putConvState(convId, { ...EMPTY_STATE, promises: ['旧承诺'], updatedAt: 7 });
-    await recordCallOutcome(convId, '', [], T0);
+    await recordCallOutcome(convId, 'ai_call', '', [], T0);
     const state = await getConvState(convId);
     expect(state.promises).toEqual(['旧承诺']);
     expect(state.updatedAt).toBe(7);

@@ -135,6 +135,128 @@ export const GOAL_TEMPLATES: GoalTemplate[] = [
 ];
 
 /* ==================================================================== */
+/* Generated template sets (M-J1)                                        */
+/* ==================================================================== */
+
+export const GOAL_DOMAINS: readonly GoalDomain[] = [
+  'study',
+  'money',
+  'romance',
+  'health',
+  'career',
+  'skill',
+];
+
+/** Bounds a generated template set must fit. Loosening these is a red test. */
+export const GOAL_TEMPLATE_BOUNDS = {
+  templates: [3, 8],
+  titleChars: [2, 24],
+  milestones: [3, 5],
+  milestoneChars: [2, 40],
+  setbacks: [1, 4],
+  setbackChars: [2, 40],
+  typicalDays: [20, 180],
+  abandonRate: [0, 0.6],
+} as const;
+
+const inRange = (n: unknown, [lo, hi]: readonly [number, number]): n is number =>
+  typeof n === 'number' && Number.isFinite(n) && n >= lo && n <= hi;
+
+const cleanLines = (
+  v: unknown,
+  [minN, maxN]: readonly [number, number],
+  [minC, maxC]: readonly [number, number],
+): string[] | null => {
+  if (!Array.isArray(v)) return null;
+  const lines = v
+    .filter((s): s is string => typeof s === 'string')
+    .map((s) => s.trim())
+    .filter((s) => s.length >= minC)
+    .map((s) => s.slice(0, maxC));
+  return lines.length >= minN ? lines.slice(0, maxN) : null;
+};
+
+/**
+ * 值域校验 for a persona-generated template set (M-J1). Strict on purpose: a
+ * template outside these bounds produces a life that reads wrong for months
+ * (a 3-day goal, a 100% abandon rate), and by then nobody remembers why.
+ * Returns null when the whole set is unusable — the caller falls back to
+ * `GOAL_TEMPLATES`, because 不许空目标.
+ */
+export function sanitizeGoalTemplates(raw: unknown): GoalTemplate[] | null {
+  if (!Array.isArray(raw)) return null;
+  const B = GOAL_TEMPLATE_BOUNDS;
+  const out: GoalTemplate[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const t = item as Record<string, unknown>;
+    const title = typeof t.title === 'string' ? t.title.trim() : '';
+    if (title.length < B.titleChars[0]) continue;
+    const domain = GOAL_DOMAINS.includes(t.domain as GoalDomain) ? (t.domain as GoalDomain) : null;
+    if (!domain) continue;
+    const milestones = cleanLines(t.milestones, B.milestones, B.milestoneChars);
+    const setbacks = cleanLines(t.setbacks, B.setbacks, B.setbackChars);
+    if (!milestones || !setbacks) continue;
+    if (!inRange(t.typicalDays, B.typicalDays)) continue;
+    if (!inRange(t.abandonRate, B.abandonRate)) continue;
+    out.push({
+      domain,
+      title: title.slice(0, B.titleChars[1]),
+      milestones,
+      setbacks,
+      typicalDays: Math.round(t.typicalDays as number),
+      abandonRate: t.abandonRate as number,
+    });
+    if (out.length >= B.templates[1]) break;
+  }
+  return out.length >= B.templates[0] ? out : null;
+}
+
+/* ==================================================================== */
+/* User overrides (M-J1)                                                 */
+/* ==================================================================== */
+
+/**
+ * The user's hand on the wheel: rename the current goal, or abandon it now.
+ * Stored per contact (goal-service.ts); applied HERE as a pure transform so the
+ * seeded timeline stays the single source of "what would have happened" and
+ * the override is a thin, inspectable layer on top.
+ */
+export interface GoalOverrides {
+  /** cycle → replacement title. */
+  titles?: Record<number, string>;
+  /** cycle → the moment the user abandoned it (epoch ms). */
+  abandoned?: Record<number, number>;
+}
+
+export function applyGoalOverrides(
+  state: GoalState,
+  ovr: GoalOverrides | undefined,
+  now: number,
+): GoalState {
+  if (!ovr) return state;
+  let out = state;
+  const title = ovr.titles?.[state.cycle]?.trim();
+  if (title) out = { ...out, title: title.slice(0, GOAL_TEMPLATE_BOUNDS.titleChars[1]) };
+  const droppedAt = ovr.abandoned?.[state.cycle];
+  if (droppedAt != null && droppedAt <= now && out.status === 'active') {
+    out = {
+      ...out,
+      status: 'abandoned',
+      endedAt: droppedAt,
+      milestones: out.milestones.map((m) =>
+        m.at <= droppedAt ? m : { ...m, reached: false, text: '' },
+      ),
+    };
+    if (out.recentSetback && out.recentSetback.at > droppedAt) {
+      const { recentSetback: _dropped, ...rest } = out;
+      out = rest;
+    }
+  }
+  return out;
+}
+
+/* ==================================================================== */
 /* Epoch                                                                 */
 /* ==================================================================== */
 
@@ -178,12 +300,22 @@ interface CycleLayout {
 /**
  * Lay out one goal cycle. Pure and seeded per (contactId, cycle); the walk in
  * `cycleAt` strings these end to end from the epoch.
+ *
+ * `templates` defaults to the built-in six; per-persona generated sets (M-J1,
+ * `goal-service.ts`) ride in through the same parameter, so the walk stays a
+ * pure function of its arguments — same inputs, same life, forever.
  */
-function layoutCycle(contactId: string, cycle: number, startAt: number, prevIndex: number): CycleLayout {
+function layoutCycle(
+  contactId: string,
+  cycle: number,
+  startAt: number,
+  prevIndex: number,
+  templates: readonly GoalTemplate[] = GOAL_TEMPLATES,
+): CycleLayout {
   const rng = seededRng(`goal:${contactId}:${cycle}`);
   // Never the same goal twice running — repeating "减肥" back to back reads as
   // a broken record rather than a life.
-  const pool = GOAL_TEMPLATES.filter((_, i) => i !== prevIndex);
+  const pool = templates.length > 1 ? templates.filter((_, i) => i !== prevIndex) : [...templates];
   const template = pool[Math.floor(rng() * pool.length)];
 
   const plannedMs = Math.round(template.typicalDays * (0.7 + 0.6 * rng()) * DAY);
@@ -231,14 +363,19 @@ function layoutCycle(contactId: string, cycle: number, startAt: number, prevInde
  * construction: a cycle spans at least ~30 days, so even a decade of elapsed
  * time resolves in ~120 iterations; hard-capped at 800 for safety.
  */
-function cycleAt(contactId: string, t: number, epoch: number): CycleLayout {
+function cycleAt(
+  contactId: string,
+  t: number,
+  epoch: number,
+  templates: readonly GoalTemplate[] = GOAL_TEMPLATES,
+): CycleLayout {
   let cursor = epoch;
   let prevIndex = -1;
   for (let cycle = 0; ; cycle++) {
-    const layout = layoutCycle(contactId, cycle, cursor, prevIndex);
+    const layout = layoutCycle(contactId, cycle, cursor, prevIndex, templates);
     if (t < cursor + layout.spanMs || cycle >= 800) return layout;
     cursor += layout.spanMs;
-    prevIndex = GOAL_TEMPLATES.indexOf(layout.template);
+    prevIndex = templates.indexOf(layout.template);
   }
 }
 
@@ -281,8 +418,13 @@ export interface GoalState {
  * (that is how "她上周刚考完" remains true for a while) — a new goal starts
  * only when the rest runs out.
  */
-export function goalStateAt(contactId: string, t: number, epoch: number): GoalState {
-  const c = cycleAt(contactId, Math.max(t, epoch), epoch);
+export function goalStateAt(
+  contactId: string,
+  t: number,
+  epoch: number,
+  templates: readonly GoalTemplate[] = GOAL_TEMPLATES,
+): GoalState {
+  const c = cycleAt(contactId, Math.max(t, epoch), epoch, templates);
   const ended = t >= c.endAt;
   const reachedAts = c.milestoneAts.filter((at) => at <= Math.min(t, c.endAt) && at <= c.endAt);
   // An abandoned cycle never reaches milestones planned after its end.
@@ -348,13 +490,14 @@ export function goalEventsBetween(
   t0: number,
   t1: number,
   epoch: number,
+  templates: readonly GoalTemplate[] = GOAL_TEMPLATES,
 ): GoalEvent[] {
   if (t1 <= t0) return [];
   const out: GoalEvent[] = [];
   let cursor = epoch;
   let prevIndex = -1;
   for (let cycle = 0; cycle < 800 && cursor < t1; cycle++) {
-    const c = layoutCycle(contactId, cycle, cursor, prevIndex);
+    const c = layoutCycle(contactId, cycle, cursor, prevIndex, templates);
     const push = (kind: GoalEventKind, at: number, text: string) => {
       if (at >= t0 && at < t1) {
         out.push({ id: `${contactId}:${cycle}:${kind}:${at}`, kind, at, title: c.template.title, text, cycle });
@@ -370,7 +513,7 @@ export function goalEventsBetween(
       c.outcome === 'completed' ? outcomeLine(c.template) : abandonLine(c.template),
     );
     cursor += c.spanMs;
-    prevIndex = GOAL_TEMPLATES.indexOf(c.template);
+    prevIndex = templates.indexOf(c.template);
   }
   return out.sort((a, b) => a.at - b.at);
 }
@@ -419,8 +562,9 @@ export function latestTerminalEvent(
   t: number,
   epoch: number,
   windowMs: number = 48 * HOUR,
+  templates: readonly GoalTemplate[] = GOAL_TEMPLATES,
 ): GoalEvent | null {
-  const events = goalEventsBetween(contactId, t - windowMs, t + 1, epoch).filter(
+  const events = goalEventsBetween(contactId, t - windowMs, t + 1, epoch, templates).filter(
     (e) => (e.kind === 'completed' || e.kind === 'abandoned') && e.at <= t,
   );
   return events.at(-1) ?? null;
