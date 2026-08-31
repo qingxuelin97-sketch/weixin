@@ -124,10 +124,10 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/transfer/:convId': { golden: 'transfer-send', smoke: { path: '/transfer/conv_lin' } },
   '/wallet': { golden: 'wallet', smoke: { path: '/wallet' } },
   // 朋友圈单条详情 (M-J12). Smoke boots on a seeded post; the missing-id empty
-  // state is separately exercised by moment-detail-e2e.spec.ts.
+  // state is separately exercised by moment-detail-e2e.spec.ts. pendingCast
+  // 旗已摘：CI regen（d386ae3）铸出了 moment-detail.png。
   '/moments/:momentId': {
     golden: 'moment-detail',
-    pendingCast: true,
     smoke: { path: '/moments/mo_seed_lin' },
   },
 };
