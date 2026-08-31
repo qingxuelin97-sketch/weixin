@@ -28,6 +28,40 @@ import org.json.JSONArray
 @CapacitorPlugin(name = "AiwxNative")
 class AiwxNativePlugin : Plugin() {
 
+    // ----------------------------------------------------------- SSE (M-J5)
+
+    // All OkHttp mechanics live in SseBridge — this class stays a thin
+    // @PluginMethod façade. The lambda is the ONLY place events enter the
+    // WebView, so the event name is written exactly once on the Kotlin side.
+    private val sse by lazy { SseBridge { ev -> notifyListeners("sseLine", ev) } }
+
+    @PluginMethod
+    fun sseStart(call: PluginCall) {
+        val id = call.getString("id") ?: return call.reject("id required")
+        val url = call.getString("url") ?: return call.reject("url required")
+        sse.start(
+            id,
+            url,
+            call.getString("headersJson") ?: "{}",
+            call.getString("bodyJson") ?: "{}",
+        )
+        // Resolve on DISPATCH, not on response: the response arrives as events.
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun sseCancel(call: PluginCall) {
+        val id = call.getString("id") ?: return call.reject("id required")
+        sse.cancel(id)
+        call.resolve()
+    }
+
+    override fun handleOnDestroy() {
+        // The WebView is going away; a socket nobody can read must not linger.
+        sse.destroy()
+        super.handleOnDestroy()
+    }
+
     // ---------------------------------------------------------------- info
 
     @PluginMethod

@@ -8,6 +8,7 @@ import { App } from './App';
 import { unlockAudio } from './lib/sound';
 import { installGlobalErrorCapture } from './lib/errlog';
 import { armSelftest } from './lib/selftest';
+import { installNativeSse } from './native/sse-bridge';
 
 // Mobile browsers gate audio behind a user gesture; unlock on the first tap.
 window.addEventListener('pointerdown', () => unlockAudio(), { once: true });
@@ -20,6 +21,11 @@ installGlobalErrorCapture();
 // boot — to logcat for the CI emulator, and to EnvDiagPage on a real phone.
 // Web builds skip it (see lib/selftest.ts).
 armSelftest();
+
+// Native SSE (M-J5): hand the OkHttp streaming bridge to the llm layer's
+// transport seam. A no-op on web (the provider streams over fetch there), but
+// it must run BEFORE the first canStream() ask — install at boot, not lazily.
+installNativeSse();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

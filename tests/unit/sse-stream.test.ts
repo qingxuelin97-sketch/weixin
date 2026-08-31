@@ -188,7 +188,11 @@ describe('generateStream', () => {
     expect(out).toHaveLength(1);
   });
 
-  it('canStream says no on native — CapacitorHttp cannot stream', () => {
+  it('canStream says no on native WITHOUT the bridge — CapacitorHttp cannot stream', () => {
+    // M-J5: a native platform with the OkHttp bridge installed streams (see
+    // j5-native-sse.test.ts). This case pins the other side: no bridge in the
+    // seam (old APK, stripped build, tests) → the one-shot path stays the
+    // correct transport, and nothing quietly assumes fetch-streaming works.
     expect(provider().canStream()).toBe(true);
     (globalThis as { Capacitor?: unknown }).Capacitor = { isNativePlatform: () => true };
     expect(provider().canStream()).toBe(false);
