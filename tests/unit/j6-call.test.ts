@@ -5,6 +5,12 @@
  *   3. 静音：切字幕停留、立即停播、可恢复；
  *   4. call-host：会话活过页面卸载，挂断唯一且只写一条通话记录；
  *   5. 接线扫描：CallPage 卸载不再 end()、按下说话先 holdFloor、壳里挂了胶囊。
+ * M-J6b 视频通话 red-guards:
+ *   6. video 旗从入口一路活到记录：host 快照带 video、挂断落库 meta.video、
+ *      语音通话的记录不带 video 键（投影/气泡不误标）；
+ *   7. 投影：模型看到的是「视频通话」不是「语音通话」；
+ *   8. 接线扫描：入口是真二选一、胶囊返回带 video、恢复读 host 旗、
+ *      VideoStage 禁 rAF、SelfCam 清理停摄像头、manifest 声明 CAMERA。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -24,6 +30,7 @@ import type { LlmRouter, RouteRequest } from '../../src/llm/router';
 import type { GenerateOptions } from '../../src/llm/types';
 import type { ContactVM } from '../../src/data/types';
 import { parseBubbles } from '../../src/llm/bubbles';
+import { renderMessageBody } from '../../src/ai/render-msg';
 
 const T0 = 1_754_600_000_000;
 
@@ -230,6 +237,68 @@ describe('call-host owns the live call', () => {
   });
 });
 
+describe('视频通话 (M-J6b)：video 旗从入口活到记录', () => {
+  beforeEach(() => {
+    resetCallHostForTests();
+  });
+
+  it('adoptCall 带 video → 快照带 video → 挂断落库 meta.video === true', async () => {
+    adoptCall({
+      convId: 'conv_lin',
+      peerId: peer.id,
+      peerName: '小雨',
+      direction: 'out',
+      video: true,
+      sessionOpts: sessionOpts(),
+    });
+    expect(getActiveCall()?.video).toBe(true);
+    await hangupActiveCall();
+    const calls = useAppStore
+      .getState()
+      .messagesFor('conv_lin')
+      .filter((m) => m.type === 'call');
+    expect(calls.at(-1)?.meta?.video).toBe(true);
+  });
+
+  it('语音通话的记录不带 video 键（投影与气泡不许误标成视频）', async () => {
+    adoptCall({
+      convId: 'conv_voice',
+      peerId: peer.id,
+      peerName: '小雨',
+      direction: 'out',
+      sessionOpts: sessionOpts({ convId: 'conv_voice' }),
+    });
+    expect(getActiveCall()?.video).toBe(false);
+    await hangupActiveCall();
+    const calls = useAppStore
+      .getState()
+      .messagesFor('conv_voice')
+      .filter((m) => m.type === 'call');
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect('video' in (calls.at(-1)?.meta ?? {})).toBe(false);
+  });
+
+  it('投影区分视频/语音——她能记得你们是视频过还是只打过电话', () => {
+    const base = {
+      id: 1,
+      convId: 'c',
+      senderId: 'self',
+      type: 'call' as const,
+      status: 'sent' as const,
+      createdAt: T0,
+    };
+    expect(
+      renderMessageBody({ ...base, meta: { direction: 'out', durationMs: 65_000, video: true } }),
+    ).toContain('视频通话');
+    expect(
+      renderMessageBody({ ...base, meta: { direction: 'out', durationMs: 65_000 } }),
+    ).toContain('语音通话');
+    expect(renderMessageBody({ ...base, meta: { direction: 'in', video: true } })).toContain(
+      '对方打来视频通话',
+    );
+  });
+});
+
 describe('接线扫描（写了没接线 = 没做，接了不该接的也一样）', () => {
   const read = (p: string) => readFileSync(resolve(__dirname, '../../', p), 'utf8');
 
@@ -249,5 +318,31 @@ describe('接线扫描（写了没接线 = 没做，接了不该接的也一样�
     expect(read('src/App.tsx')).toContain('<MiniCallPill />');
     const pill = read('src/features/call/MiniCallPill.tsx');
     expect(pill).toContain('hangupActiveCall');
+  });
+
+  it('聊天页「视频通话」入口是真二选一，视频走 ?video=1（M5 起的名实不符到此为止）', () => {
+    const src = read('src/features/chat/ChatPage.tsx');
+    expect(src).toContain("['视频通话', '语音通话']");
+    expect(src).toContain('?video=1');
+  });
+
+  it('胶囊返回视频通话时带 video 旗；恢复时 CallPage 还会读 host 的旗兜底', () => {
+    expect(read('src/features/call/MiniCallPill.tsx')).toContain('&video=1');
+    const page = read('src/features/call/CallPage.tsx');
+    expect(page).toContain('getActiveCall()?.video');
+  });
+
+  it('VideoStage 禁 rAF（截图门禁只能冻结 CSS/WAAPI），SelfCam 清理必停摄像头', () => {
+    const src = read('src/features/call/VideoStage.tsx');
+    expect(src).not.toContain('requestAnimationFrame');
+    // The cleanup that releases the camera light — losing it means the lens
+    // stays hot after hanging up.
+    expect(src).toContain('.getTracks().forEach((t) => t.stop())');
+  });
+
+  it('manifest 声明 CAMERA——不声明 = WebView 权限请求被系统静默拒绝', () => {
+    expect(read('android/app/src/main/AndroidManifest.xml')).toContain(
+      'android.permission.CAMERA',
+    );
   });
 });

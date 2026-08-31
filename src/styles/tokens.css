@@ -122,6 +122,7 @@
   --color-call-accept: var(--wx-green); /* answer an incoming call */
   --color-call-pill-bg: var(--wx-green); /* minimized-call pill (M-J6) */
   --color-call-secondary-btn: rgba(255, 255, 255, 0.16); /* mute/minimize on the dark call backdrop */
+  --color-call-speaking-glow: rgba(170, 234, 122, 0.55); /* 视频画面下沿的"她在说话"光 (M-J6b) */
   --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */
   /* Hold-to-talk (按住说话) full-screen recorder overlay (M-I9) */
   --color-voice-scrim: rgba(26, 26, 26, 0.88); /* dark backdrop while recording */

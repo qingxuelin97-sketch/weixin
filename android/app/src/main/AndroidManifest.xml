@@ -88,5 +88,8 @@
          permissions never reach the user). Without these, ASR push-to-talk and
          call-page recording silently fail on every device. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- M-J6b: 视频通话的前置摄像头小窗（getUserMedia video）。同 RECORD_AUDIO：
+         不声明 = WebView 权限请求被系统静默拒绝。 -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 </manifest>

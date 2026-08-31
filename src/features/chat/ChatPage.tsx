@@ -28,7 +28,7 @@ import { useComposerPanel } from './useComposerPanel';
 import { storyRunning, applyChoice } from '../../ai/story-service';
 import type { StorySaveRow } from '../../ai/story-gm';
 import { useAppStore } from '../../store/appStore';
-import { showPrompt, showConfirm } from '../../components/dialog';
+import { showPrompt, showConfirm, showActionSheet } from '../../components/dialog';
 import { regenerateLastTurn } from '../../ai/engine';
 import { useGuard } from '../../app/useGuard';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
@@ -1452,7 +1452,15 @@ export function ChatPage() {
               composer.closeAll();
               setBillSheetOpen(true);
             }
-            else if (key === 'call' && conv.type === 'single') navigate(`/call/${convId}`);
+            else if (key === 'call' && conv.type === 'single') {
+              // 名实相符 (M-J6)：这一格从 M5 起就写着「视频通话」，点进去却是
+              // 语音页。现在真的问一句——两种通话都从这里走。
+              composer.closeAll();
+              void showActionSheet({ actions: ['视频通话', '语音通话'] }).then((i) => {
+                if (i === 0) navigate(`/call/${convId}?video=1`);
+                else if (i === 1) navigate(`/call/${convId}`);
+              });
+            }
             else if (key === 'album') albumInputRef.current?.click();
             else if (key === 'location') {
               composer.closeAll();

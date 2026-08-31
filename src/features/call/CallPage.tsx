@@ -33,6 +33,7 @@ import {
   hangupActiveCall,
   setCallMuted,
 } from './call-host';
+import { PeerStage, SelfCam } from './VideoStage';
 import { isAsrReady, transcribe, friendlyAsrError, AsrError } from '../../llm/asr';
 import {
   isRecordingSupported,
@@ -74,6 +75,9 @@ export function CallPage() {
   // gone, so mounting over a live call for THIS conversation opens connected —
   // no re-ring, no re-dial, and above all no second session.
   const resumed = getActiveCall()?.convId === convId;
+  // 视频通话 (M-J6b): the entry choice or the live call's own flag (a resume
+  // must keep the mode even if the pill's URL lost the query).
+  const video = params.get('video') === '1' || (resumed && Boolean(getActiveCall()?.video));
   const [phase, setPhase] = useState<Phase>(() =>
     resumed ? 'active' : incoming ? (autoAccept ? 'active' : 'incoming') : 'dialing',
   );
@@ -95,6 +99,7 @@ export function CallPage() {
   const muted = live?.convId === convId ? live.muted : false;
   const [asrOk, setAsrOk] = useState<boolean | null>(null);
   const [talkHeld, setTalkHeld] = useState(false);
+  const [camOn, setCamOn] = useState(true);
   const [transcribing, setTranscribing] = useState(false);
   const [textDraft, setTextDraft] = useState('');
   const subsRef = useRef<HTMLDivElement>(null);
@@ -160,6 +165,7 @@ export function CallPage() {
           peerId: peer.id,
           peerName: peer.remark ?? peer.name,
           direction: incoming ? 'in' : 'out',
+          video,
           sessionOpts: {
             convId,
             peer,
@@ -204,8 +210,8 @@ export function CallPage() {
         content: durationMs == null ? missedLabel : undefined,
         meta:
           durationMs == null
-            ? { direction: incoming ? 'in' : 'out' }
-            : { direction: incoming ? 'in' : 'out', durationMs },
+            ? { direction: incoming ? 'in' : 'out', ...(video ? { video: true } : {}) }
+            : { direction: incoming ? 'in' : 'out', durationMs, ...(video ? { video: true } : {}) },
         status: 'sent',
         createdAt: Date.now(),
       });
@@ -362,7 +368,13 @@ export function CallPage() {
           : '通话已结束';
 
   return (
-    <div className="call-page">
+    <div className={`call-page${video ? ' call-page--video' : ''}`}>
+      {video && phase === 'active' && persona && (
+        <>
+          <PeerStage peer={peer} speaking={speaking} />
+          <SelfCam on={camOn} />
+        </>
+      )}
       <div className="call-page__id">
         <Avatar color={peer.avatarColor} text={peer.avatarText} imageRef={peer.avatarRef} size={88} />
         <div className="call-page__name">{peer.remark ?? peer.name}</div>
@@ -455,6 +467,18 @@ export function CallPage() {
             </button>
             <span className="call-page__hint">{phase === 'dialing' ? '取消' : '挂断'}</span>
           </div>
+          {phase === 'active' && video && (
+            <div className="call-page__ctrl">
+              <button
+                className={`call-page__btn call-page__btn--mute${camOn ? '' : ' call-page__btn--mute-on'}`}
+                aria-label={camOn ? '关闭摄像头' : '打开摄像头'}
+                onClick={() => setCamOn((v) => !v)}
+              >
+                <CamIcon off={!camOn} />
+              </button>
+              <span className="call-page__hint">{camOn ? '关摄像头' : '开摄像头'}</span>
+            </div>
+          )}
           {phase === 'active' && (
             <div className="call-page__ctrl">
               <button
@@ -498,6 +522,20 @@ function MuteIcon({ on }: { on: boolean }) {
           strokeWidth="2.6"
           strokeLinecap="round"
         />
+      )}
+    </svg>
+  );
+}
+
+function CamIcon({ off }: { off: boolean }) {
+  return (
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden>
+      <path
+        d="M4 10a2.5 2.5 0 0 1 2.5-2.5h12A2.5 2.5 0 0 1 21 10v12a2.5 2.5 0 0 1-2.5 2.5h-12A2.5 2.5 0 0 1 4 22V10zm19 4.5 6-4.5v12l-6-4.5v-3z"
+        fill="currentColor"
+      />
+      {off && (
+        <path d="M5 29 29 3" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
       )}
     </svg>
   );

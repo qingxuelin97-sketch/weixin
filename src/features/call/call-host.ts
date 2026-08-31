@@ -29,6 +29,8 @@ export interface ActiveCallSnapshot {
   peerId: string;
   peerName: string;
   direction: 'in' | 'out';
+  /** 视频通话 (M-J6b): drives the record label and the return-URL from the pill. */
+  video: boolean;
   /** epoch ms of connect — the pill's ticking clock derives from this. */
   connectedAt: number;
   subs: readonly CallTurn[];
@@ -68,6 +70,7 @@ export interface AdoptCallOpts {
   peerId: string;
   peerName: string;
   direction: 'in' | 'out';
+  video?: boolean;
   /** Everything CallSession needs except the UI callbacks this host owns. */
   sessionOpts: Omit<CallSessionOpts, 'onLine' | 'onSpeaking' | 'onReady'>;
 }
@@ -97,6 +100,7 @@ export function adoptCall(opts: AdoptCallOpts): ActiveCallSnapshot {
     peerId: opts.peerId,
     peerName: opts.peerName,
     direction: opts.direction,
+    video: opts.video ?? false,
     connectedAt: opts.sessionOpts.now(),
     subs: [],
     speaking: false,
@@ -135,7 +139,7 @@ export async function hangupActiveCall(): Promise<void> {
       convId: snap.convId,
       senderId: snap.direction === 'in' ? snap.peerId : 'self',
       type: 'call',
-      meta: { direction: snap.direction, durationMs },
+      meta: { direction: snap.direction, durationMs, ...(snap.video ? { video: true } : {}) },
       status: 'sent',
       createdAt: Date.now(),
     });

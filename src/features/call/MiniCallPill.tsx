@@ -42,7 +42,7 @@ export function MiniCallPill() {
     <div className="call-pill" role="status">
       <button
         className="call-pill__body"
-        onClick={() => navigate(`/call/${call.convId}?in=1`)}
+        onClick={() => navigate(`/call/${call.convId}?in=1${call.video ? '&video=1' : ''}`)}
         aria-label={`返回与${call.peerName}的通话`}
       >
         <span className="call-pill__wave" aria-hidden>

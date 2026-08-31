@@ -66,3 +66,44 @@ M-D2 出通话壳（能响、能接、能挂），M-H1 让她会主动打来，*
   `end()` 第一件事就是 fire 它——CallPage 卸载路径（返回手势）只调 `end()`，
   此前纪要整个丢失；挂断按钮分支 join 同一个 promise，绝不双写。
   转红：`j1-mind.test.ts`（end() 单独落纪要 / summarize 只跑一次 / memory 只一行）。
+
+## M-J6 · 通话大版本
+
+### 体验修复（J6a）
+
+- **barge-in**：`CallSession.holdFloor()`——abort 生成 + 停 TTS + speaking=false，但**不
+  end**。`onTalkDown` 第一行就调（按下即闭嘴，不等录音结束和 ASR 往返）。
+- **句间预取**：`respond()` 拿到全部台词后，第 2 句起 `tts.ensure()` fire-and-forget
+  预热，第一句还在播时后续句已在合成——消灭句间静默。
+- **静音**：`setMuted(true)` 立即停播；后续台词只走字幕节拍不进 TTS；可恢复。
+- **最小化**：会话所有权从 CallPage 的 effect 迁到 `call-host.ts` 模块单例
+  （`adoptCall`/`getActiveCall`/`hangupActiveCall`/`setCallMuted`，immutable 快照 +
+  `useSyncExternalStore`）。切走不断线；壳里挂 `MiniCallPill`（绿胶囊：波纹 + mm:ss +
+  挂断）。挂断唯一路径：页面按钮和胶囊按钮走同一个 `hangupActiveCall`，通话记录 +
+  纪要 stamp 只写一次。恢复路径：`?in=1` + `getActiveCall()?.convId === convId` → 直接
+  active，不重铃不重拨。
+- **诚实不做**（需原生 AudioManager/逐句 emotion 链，未装假开关）：听筒/免提切换、
+  通话 TTS emotion。
+
+### 视频通话（J6b）
+
+- **入口名实相符**：聊天页「视频通话」格 → ActionSheet 真二选一（视频通话/语音通话），
+  视频走 `/call/:id?video=1`。
+- **video 旗全链路**：CallPage 入参或恢复时读 host 旗 → `adoptCall({video})` → 快照 →
+  挂断/未接记录 `meta.video: true`（语音记录**不带**该键）→ 投影「[视频通话 …]」/
+  「[对方打来视频通话，未接通]」→ 气泡换摄像机图标（文案仍「通话时长 mm:ss」，
+  真微信靠图标区分）→ 胶囊返回 URL 带 `&video=1`。
+- **她的画面是诚实的假**（`VideoStage.tsx`）：头像全屏 Ken Burns 慢漂 + 呼吸缩放 +
+  说话辉光（`--color-call-speaking-glow`）+ 暗角/噪点「暗房手机摄像头」质感层。
+  全部 CSS transform/opacity 动画，**禁 rAF**（截图门禁只能冻结 CSS/WAAPI）。
+- **你的画面是真的**：`SelfCam` getUserMedia 前置镜头 PiP；失败/拒权降级为安静的
+  「摄像头不可用」占位卡，绝不报错——通话本体不依赖摄像头。清理必
+  `getTracks().stop()`（镜头灯不能常亮）。manifest 声明 CAMERA（不声明 = WebView
+  权限请求被系统静默拒绝）。
+- 转红：`tests/unit/j6-call.test.ts`（16 条：holdFloor 不终结会话 / 预取时序 / 静音零
+  play / 单例收养与唯一挂断 / video 旗三级断言 / 接线扫描）。
+
+### 群语音通话（J6 裁减位）
+
+未做，见 docs/rounds/m-j.md 的诚实清单。设计意向：导演决定谁接话、头像宫格 +
+说话高亮、每轮 ≤1 导演 + 1 演员发声的成本闸。

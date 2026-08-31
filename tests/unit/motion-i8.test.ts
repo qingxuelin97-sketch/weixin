@@ -553,6 +553,12 @@ describe('motion stays inside its guard rails', () => {
       'opacity alternative is actively dangerous: a retained pseudo-element on a card ' +
       'wrapper is exactly the containing-block trap that shrank the full-screen image ' +
       'viewer in M-I8 (CLAUDE.md 3.5).',
+    'src/features/call/call.css:translate':
+      'M-J6b video stage: the standalone translate property IS transform-class (composited, ' +
+      'no layout, frozen by the screenshot gate exactly like transform) — it exists so the ' +
+      '26s drift can compose with the 7s transform:scale breathe on ONE element without the ' +
+      'two keyframes clobbering each other\'s transform. A wrapper div per layer would ' +
+      'reintroduce the containing-block trap above.',
   };
 
   it('only transform and opacity are animated', () => {
