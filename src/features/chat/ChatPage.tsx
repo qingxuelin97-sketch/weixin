@@ -465,14 +465,17 @@ export function ChatPage() {
   // in until the target row exists, scrolls it to center and flashes it once.
   // Keyed so re-renders don't re-run the jump, but a NEW hit in the same
   // conversation does.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const atParam = searchParams.get('at');
+  // Nonce (M-J0): a quote tap on the SAME message twice must re-anchor, so the
+  // jump key includes it — without it the anchoredKey guard eats the second tap.
+  const atNonce = searchParams.get('n') ?? '';
   const [flashId, setFlashId] = useState<number | null>(null);
   const anchoredKey = useRef<string | null>(null);
   useEffect(() => {
     const at = atParam ? Number(atParam) : NaN;
     if (!Number.isFinite(at) || !threadReady) return;
-    const key = `${convId}:${at}`;
+    const key = `${convId}:${at}:${atNonce}`;
     if (anchoredKey.current === key) return;
     anchoredKey.current = key;
     let alive = true;
@@ -502,7 +505,13 @@ export function ChatPage() {
     return () => {
       alive = false;
     };
-  }, [convId, atParam, threadReady, loadOlderMessages]);
+  }, [convId, atParam, atNonce, threadReady, loadOlderMessages]);
+
+  // Quote tap (M-J0): jump to the quoted message through the SAME ?at= anchor
+  // path the search hits use — one jump implementation, not two.
+  const onQuoteTap = (quotedId: number) => {
+    setSearchParams({ at: String(quotedId), n: String(Date.now()) }, { replace: true });
+  };
 
   // Is a story playing here? Re-checked as the transcript grows, which is also
   // when a run ends or pauses. Never throws into the page: an unreadable save
@@ -532,7 +541,10 @@ export function ChatPage() {
     // `setQuote(null)` — the quote chip then stayed wedged in the composer for
     // the rest of the session. The quote menu item has no `isGroup` guard, so
     // this was a fully reachable path, just a broken one.
-    const quoteMeta = quote ? { quote: quote.text } : undefined;
+    // quoteId rides along (M-J0): the schema reserved reply_to_id since M1 but
+    // nothing ever wrote it — the collected msgId evaporated right here, which
+    // is why quote bubbles could never jump back to their source.
+    const quoteMeta = quote ? { quote: quote.text, quoteId: quote.msgId } : undefined;
     setQuote(null);
 
     // Group: the director stages a cast; single: one persona replies.
@@ -928,6 +940,19 @@ export function ChatPage() {
     if (FAVORITABLE.includes(m.type) && !m.isRecalled) {
       items.push({ label: '收藏', onSelect: () => void favoriteMsg(m) });
     }
+    // 转文字 lives HERE, not on double-click (M-J0): WeChat muscle memory is
+    // long-press → 转文字, and the old onDoubleClick was undiscoverable on a
+    // phone. The reveal persists in meta so it survives re-renders and reloads.
+    if (m.type === 'voice' && !m.isRecalled) {
+      items.push({
+        label: m.meta?.voiceTextShown ? '收起转写' : '转文字',
+        onSelect: () =>
+          void updateMessage({
+            ...m,
+            meta: { ...m.meta, voiceTextShown: !m.meta?.voiceTextShown },
+          }),
+      });
+    }
     items.push({
       label: '多选',
       onSelect: () => {
@@ -1069,6 +1094,7 @@ export function ChatPage() {
                   onMoneyTap={onMoneyTap}
                   onImageTap={onImageTap}
                   onMergedTap={(m) => navigate(`/merged/${convId}/${m.id}`)}
+                  onQuoteTap={onQuoteTap}
                   onContactTap={(m) => {
                     const cid = m.meta?.contactId as string | undefined;
                     if (cid && contactById(cid)) navigate(`/contact/${cid}`);

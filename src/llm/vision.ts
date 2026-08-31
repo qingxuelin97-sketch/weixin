@@ -30,12 +30,21 @@ export type ContentPart =
  * treated as text-only: guessing wrong costs a hard 400 on every single turn,
  * while guessing conservatively costs one missed capability that the user can
  * turn on explicitly.
+ *
+ * M-J0: the `-v\d` branch is gone — it matched Zen's TEXT models
+ * (deepseek-v4-flash-free, mimo-v2.5-free), so any conversation with a photo
+ * got a hard 400 every turn and she "stopped replying". Version suffixes say
+ * nothing about eyesight. The heuristic is now only a FALLBACK: a provider's
+ * declared `visionModels` list, when present, decides alone (per-slot
+ * declaration in the API settings beats any name-pattern guess).
  */
 const VISION_MODEL_RE =
-  /(vision|vl\b|-v\d|gpt-4o|gpt-4\.1|gpt-5|claude-3|claude-4|claude-opus|claude-sonnet|gemini|qwen-?vl|internvl|minicpm-v|llava|abab.*vision|glm-4v|step-1v)/i;
+  /(vision|vl\b|gpt-4o|gpt-4\.1|gpt-5|claude-3|claude-4|claude-opus|claude-sonnet|gemini|qwen-?vl|internvl|minicpm-v|llava|abab.*vision|glm-4v|step-1v)/i;
 
-export function modelSupportsVision(model: string | undefined): boolean {
-  return !!model && VISION_MODEL_RE.test(model);
+export function modelSupportsVision(model: string | undefined, declared?: string[]): boolean {
+  if (!model) return false;
+  if (declared && declared.length > 0) return declared.includes(model);
+  return VISION_MODEL_RE.test(model);
 }
 
 /**

@@ -16,7 +16,7 @@
 import { sendUserMessage } from '../ai/engine';
 import { sendGroupMessage } from '../ai/group-engine';
 import type { GroupMember } from '../ai/director';
-import { drainRepliesRaw } from './bridge';
+import { peekRepliesRaw, ackReplies } from './bridge';
 import { useAppStore } from '../store/appStore';
 import { repo } from '../db/repo';
 import { logError } from '../lib/errlog';
@@ -197,9 +197,16 @@ function storeDeps(): ReplyDispatchDeps {
 export async function drainNativeReplies(): Promise<ReplyDispatchResult> {
   const empty: ReplyDispatchResult = { drained: 0, sent: 0, declinedCalls: 0, skipped: 0 };
   try {
-    const items = parseReplyItems(await drainRepliesRaw());
-    if (items.length === 0) return empty;
+    // Two-phase (M-J0): peek → dispatch → ack. The queue row survives until
+    // the dispatch loop has run, so a process kill on re-foreground replays
+    // the batch instead of eating it. Malformed rows are acked too — parsing
+    // drops them on purpose, and replaying garbage forever helps nobody.
+    const raw = await peekRepliesRaw();
+    const rawCount = Array.isArray(raw) ? Math.min(raw.length, MAX_ITEMS) : 0;
+    const items = parseReplyItems(raw);
+    if (rawCount === 0) return empty;
     const res = await dispatchReplies(items, storeDeps());
+    await ackReplies(rawCount);
     // One greppable line for the CI emulator loop (device-test.yml asserts it).
     console.log(
       `AIWX-REPLYQ drained=${res.drained} sent=${res.sent} declined=${res.declinedCalls} skipped=${res.skipped}`,

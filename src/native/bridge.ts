@@ -36,7 +36,8 @@ interface AiwxNativePlugin {
   }): Promise<{ posted: boolean }>;
   notifyCall(opts: { convId: string; name: string; id?: number }): Promise<{ posted: boolean }>;
   cancelNotify(opts: { id: number }): Promise<void>;
-  drainReplies(): Promise<{ items: unknown }>;
+  peekReplies(): Promise<{ items: unknown }>;
+  ackReplies(opts: { count: number }): Promise<void>;
   batteryIgnored(): Promise<{ ignored: boolean }>;
   requestBatteryIgnore(): Promise<{ launched: boolean }>;
   openBatterySettings(opts: { vendor: string }): Promise<{ opened: string }>;
@@ -144,11 +145,25 @@ export async function cancelNotify(id: number): Promise<void> {
   }
 }
 
-/** Raw drain — validation lives in reply-drain.ts (parseReplyItems). */
-export async function drainRepliesRaw(): Promise<unknown> {
+/** Raw peek — validation lives in reply-drain.ts (parseReplyItems). */
+export async function peekRepliesRaw(): Promise<unknown> {
   if (!isNative()) return [];
-  const r = await withDeadline(plugin.drainReplies(), 'drainReplies');
+  const r = await withDeadline(plugin.peekReplies(), 'peekReplies');
   return r.items;
+}
+
+/**
+ * Ack the first `count` queue rows AFTER dispatch (M-J0). Two-phase so a
+ * process kill between bridge call and dispatch replays instead of losing
+ * the batch. Best-effort: a failed ack means a duplicate next pass, not loss.
+ */
+export async function ackReplies(count: number): Promise<void> {
+  if (!isNative() || count <= 0) return;
+  try {
+    await withDeadline(plugin.ackReplies({ count }), 'ackReplies');
+  } catch {
+    /* replay next pass */
+  }
 }
 
 export async function batteryIgnored(): Promise<boolean> {

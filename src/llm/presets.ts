@@ -5,7 +5,7 @@
  * rotates; MiniMax's TTS/model ids version every few months).
  */
 import { OpenAiCompatibleProvider, type ProviderConfig } from './openai-compatible';
-import type { GenerateOptions, CompletionResult } from './types';
+import type { GenerateOptions } from './types';
 
 export interface PresetDescriptor {
   kind: string;
@@ -62,11 +62,13 @@ export class DeepSeekProvider extends OpenAiCompatibleProvider {
     return `${root}/chat/completions`;
   }
   // Only DeepSeek understands the prefix flag (the base class strips it).
+  // Flag the ALREADY-BUILT messages by index instead of rebuilding from
+  // opts.messages: the base class may have expanded content into multi-part
+  // (text + image_url) form, and a rebuild silently drops the image parts.
   protected override buildBody(opts: GenerateOptions): Record<string, unknown> {
     const body = super.buildBody(opts);
-    body.messages = opts.messages.map((m) =>
-      m.prefix ? { role: m.role, content: m.content, prefix: true } : { role: m.role, content: m.content },
-    );
+    const built = body.messages as Array<Record<string, unknown>>;
+    body.messages = built.map((m, i) => (opts.messages[i]?.prefix ? { ...m, prefix: true } : m));
     return body;
   }
 }
@@ -78,9 +80,6 @@ export class MiniMaxProvider extends OpenAiCompatibleProvider {
     // MiniMax rejects response_format on some models; keep JSON via prompt instead.
     delete body.response_format;
     return body;
-  }
-  protected override extract(data: unknown): CompletionResult {
-    return super.extract(data);
   }
 }
 

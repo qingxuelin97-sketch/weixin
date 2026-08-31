@@ -542,7 +542,10 @@ export async function handleJointPlan(
     authorId: a,
     text: texts.a,
     imageRefs: [],
-    isNsfw: false,
+    // M-J0: was hard-coded false while the ROUTE was tier-derived — a
+    // full-tier pair could publish permissive-channel output stamped 全年龄.
+    // The stamp now tells the truth the router already knew.
+    isNsfw: tier === 'full',
     createdAt: at,
   });
   await d.addMoment({
@@ -550,7 +553,7 @@ export async function handleJointPlan(
     authorId: b,
     text: texts.b,
     imageRefs: [],
-    isNsfw: false,
+    isNsfw: tier === 'full',
     createdAt: at + jointStaggerMs(dmId, at),
   });
 }
@@ -697,7 +700,8 @@ export async function handleGroupEvent(
       authorId: initiator,
       text,
       imageRefs: pickImages(`gevt:${eventId}`, aftermathImageCount(eventId), pInit?.imageTags),
-      isNsfw: false,
+      isNsfw: tier === 'full', // M-J0: same truth-in-stamping fix as joint_plan
+
       createdAt: at,
     });
   }

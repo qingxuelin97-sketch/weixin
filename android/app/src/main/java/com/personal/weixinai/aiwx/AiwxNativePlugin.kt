@@ -135,9 +135,12 @@ class AiwxNativePlugin : Plugin() {
 
     // ---------------------------------------------------------- reply queue
 
+    // Two-phase since M-J0: peek → JS dispatches → ack. The old one-shot
+    // drainReplies cleared the store BEFORE dispatch, so a process kill in
+    // between dropped the whole batch of hand-typed replies.
     @PluginMethod
-    fun drainReplies(call: PluginCall) {
-        val raw = ReplyQueue.drain(context)
+    fun peekReplies(call: PluginCall) {
+        val raw = ReplyQueue.peek(context)
         val ret = JSObject()
         // Hand the parsed array across the bridge; JS revalidates every item
         // anyway (src/native/reply-drain.ts), so a corrupt store degrades to [].
@@ -148,6 +151,13 @@ class AiwxNativePlugin : Plugin() {
         }
         ret.put("items", arr)
         call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun ackReplies(call: PluginCall) {
+        val count = call.getInt("count") ?: return call.reject("count required")
+        ReplyQueue.ack(context, count)
+        call.resolve()
     }
 
     // -------------------------------------------------------------- battery

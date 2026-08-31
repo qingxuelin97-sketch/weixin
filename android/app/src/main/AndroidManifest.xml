@@ -83,4 +83,10 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- M-J0: getUserMedia in the WebView needs BOTH declared, or Capacitor's
+         onPermissionRequest is auto-DENIED without a prompt (undeclared runtime
+         permissions never reach the user). Without these, ASR push-to-talk and
+         call-page recording silently fail on every device. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 </manifest>

@@ -348,7 +348,11 @@ export function gossipFacts(
   const stamp = `${dmConvId(...cast.map((p) => p.id))}_${now}`;
   const [teller, ...listeners] = cast;
   const base = {
-    importance: 2 as const,
+    // 3, not 2 (M-J0): maintainMemory's fast lane archives importance≤2 rows
+    // untouched for 30 days, and gossip rows are written for the AI side — the
+    // single-chat touchFacts path never refreshes them. At 2 every piece of
+    // gossip self-destructed in exactly 30 days, no matter how juicy.
+    importance: 3 as const,
     sensitivity: 'normal' as const,
     evidenceMsgIds: [] as number[],
     status: 'confirmed' as const,

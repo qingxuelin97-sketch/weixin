@@ -163,8 +163,10 @@ object Notifier {
             .addAction(R.drawable.ic_stat_aiwx, "接听", accept)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
-        // A call that never gets answered must not ring the shade forever —
-        // the JS side cancels on timeout, but flag insistent behaviour off.
+        // A call that never gets answered must not ring the shade forever.
+        // The JS timeout-cancel this comment used to promise did not exist
+        // until M-J0 — it lives in background-notify.ts (CALL_NOTIF_TTL_MS,
+        // plus early cancel when the in-app ring resolves). Insistent off too.
         n.flags = n.flags and Notification.FLAG_INSISTENT.inv()
         NotificationManagerCompat.from(ctx).notify(notifId, n)
         return true

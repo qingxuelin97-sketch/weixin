@@ -53,13 +53,34 @@ object ReplyQueue {
         Log.i(TAG, "enqueued kind=$kind conv=$convId size=" + arr.length())
     }
 
-    /** Atomically read-and-clear. Returns the raw JSON array string. */
+    /**
+     * Read WITHOUT clearing (M-J0). The old read-and-clear drain() lost the
+     * whole batch if the process died between the bridge call and the JS
+     * dispatch — the exact moment (return to foreground) Android most likes to
+     * reclaim memory. The JS side now peeks, dispatches through the normal
+     * send path, then acks the count it consumed. A kill mid-dispatch re-plays
+     * the batch next foreground: a rare duplicate beats silently losing up to
+     * 50 messages the user typed with their own hands.
+     */
     @Synchronized
-    fun drain(ctx: Context): String {
+    fun peek(ctx: Context): String {
+        return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
+    }
+
+    /** Remove the first [count] items — the ones a completed dispatch consumed. */
+    @Synchronized
+    fun ack(ctx: Context, count: Int) {
+        if (count <= 0) return
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val raw = prefs.getString(KEY, "[]") ?: "[]"
-        prefs.edit().putString(KEY, "[]").commit()
-        return raw
+        val arr = try {
+            JSONArray(prefs.getString(KEY, "[]"))
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        val rest = JSONArray()
+        for (i in count until arr.length()) rest.put(arr.get(i))
+        prefs.edit().putString(KEY, rest.toString()).commit()
+        Log.i(TAG, "acked $count, remaining " + rest.length())
     }
 
     @Synchronized

@@ -13,16 +13,16 @@
 import { enqueue } from './scheduler';
 import { simulate, type SimInput, type SimPlan } from './simulate';
 import { repo } from '../db/repo';
-
-const BARRIER_KEY = 'lastForegroundAt';
+// No alias: the settings-key scanner follows imports by their ORIGINAL name.
+import { BACKFILL_BARRIER_KEY } from '../lib/settings-keys';
 
 /** Read the barrier. Returns undefined on a first-ever launch. */
 export async function getBarrier(): Promise<number | undefined> {
-  return repo.getSetting<number>(BARRIER_KEY);
+  return repo.getSetting<number>(BACKFILL_BARRIER_KEY);
 }
 
 export async function setBarrier(now: number): Promise<void> {
-  await repo.putSetting(BARRIER_KEY, now);
+  await repo.putSetting(BACKFILL_BARRIER_KEY, now);
 }
 
 /**

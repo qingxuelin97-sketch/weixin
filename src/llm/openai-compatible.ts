@@ -26,6 +26,13 @@ export interface ProviderConfig {
   extraHeaders?: Record<string, string>;
   defaultModels?: string[];
   /**
+   * Model ids the USER declared as vision-capable for this slot (M-J0). When
+   * non-empty this list decides alone; when absent the name heuristic in
+   * vision.ts is the fallback. Exists because gateways serve text models with
+   * version-y names and vision models with plain ones — no regex survives that.
+   */
+  visionModels?: string[];
+  /**
    * Called when the bad_model self-heal fetched a fresh catalog, so the caller
    * can persist it (service wires this to putProvider + invalidateRouter).
    */
@@ -94,7 +101,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     // cannot see — a text-only model handed image parts returns a hard 400 on
     // every turn, which would read as "she stopped replying".
     const withImages =
-      opts.images?.length && modelSupportsVision(opts.model)
+      opts.images?.length && modelSupportsVision(opts.model, this.cfg.visionModels)
         ? attachImages(plain, opts.images)
         : plain;
     const body: Record<string, unknown> = {

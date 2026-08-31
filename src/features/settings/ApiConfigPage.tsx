@@ -261,6 +261,27 @@ export function ApiConfigPage() {
                 spellCheck={false}
               />
             </div>
+            <div className="field field--divided">
+              <span className="field__label">可看图的模型（逗号分隔，可留空）</span>
+              <input
+                className="field__input"
+                value={(editing.visionModels ?? []).join(', ')}
+                onChange={(e) =>
+                  setEditing({
+                    ...editing,
+                    visionModels: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
+                  })
+                }
+                onBlur={() => {
+                  void repo.putProvider(editing);
+                  invalidateRouter();
+                }}
+                spellCheck={false}
+              />
+              <span className="field__hint">
+                填了就以这里为准：只有列出的模型会收到图片。留空则按模型名猜（猜不出的当纯文本，防止发图后每轮 400）
+              </span>
+            </div>
             <div className="field">
               <span className="field__label">API Key（加密存本机，不入库、不上传）</span>
               <input

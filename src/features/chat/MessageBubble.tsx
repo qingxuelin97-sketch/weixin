@@ -45,6 +45,12 @@ interface Props {
   /** Re-send a message whose delivery failed. */
   onRetry?: (msg: MessageVM) => void;
   /**
+   * Tapping the quote block under a reply (M-J0) — jumps the thread to the
+   * quoted message. Only wired when the message carries `meta.quoteId`; quotes
+   * from before M-J0 stored only the text and stay inert.
+   */
+  onQuoteTap?: (quotedId: number) => void;
+  /**
    * 「已读」 marker on one's own message (M-I16, opt-in via the readReceipts
    * setting — WeChat itself has no read receipts, so this defaults off).
    */
@@ -52,7 +58,7 @@ interface Props {
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark, onQuoteTap }: Props) {
   // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
   // movement and had no fired guard, so releasing a long press on an image
   // ALSO opened the viewer. The hook fixes both.
@@ -155,7 +161,16 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
           <BubbleContent msg={msg} isSelf={isSelf} suggestIds={suggestIds} nameOf={nameOf} />
         </div>
         {msg.meta?.quote != null && (
-          <div className="msg-quote">{String(msg.meta.quote)}</div>
+          <div
+            className="msg-quote"
+            onClick={
+              onQuoteTap && typeof msg.meta.quoteId === 'number'
+                ? () => onQuoteTap(msg.meta!.quoteId as number)
+                : undefined
+            }
+          >
+            {String(msg.meta.quote)}
+          </div>
         )}
         {isSelf && readMark && <span className="msg-read">已读</span>}
       </div>
@@ -170,8 +185,9 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
 
 /**
  * Voice bubble: width tracks the real audio duration, tap plays it, the unread
- * red dot clears on first play, and long-press-style "转文字" reveals the text
- * (free and exact, since we synthesized the audio from that text).
+ * red dot clears on first play. 转文字 moved to the long-press menu (M-J0) —
+ * it toggles `meta.voiceTextShown`, which this bubble merely renders; the old
+ * onDoubleClick was where WeChat muscle memory would never look.
  */
 function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
   const durMs = (msg.meta?.durationMs as number) ?? 2000;
@@ -180,7 +196,7 @@ function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
   const width = Math.min(60 + dur * 8, 180);
   const [played, setPlayed] = useState(Boolean(msg.meta?.played));
   const [playing, setPlaying] = useState(false);
-  const [showText, setShowText] = useState(false);
+  const showText = Boolean(msg.meta?.voiceTextShown);
 
   const onTap = async () => {
     setPlayed(true);
@@ -196,7 +212,6 @@ function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
         className={`bubble bubble--${isSelf ? 'self' : 'other'} bubble--voice`}
         style={{ width }}
         onClick={onTap}
-        onDoubleClick={() => setShowText((v) => !v)}
       >
         <span className={`voice-waves${playing ? ' voice-waves--playing' : ''}`} aria-hidden>
           <i /> <i /> <i />

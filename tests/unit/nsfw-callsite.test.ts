@@ -530,6 +530,13 @@ describe('a photo cannot take a different route than the words around it', () =>
     const { attachImages, modelSupportsVision } = await import('../../src/llm/vision');
     expect(modelSupportsVision('deepseek-chat')).toBe(false);
     expect(modelSupportsVision('gpt-4o')).toBe(true);
+    // M-J0: Zen's TEXT models with version-y names must NOT be guessed as
+    // vision — the old `-v\d` branch matched them and every photo turn 400'd.
+    expect(modelSupportsVision('deepseek-v4-flash-free')).toBe(false);
+    expect(modelSupportsVision('mimo-v2.5-free')).toBe(false);
+    // A declared per-provider list decides ALONE, in both directions.
+    expect(modelSupportsVision('big-pickle', ['big-pickle'])).toBe(true);
+    expect(modelSupportsVision('gpt-4o', ['big-pickle'])).toBe(false);
     // The adapter gates on this; handing image parts to a text model is a hard
     // 400 on every turn, which reads to the user as "she stopped replying".
     const msgs = [{ role: 'user', content: '这是什么' }];

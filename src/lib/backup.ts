@@ -69,6 +69,7 @@
  * whole stores with no marker, no snapshot and no rollback.
  */
 import { STORES, idbGetAll, idbPut, openDB } from '../db/idb';
+import { BACKFILL_BARRIER_KEY } from './settings-keys';
 import {
   readStoreRows,
   writeStoreRow,
@@ -722,7 +723,7 @@ export async function restoreBackup(file: BackupFile, now: number): Promise<Rest
 
   // The restored file may be days old; without re-arming the barrier the next
   // foreground pass would "backfill" that whole gap with fabricated activity.
-  await writeStoreRow('settings', { key: 'lastForegroundAt', value: now });
+  await writeStoreRow('settings', { key: BACKFILL_BARRIER_KEY, value: now });
 
   return { restored, unknownStores, snapshot };
 }
@@ -804,7 +805,7 @@ export async function applyIncrementalBackup(
   }
   await writeStoreRow('settings', { key: RESTORE_IN_PROGRESS_KEY, value: 0 });
   await clearBackupState();
-  await writeStoreRow('settings', { key: 'lastForegroundAt', value: now });
+  await writeStoreRow('settings', { key: BACKFILL_BARRIER_KEY, value: now });
   return applied;
 }
 

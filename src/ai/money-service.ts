@@ -11,7 +11,7 @@ import type {
   MessageVM,
   PersonaVM,
 } from '../data/types';
-import { splitLuckyPacket } from '../lib/money';
+import { splitLuckyPacket, seededRng } from '../lib/money';
 import { claimShare, isFullyClaimed, markBestLuck, appendTx, grabDelayMs } from '../lib/wallet';
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
@@ -267,9 +267,12 @@ export async function sendTransfer(
   });
 
   // The peer accepts a few seconds later, like a real person noticing it.
+  // seededRng, not amount-modulo (M-J0): `amountFen % 5` meant the SAME amount
+  // always produced the SAME delay — ¥1.00 and ¥6.00 too — which is neither
+  // human nor the constitution's sanctioned determinism source (rule 4).
   await enqueue({
     kind: 'transfer_accept',
-    fireAt: now + 4_000 + (amountFen % 5) * 1_000,
+    fireAt: now + 4_000 + Math.floor(seededRng(`${id}:accept`)() * 5_000),
     payload: { transferId: id, convId },
     now,
   });

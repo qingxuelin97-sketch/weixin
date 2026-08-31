@@ -26,7 +26,7 @@
  *    degrades to WeChat's own "[你收到一条消息]" (NO_PREVIEW_BODY).
  */
 import type { MessageVM } from '../data/types';
-import { notifyMessage, notifyCall, showBubble, overlayGranted, isNative } from './bridge';
+import { notifyMessage, notifyCall, cancelNotify, showBubble, overlayGranted, isNative } from './bridge';
 import { useAppStore } from '../store/appStore';
 import { repo } from '../db/repo';
 import { NO_PREVIEW_BODY, notificationId } from '../lib/notify';
@@ -40,6 +40,15 @@ export const INCOMING_CALL_PROB = 0.07;
 
 /** Trailing debounce so a multi-bubble turn posts ONE notification. */
 const BURST_MS = 1_500;
+
+/**
+ * How long an un-answered call notification may live (M-J0). The Kotlin side
+ * posts it setOngoing (un-swipeable) with a comment promising "the JS side
+ * cancels on timeout" — that half simply did not exist, so a missed call left
+ * a permanent, un-dismissable 「来电」 in the shade. Slightly longer than the
+ * in-app RING_MS (30s) so the ring overlay's own miss path wins when both run.
+ */
+const CALL_NOTIF_TTL_MS = 35_000;
 
 export interface NativeNotifySettings {
   bubble: boolean;
@@ -105,6 +114,16 @@ export function startBackgroundNotify(): () => void {
 
   const seen = new Map<string, number>(); // convId → last seen message id
   const bursts = new Map<string, PendingBurst>();
+  // Armed call notifications (M-J0): each cancels itself after the ring window,
+  // and cancels EARLY the moment the in-app ring resolves (answer/decline/miss).
+  const callTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  let ringingConv: string | null = useAppStore.getState().incomingCall?.convId ?? null;
+  const dropCallNotif = (convId: string) => {
+    const t = callTimers.get(convId);
+    if (t) clearTimeout(t);
+    callTimers.delete(convId);
+    void cancelNotify(callNotifId(convId));
+  };
   // Prime with current state so hydration's initial load never notifies.
   for (const [convId, msgs] of Object.entries(useAppStore.getState().messages)) {
     const last = msgs.at(-1);
@@ -124,6 +143,12 @@ export function startBackgroundNotify(): () => void {
 
       if (surface === 'call') {
         await notifyCall(convId, title, callNotifId(convId));
+        const t = callTimers.get(convId);
+        if (t) clearTimeout(t);
+        callTimers.set(
+          convId,
+          setTimeout(() => dropCallNotif(convId), CALL_NOTIF_TTL_MS),
+        );
         return;
       }
 
@@ -145,6 +170,11 @@ export function startBackgroundNotify(): () => void {
   const onChange = () => {
     const s = useAppStore.getState();
     const appVisible = document.visibilityState === 'visible';
+    // Ring resolved in-app (answered / declined / rung out) → the shade must
+    // agree immediately, not after the TTL.
+    const nowRinging = s.incomingCall?.convId ?? null;
+    if (ringingConv && ringingConv !== nowRinging) dropCallNotif(ringingConv);
+    ringingConv = nowRinging;
     for (const [convId, msgs] of Object.entries(s.messages)) {
       const last = msgs.at(-1);
       if (!last) continue;
@@ -186,5 +216,7 @@ export function startBackgroundNotify(): () => void {
     unsub();
     for (const b of bursts.values()) clearTimeout(b.timer);
     bursts.clear();
+    for (const t of callTimers.values()) clearTimeout(t);
+    callTimers.clear();
   };
 }

@@ -568,7 +568,15 @@ async function generateAndPlayInner(
     const feed = playbackFeed(
       router.generate(
         { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
-        { messages, signal: ctrl.signal, ...(images.length ? { images } : {}) },
+        {
+          messages,
+          signal: ctrl.signal,
+          // M-J0: the persona editor's temperature knob only ever reached the
+          // GROUP engine — the main single-chat path fell back to the adapter
+          // default, so the most-used surface ignored the setting entirely.
+          temperature: persona.temperature,
+          ...(images.length ? { images } : {}),
+        },
         ctx,
         convId,
       ),

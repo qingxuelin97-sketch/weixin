@@ -304,6 +304,11 @@ export interface ProviderVM {
   fallbackBaseUrl?: string;
   keyAlias: string; // handle into keystore
   models: string[];
+  /**
+   * Model ids in `models` the user marked as vision-capable (M-J0). Non-empty
+   * → this list decides image attachment alone; empty/absent → name heuristic.
+   */
+  visionModels?: string[];
   enabled: boolean;
 }
 

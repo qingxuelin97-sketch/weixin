@@ -42,6 +42,7 @@ function buildProvider(vm: ProviderVM): ChatProvider {
     fallbackBaseUrl: vm.fallbackBaseUrl,
     getKey: () => getSecret(vm.keyAlias),
     defaultModels: vm.models,
+    visionModels: vm.visionModels,
     // Catalog self-heal persistence: the provider found the live model list
     // after a bad_model — store it so every later call starts from truth.
     onCatalogRefresh: (models) => {
