@@ -31,6 +31,84 @@ jobs:
       - run: pnpm build
       - run: pnpm check:size
 
+  # android/ 是手写 Kotlin（M-I10），但 `check` 全程碰不到它——本容器构不了 android
+  # （dl.google.com 被出网策略拦），所以 Kotlin 编译错误只会在 release.yml 手动出包时
+  # 才炸，离引入它的提交已隔了不知多少轮。这个 job 把「Kotlin 能编译、Manifest 能合并」
+  # 提前到每次触碰 android/** 的 push / PR 上（M-J0）。
+  #
+  # 为什么不用 workflow 级 `on.paths`：ci.yml 的 push/pull_request 触发器是全部 job 共享
+  # 的，在触发器上加 paths 会把 typecheck/lint/test 一起过滤掉。GitHub 没有 job 级
+  # paths 过滤，所以这里自己 diff——判不出基点时**宁跑勿漏**（fail open）。
+  android-changes:
+    name: android/** touched?
+    runs-on: ubuntu-latest
+    outputs:
+      touched: ${{ steps.diff.outputs.touched }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要完整历史才能 diff 到 push 前的基点
+      - id: diff
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+            push)         base="${{ github.event.before }}" ;;
+            *)            base="" ;;
+          esac
+          # 基点不可知（新分支的 before 是全零、force-push 后旧提交可能已不可达、
+          # 手动 dispatch 没有基点）→ 当作动过，跑一次编译顶多浪费几分钟；
+          # 漏掉一次则坏 Kotlin 静静躺到下次出包。
+          if [ -z "$base" ] \
+            || [ "$base" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::diff 基点不可知，按已触碰 android/ 处理（fail open）"
+          elif git diff --name-only "$base" HEAD | grep -q '^android/'; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  android-compile:
+    name: android compileDebugKotlin
+    needs: android-changes
+    if: needs.android-changes.outputs.touched == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # JDK 21，不是 runner 默认的 17：capacitor-android 7.6.x 以
+      # `sourceCompatibility 21` 编译，17 会在 Gradle 走到那个模块时（约 100 秒后）
+      # 才报 "invalid source release: 21"。与 release.yml 同一坑、同一 pin。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      # Gradle 侧引用 node_modules 里的 capacitor-android 与各插件工程，先装依赖。
+      - run: pnpm install --frozen-lockfile
+      # `cap update` 生成未入库的 capacitor.settings.gradle / capacitor.build.gradle
+      # （settings.gradle 第一行就 apply 它们，裸 checkout 连 configure 都过不去）。
+      # 不用 `cap sync`：sync 里的 copy 需要真的 `pnpm build` 出 dist/——编 Kotlin 和
+      # 合并 Manifest 都用不上 Web 产物，省下整次前端构建。但 cap 7 即使 update 也
+      # 校验 webDir 存在并往 assets/ 写 plugins.json（两处都在 .gitignore 里），
+      # 所以先给两个空壳目录。此流程已在容器里实测跑通（cap update 本身不碰
+      # dl.google.com，被拦的只是后面的 gradle 步）。
+      - run: |
+          mkdir -p dist android/app/src/main/assets
+          touch dist/index.html
+          npx cap update android
+      # 不 assembleDebug（还要打 dex、打包资源，贵一个数量级）：
+      # compileDebugKotlin 抓 Kotlin 编译错误，processDebugManifest 抓 Manifest 合并
+      # 冲突——这两类正是改 android/** 时最容易带进来的破绽。
+      - run: cd android && ./gradlew --no-daemon compileDebugKotlin processDebugManifest
+
   screenshot:
     name: golden screenshots
     runs-on: ubuntu-latest
