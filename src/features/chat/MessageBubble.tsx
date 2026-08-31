@@ -20,6 +20,12 @@ interface Props {
   /** Tapping a red-packet / transfer bubble. */
   onMoneyTap?: (msg: MessageVM) => void;
   /**
+   * Tapping a 群收款 card (M-J8) — the page confirms and settles the user's
+   * own share. Inert once the user's share is paid (the card keeps rendering
+   * progress for everyone else's).
+   */
+  onBillTap?: (msg: MessageVM) => void;
+  /**
    * Tapping an image bubble — the page opens the full-screen viewer.
    *
    * The tapped <img> rides along (M-I8) so the viewer can grow out of THIS
@@ -58,7 +64,7 @@ interface Props {
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark, onQuoteTap }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onBillTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark, onQuoteTap }: Props) {
   // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
   // movement and had no fired guard, so releasing a long press on an image
   // ALSO opened the viewer. The hook fixes both.
@@ -135,6 +141,11 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
               ? () => {
                   if (lp.fired()) return; // release tap after a long press
                   onMoneyTap?.(msg);
+                }
+              : msg.type === 'group_bill'
+              ? () => {
+                  if (lp.fired()) return;
+                  onBillTap?.(msg);
                 }
               : msg.type === 'image'
                 ? (e) => {
@@ -335,6 +346,10 @@ function BubbleContent({
       // States: unopened (bright orange) / opened-by-me / fully-claimed (dim orange).
       const opened = Boolean(msg.meta?.opened);
       const statusText = (msg.meta?.statusText as string) ?? (opened ? '已被领完' : '');
+      // 专属红包 (M-J8): the bubble itself says who it is for — a bystander
+      // learns not to bother before the open sheet has to turn them away.
+      const exclusive = msg.meta?.mode === 'exclusive';
+      const exclusiveName = msg.meta?.exclusiveName as string | undefined;
       return (
         <div className={`money-bubble money-bubble--${side}${opened ? ' money-bubble--dim' : ''}`}>
           <div className="money-bubble__main">
@@ -349,7 +364,57 @@ function BubbleContent({
               {statusText && <div className="money-bubble__status">{statusText}</div>}
             </div>
           </div>
-          <div className="money-bubble__footer">微信红包</div>
+          <div className="money-bubble__footer">
+            {exclusive ? `专属红包${exclusiveName ? `·给${exclusiveName}` : ''}` : '微信红包'}
+          </div>
+        </div>
+      );
+    }
+
+    case 'group_bill': {
+      // 群收款卡片 (M-J8): 发起人 / 人均 / 已付未付名单. White card like the
+      // other rich cards; everything shown comes from the frozen meta snapshot
+      // (ids never render — parts carry display names).
+      const parts = Array.isArray(msg.meta?.parts)
+        ? (msg.meta!.parts as Array<{ id?: string; name?: string; oweFen?: number }>)
+        : [];
+      const paidIds = new Set(
+        Array.isArray(msg.meta?.paidIds) ? (msg.meta!.paidIds as string[]) : [],
+      );
+      const title = (msg.meta?.title as string | undefined) || '群收款';
+      const perFen = typeof parts[0]?.oweFen === 'number' ? parts[0].oweFen : 0;
+      const paidCount = parts.filter((p) => p.id && paidIds.has(p.id)).length;
+      const myPart = parts.find((p) => p.id === 'self');
+      const iPaid = paidIds.has('self');
+      return (
+        <div className={`bubble bubble--${side} bill-card`}>
+          <div className="bill-card__head">
+            <div className="bill-card__icon" aria-hidden>AA</div>
+            <div className="bill-card__lines">
+              <div className="bill-card__title">{title}</div>
+              <div className="bill-card__per">每人 ¥{fenToYuan(perFen)}</div>
+            </div>
+          </div>
+          <div className="bill-card__progress">
+            已付 {paidCount}/{parts.length}
+            {myPart && (
+              <span className={`bill-card__mine${iPaid ? ' bill-card__mine--done' : ''}`}>
+                {iPaid ? '你已支付' : '待你支付'}
+              </span>
+            )}
+          </div>
+          <div className="bill-card__roster">
+            {parts.map((p, i) => (
+              <span
+                key={p.id ?? i}
+                className={`bill-card__part${p.id && paidIds.has(p.id) ? ' bill-card__part--paid' : ''}`}
+              >
+                {p.id === 'self' ? '我' : (p.name ?? '')}
+                {p.id && paidIds.has(p.id) ? ' ✓' : ''}
+              </span>
+            ))}
+          </div>
+          <div className="bill-card__footer">群收款</div>
         </div>
       );
     }

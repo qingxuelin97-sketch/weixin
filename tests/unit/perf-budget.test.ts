@@ -232,6 +232,47 @@ describe('feeds and claims are paged, not scanned', () => {
   });
 });
 
+describe('账单首屏读 ≤ 一页 (M-J8)', () => {
+  beforeAll(async () => {
+    for (let i = 0; i < 300; i++) {
+      await idbPut('wallet_tx', {
+        id: `wtx_${String(i).padStart(4, '0')}`,
+        kind: 'adjust',
+        amountFen: 1,
+        title: 'x',
+        balanceAfterFen: i + 1,
+        createdAt: T0 + i * 1000,
+      });
+    }
+  });
+
+  it('a wallet page costs the page, not the ledger’s whole history', async () => {
+    rowsRead.clear();
+    getAllCalls = 0;
+    const page = await repo.getWalletTxs({ limit: 30 });
+    expect(page).toHaveLength(30);
+    expect(page[0].createdAt).toBeLessThan(page[29].createdAt); // ascending contract
+    // Cursor walk over byCreatedAt (v10): `getAll` is never called on this
+    // store. The pre-J8 page read all 300 rows and sorted in JS — the ledger
+    // only grows, so opening 零钱 got slower for the life of the install.
+    expect(read('wallet_tx')).toBe(0);
+    expect(getAllCalls).toBe(0);
+  });
+
+  it('recordWalletTx’s balance read is one row, not the ledger', async () => {
+    rowsRead.clear();
+    const newest = await repo.getWalletTxs({ limit: 1 });
+    expect(newest).toHaveLength(1);
+    expect(read('wallet_tx')).toBe(0);
+  });
+
+  it('the no-args contract still reads everything (year report, tests)', async () => {
+    rowsRead.clear();
+    const all = await repo.getWalletTxs();
+    expect(all.length).toBeGreaterThanOrEqual(300);
+  });
+});
+
 describe('deleting a conversation is one transaction, not one per message', () => {
   it('removes every message without materializing them', async () => {
     await repo.putConversation({

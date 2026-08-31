@@ -11,13 +11,14 @@ import type {
   MessageVM,
   PersonaVM,
 } from '../data/types';
-import { splitLuckyPacket, seededRng } from '../lib/money';
+import { splitLuckyPacket, splitEvenPacket, seededRng, fenToYuan } from '../lib/money';
 import { claimShare, isFullyClaimed, markBestLuck, appendTx, grabDelayMs } from '../lib/wallet';
 import { repo } from '../db/repo';
-import { enqueue } from './scheduler';
+import { enqueue, actionExists } from './scheduler';
 import { recordAffect } from '../lib/affect';
 import { noteDrift } from './drift';
 import { recordRelEvent } from './relationship';
+import { planTransferReception } from './money-motive';
 
 export interface MoneyHooks {
   appendMessage: (msg: Omit<MessageVM, 'id'>) => Promise<MessageVM>;
@@ -25,25 +26,45 @@ export interface MoneyHooks {
   now: () => number;
 }
 
-/** Credit or debit the wallet, keeping the running balance correct. */
+/**
+ * Credit or debit the wallet, keeping the running balance correct.
+ *
+ * Reads ONE row, not the ledger (M-J8): `currentBalance` only ever needs the
+ * newest entry's running total, and the full-table read here was the one that
+ * made every money movement cost the install's whole history.
+ *
+ * `peerId` (optional) stamps the counterparty for the bill page's 按联系人
+ * filter — omitted where there is no single counterparty (a group packet).
+ */
 export async function recordWalletTx(
   kind: WalletTxVM['kind'],
   amountFen: number,
   title: string,
   refId: string,
   now: number,
+  peerId?: string,
 ): Promise<WalletTxVM> {
-  const txs = await repo.getWalletTxs();
-  const tx = appendTx(txs, {
+  const newest = await repo.getWalletTxs({ limit: 1 });
+  const tx = appendTx(newest, {
     id: `wtx_${now}_${refId}`,
     kind,
     amountFen,
     refId,
+    ...(peerId ? { peerId } : {}),
     title,
     createdAt: now,
   });
   await repo.putWalletTx(tx);
   return tx;
+}
+
+/** 红包玩法选项 (M-J8)。省略 = 拼手气，与 M3 起的每一次调用完全同义。 */
+export interface RpOptions {
+  mode?: NonNullable<RedPacketVM['mode']>;
+  /** mode==='exclusive' 必填：指定领取人。 */
+  exclusiveId?: string;
+  /** mode==='exclusive' 时对方的显示名，定格进气泡 meta（快照，同名片）。 */
+  exclusiveName?: string;
 }
 
 /**
@@ -57,8 +78,9 @@ export async function sendRedPacket(
   greeting: string,
   grabbers: Array<{ contactId: string; persona?: PersonaVM }>,
   hooks: MoneyHooks,
+  opts?: RpOptions,
 ): Promise<RedPacketVM> {
-  return createRedPacket('self', convId, totalFen, count, greeting, grabbers, hooks);
+  return createRedPacket('self', convId, totalFen, count, greeting, grabbers, hooks, undefined, opts);
 }
 
 /**
@@ -92,6 +114,9 @@ export async function sendRedPacketFrom(
   );
 }
 
+/** WeChat returns an unclaimed red packet after 24 hours. So does this one. */
+export const RP_EXPIRE_MS = 24 * 3_600_000;
+
 async function createRedPacket(
   senderId: string,
   convId: string,
@@ -101,41 +126,87 @@ async function createRedPacket(
   grabbers: Array<{ contactId: string; persona?: PersonaVM }>,
   hooks: MoneyHooks,
   at?: number,
+  opts: RpOptions = {},
 ): Promise<RedPacketVM> {
   // `at` lets a backfilled packet carry the timestamp it "happened" at while
   // the row is still written now — same discipline as every other handler.
   const now = at ?? hooks.now();
   const id = `rp_${now}_${senderId}`;
+  const mode = opts.mode ?? 'lucky';
+  if (mode === 'exclusive' && !opts.exclusiveId) throw new Error('专属红包必须指定领取人');
+  // 专属包永远是一整份给一个人；均分走 splitEvenPacket（整数分、余数前置）。
+  const shareCount = mode === 'exclusive' ? 1 : count;
   const rp: RedPacketVM = {
     id,
     convId,
     senderId,
     totalFen,
-    count,
-    kind: 'lucky',
+    count: shareCount,
+    kind: mode === 'even' ? 'normal' : 'lucky',
+    ...(mode !== 'lucky' ? { mode } : {}),
+    ...(mode === 'exclusive' ? { exclusiveId: opts.exclusiveId } : {}),
     greeting: greeting || '恭喜发财，大吉大利',
     // Deterministic split at creation: sum(shares) === totalFen, replay-safe.
-    sharesFen: splitLuckyPacket(totalFen, count, id),
+    sharesFen:
+      mode === 'exclusive'
+        ? [totalFen]
+        : mode === 'even'
+          ? splitEvenPacket(totalFen, shareCount)
+          : splitLuckyPacket(totalFen, shareCount, id),
     status: 'active',
+    // expiresAt 从 M3 就在 schema 里，零读零写 (M-J8 finally)。
+    expiresAt: now + RP_EXPIRE_MS,
     createdAt: now,
   };
   await repo.putRedPacket(rp);
   // Only the user has a wallet. An agent's packet costs nothing and must not
   // touch the ledger the balance page reads.
-  if (senderId === 'self') await recordWalletTx('rp_out', -totalFen, '发出红包', id, now);
+  if (senderId === 'self') {
+    await recordWalletTx(
+      'rp_out',
+      -totalFen,
+      '发出红包',
+      id,
+      now,
+      mode === 'exclusive' ? opts.exclusiveId : grabbers.length === 1 ? grabbers[0].contactId : undefined,
+    );
+  }
 
   await hooks.appendMessage({
     convId,
     senderId,
     type: 'rp',
     content: '',
-    meta: { rpId: id, greeting: rp.greeting, opened: false },
+    meta: {
+      rpId: id,
+      greeting: rp.greeting,
+      opened: false,
+      ...(mode !== 'lucky' ? { mode } : {}),
+      ...(mode === 'exclusive' && opts.exclusiveName ? { exclusiveName: opts.exclusiveName } : {}),
+    },
     status: 'sent',
     createdAt: now,
   });
 
+  // 24h 未领完 → 退还 (M-J8)。一次性动作问「有没有过」：enqueue 按 id upsert，
+  // 盲目重排会把已退还的行覆写回 pending（nudge 之坑，在一条动钱的路径上）。
+  const returnId = `rp_return_${id}`;
+  if (!(await actionExists(returnId))) {
+    await enqueue({
+      kind: 'rp_return',
+      fireAt: rp.expiresAt!,
+      payload: { rpId: id, convId, at: rp.expiresAt },
+      now,
+      id: returnId,
+    });
+  }
+
   // Stagger the AI grabs so the packet gets taken the way a real group does.
-  for (const g of grabbers) {
+  // 专属包只有指定的人会伸手 (M-J8) — 其他人的 grab 行连排都不排（claimShare
+  // 里还有第二道纯规则守卫，兜住任何漏网的旧行）。
+  const eligible =
+    mode === 'exclusive' ? grabbers.filter((g) => g.contactId === opts.exclusiveId) : grabbers;
+  for (const g of eligible) {
     await enqueue({
       kind: 'rp_grab',
       fireAt: now + grabDelayMs(g.persona?.grabSpeed, id, g.contactId),
@@ -167,7 +238,8 @@ export async function claimRedPacket(
 
   const all = [...existing, claim];
   if (claimerId === 'self') {
-    await recordWalletTx('rp_in', claim.amountFen, '收到红包', rpId, now);
+    const peer = rp.senderId !== 'self' ? rp.senderId : undefined;
+    await recordWalletTx('rp_in', claim.amountFen, '收到红包', rpId, now, peer);
   }
   // Receiving money warms the edge between sender and claimer (skip self-claims
   // of one's own packet — that's bookkeeping, not a gesture).
@@ -233,6 +305,73 @@ async function markRpMessageOpened(rp: RedPacketVM, hooks: MoneyHooks, statusTex
   });
 }
 
+/**
+ * 红包 24 小时未领完自动退还 (M-J8).
+ *
+ * `expiresAt` sat in the schema since M3 with zero readers and zero writers —
+ * an unclaimed packet stayed bright orange forever and the sender's money
+ * stayed debited forever. Same construction as `returnTransfer`: queued at
+ * send time (rule #5, no second timer), idempotent by status — anything but
+ * `active` returns immediately, so the row is harmless once the packet was
+ * fully claimed (status 'done') or already returned ('expired').
+ *
+ * @param at the queue row's fireAt — when this "happened", not when the app
+ *           happened to be reopened. Clamped below so a backfilled expiry can
+ *           never predate the thread's newest row (rowid 序 == 时间序).
+ */
+export async function returnRedPacket(
+  rpId: string,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<void> {
+  const rp = await repo.getRedPacket(rpId);
+  if (!rp || rp.status !== 'active') return;
+
+  const claims = await repo.getClaims(rpId);
+  const claimedFen = claims.reduce((n, c) => n + c.amountFen, 0);
+  const remainingFen = rp.totalFen - claimedFen;
+  // Fully claimed but still 'active' would be a broken invariant; whatever the
+  // cause, there is no money to move — close the packet and stop.
+  if (remainingFen <= 0) {
+    await repo.putRedPacket({ ...rp, status: 'done' });
+    return;
+  }
+
+  const msgs = await repo.getMessages(rp.convId, { limit: 200 });
+  const lastAt = msgs.at(-1)?.createdAt ?? 0;
+  const now = Math.max(at ?? hooks.now(), lastAt);
+
+  await repo.putRedPacket({ ...rp, status: 'expired' });
+
+  // The unclaimed balance goes home — integer fen, exactly what never left.
+  // Only the user's wallet is real (an agent's packet debited nothing).
+  if (rp.senderId === 'self') {
+    await recordWalletTx('rp_in', remainingFen, '红包退款', `${rpId}_ret`, now);
+  }
+
+  const target = msgs.find((m) => m.type === 'rp' && m.meta?.rpId === rp.id);
+  if (target) {
+    await hooks.updateMessage({
+      ...target,
+      meta: { ...target.meta, opened: true, statusText: '已过期' },
+    });
+  }
+
+  // The grey line is the legible half; through render-msg it is also how SHE
+  // learns her packet sat there untouched for a day.
+  const mine = rp.senderId === 'self';
+  await hooks.appendMessage({
+    convId: rp.convId,
+    senderId: 'self',
+    type: 'system',
+    content: mine
+      ? `红包已过期，退回 ${fenToYuan(remainingFen)} 元`
+      : `${await peerName(rp.senderId)}的红包已过期`,
+    status: 'sent',
+    createdAt: now,
+  });
+}
+
 /** Send a transfer to a peer: debit now, post a pending bubble, queue AI accept. */
 export async function sendTransfer(
   convId: string,
@@ -254,7 +393,7 @@ export async function sendTransfer(
     createdAt: now,
   };
   await repo.putTransfer(t);
-  await recordWalletTx('transfer_out', -amountFen, note || '转账', id, now);
+  await recordWalletTx('transfer_out', -amountFen, note || '转账', id, now, toId);
 
   await hooks.appendMessage({
     convId,
@@ -360,7 +499,7 @@ export async function acceptTransfer(transferId: string, hooks: MoneyHooks): Pro
 
   // Money only enters the user's wallet when the user is the recipient.
   if (t.toId === 'self') {
-    await recordWalletTx('transfer_in', t.amountFen, t.note || '转账', t.id, now);
+    await recordWalletTx('transfer_in', t.amountFen, t.note || '转账', t.id, now, t.fromId);
   }
   // A completed transfer is a strong warm gesture between the two parties.
   void recordRelEvent(t.fromId, t.toId, 'transfer_received', now).catch(() => {});
@@ -381,6 +520,77 @@ export async function acceptTransfer(transferId: string, hooks: MoneyHooks): Pro
       },
     });
   }
+}
+
+/** What `receiveTransfer` needs to know about HER side of the ledger. */
+export interface ReceptionReads {
+  personaFor: (contactId: string) => PersonaVM | undefined;
+  /** Effective closeness 0..100 for (self → contactId). */
+  affinityOf: (contactId: string) => Promise<number>;
+  /** Current affect valence −1..1 (negative = she's upset with you). */
+  valenceOf: (contactId: string) => Promise<number>;
+}
+
+/**
+ * The queue-driven arrival of a user→AI transfer (M-J8): she now decides
+ * whether to TAKE it, instead of auto-settling any amount in four seconds.
+ *
+ * Refusal = one persona-flavored line, then the standing 24h `transfer_return`
+ * row (`tr_return_<id>`, queued at send) is pulled forward to a seeded 20–60s
+ * — the money comes back through the very same kind that already knows how,
+ * so refusal adds no second return path (rule #5). The user's own tap on an
+ * incoming transfer still calls `acceptTransfer` directly: only HER lane
+ * grows a motive.
+ *
+ * Deliberately zero LLM (`transfer_accept` is declared free in
+ * ACTION_LLM_BOUND): the decision and the line are seeded templates.
+ */
+export async function receiveTransfer(
+  transferId: string,
+  hooks: MoneyHooks,
+  reads: ReceptionReads,
+): Promise<'accepted' | 'refused' | 'noop'> {
+  const t = await repo.getTransfer(transferId);
+  if (!t || t.status !== 'pending') return 'noop';
+  // Only the user→AI lane carries a reception motive; anything else settles
+  // the pre-J8 way (and a missing persona means there is nobody to refuse).
+  const persona = t.fromId === 'self' && t.toId !== 'self' ? reads.personaFor(t.toId) : undefined;
+  if (!persona) {
+    await acceptTransfer(transferId, hooks);
+    return 'accepted';
+  }
+
+  const plan = planTransferReception({
+    persona,
+    amountFen: t.amountFen,
+    affinity: await reads.affinityOf(t.toId),
+    valence: await reads.valenceOf(t.toId),
+    transferId: t.id,
+  });
+  if (plan.action === 'accept') {
+    await acceptTransfer(transferId, hooks);
+    return 'accepted';
+  }
+
+  const now = hooks.now();
+  await hooks.appendMessage({
+    convId: t.convId,
+    senderId: t.toId,
+    type: 'text',
+    content: plan.line,
+    status: 'sent',
+    createdAt: now,
+  });
+  // Same stable id the send queued — enqueue upserts, so this MOVES the 24h
+  // floor row instead of stacking a second return beside it.
+  await enqueue({
+    kind: 'transfer_return',
+    fireAt: now + plan.returnDelayMs,
+    payload: { transferId: t.id, convId: t.convId, at: now + plan.returnDelayMs },
+    now,
+    id: `tr_return_${t.id}`,
+  });
+  return 'refused';
 }
 
 /**
@@ -421,7 +631,7 @@ export async function returnTransfer(
   // an agent's balance is fiction (see sendRedPacketFrom), so her returned
   // transfer moves no ledger row — it was never debited from one.
   if (t.fromId === 'self') {
-    await recordWalletTx('transfer_in', t.amountFen, '转账已退还', `${t.id}_ret`, now);
+    await recordWalletTx('transfer_in', t.amountFen, '转账已退还', `${t.id}_ret`, now, t.toId);
   }
 
   const target = msgs.find((m) => m.type === 'transfer' && m.meta?.transferId === t.id);

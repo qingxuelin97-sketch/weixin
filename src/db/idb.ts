@@ -18,7 +18,8 @@ const DB_NAME = 'weixin-ai';
 // Exported for tests/unit/idb-migration.test.ts, whose ledger machine-enforces
 // that rule — register new stores AND new indexes there when bumping.
 // v9 adds favorites (收藏, M-I13).
-export const DB_VERSION = 9;
+// v10 adds wallet_tx.byCreatedAt (账单页游标分页, M-J8).
+export const DB_VERSION = 10;
 
 export interface StoreDef {
   name: string;
@@ -56,7 +57,10 @@ export const STORES: StoreDef[] = [
   { name: 'red_packets', keyPath: 'id' },
   { name: 'rp_claims', keyPath: 'id', indexes: [{ name: 'byRp', keyPath: 'rpId' }] },
   { name: 'transfers', keyPath: 'id' },
-  { name: 'wallet_tx', keyPath: 'id' },
+  // `byCreatedAt` (v10): the ledger only grows for the life of the install, and
+  // the wallet page used to `getAll()` all of it on every open — the moments
+  // lesson, one store over. Paged newest-first exactly like the feed.
+  { name: 'wallet_tx', keyPath: 'id', indexes: [{ name: 'byCreatedAt', keyPath: 'createdAt' }] },
   // Content-addressed TTS audio cache (key = hash of voice+text+params).
   { name: 'tts_cache', keyPath: 'key' },
   // --- moments (v4) ---

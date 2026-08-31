@@ -58,6 +58,7 @@ const INDEX_INTRODUCED_IN: Record<string, number> = {
   'moment_comments.byMoment': 4,
   'story_saves.byScript': 6,
   'moments.byCreatedAt': 7,
+  'wallet_tx.byCreatedAt': 10,
 };
 
 describe('DB migration guards', () => {

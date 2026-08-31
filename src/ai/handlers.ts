@@ -94,9 +94,20 @@ export interface HandlerDeps {
 
   // --- domain services, injected so a handler test never reaches the network ---
   claimRedPacket: (rpId: string, contactId: string, name: string, hooks: EngineHooks) => Promise<unknown>;
+  /**
+   * The queue's transfer arrival. Wired to money-service's `receiveTransfer`
+   * (M-J8): she may refuse — the raw unconditional accept is only what the
+   * USER's own tap calls.
+   */
   acceptTransfer: (transferId: string, hooks: EngineHooks) => Promise<unknown>;
   /** 24h uncollected → the money goes back (M-I18). No-op if already settled. */
   returnTransfer: (transferId: string, hooks: EngineHooks, at?: number) => Promise<unknown>;
+  /** 24h unclaimed → the packet's remainder goes back (M-J8). No-op once settled. */
+  returnRedPacket: (rpId: string, hooks: EngineHooks, at?: number) => Promise<unknown>;
+  /** One participant settles their AA share (M-J8). Idempotent per payer. */
+  payBill: (billId: string, convId: string, contactId: string, at?: number) => Promise<unknown>;
+  /** Materialize an AI-initiated group bill planned by money-motive (M-J8). */
+  runBill: (p: { convId: string; contactId: string; perFen: number; title: string }) => Promise<void>;
   sendProactiveMessage: (
     convId: string,
     peer: ContactVM,
@@ -201,6 +212,37 @@ export async function handleTransferReturn(
 ): Promise<void> {
   const transferId = str(payload.transferId);
   if (transferId) await d.returnTransfer(transferId, d.hooks, optNum(payload.at));
+}
+
+/**
+ * 24h passed with shares still in the packet: the remainder goes home (M-J8).
+ * Safe to leave queued after a full claim — anything but `active` is a no-op.
+ */
+export async function handleRpReturn(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const rpId = str(payload.rpId);
+  if (rpId) await d.returnRedPacket(rpId, d.hooks, optNum(payload.at));
+}
+
+/**
+ * An AI participant pays their AA share (M-J8). The amount, the roster and the
+ * 装死 decision were all fixed at bill creation; this only delivers. The
+ * conversation-gone check matters: a bill's group can be deleted inside the
+ * 2–40min payment window, and paying into a ghost thread would resurrect it.
+ */
+export async function handleBillPay(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const billId = str(payload.billId);
+  const convId = str(payload.convId);
+  const contactId = str(payload.contactId);
+  if (!billId || !convId || !contactId) return;
+  if (!d.conversationExists(convId)) return;
+  if (!d.contactById(contactId)) return;
+  await d.payBill(billId, convId, contactId, optNum(payload.at));
 }
 
 /* ----------------------------- 斗图 (M-I18) ----------------------------- */
@@ -930,6 +972,20 @@ export async function handleAiMoney(
   if (!d.contactById(contactId) || !d.personaFor(contactId)) return;
   const amountFen = optNum(payload.amountFen);
   if (!amountFen || amountFen <= 0 || !Number.isInteger(amountFen)) return;
+
+  // 群收款 (M-J8): planned by considerGroupBill, materialized by bill-service.
+  // `amountFen` is the PER-HEAD share; the roster (and thus the total) is
+  // resolved at fire time inside runBill — members who left owe nothing.
+  if (payload.kind === 'bill') {
+    await d.runBill({
+      convId,
+      contactId,
+      perFen: amountFen,
+      title: str(payload.note),
+    });
+    d.playMessageSound(d.now());
+    return;
+  }
 
   await d.runGift({
     convId,

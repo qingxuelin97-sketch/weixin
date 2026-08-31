@@ -150,6 +150,8 @@ export const messages = sqliteTable(
         'file',
         'link',
         'game',
+        // M-J8: 群收款/AA 卡片 — meta carries {billId,title,totalFen,parts,paidIds}.
+        'group_bill',
       ],
     }).notNull(),
     content: text('content'), // text body / caption / transcript
@@ -232,6 +234,10 @@ export const redPackets = sqliteTable('red_packets', {
   totalFen: integer('total_fen').notNull(),
   count: integer('count').notNull(),
   kind: text('kind', { enum: ['lucky', 'normal'] }).notNull(),
+  /** M-J8 玩法列：NULL = 'lucky'（M3 起的所有旧行）。见 RedPacketVM.mode。 */
+  mode: text('mode', { enum: ['lucky', 'even', 'exclusive'] }),
+  /** mode='exclusive' 时的指定领取人 contactId。 */
+  exclusiveId: text('exclusive_id'),
   greeting: text('greeting'),
   status: text('status', { enum: ['active', 'done', 'expired'] })
     .notNull()
@@ -267,9 +273,14 @@ export const transfers = sqliteTable('transfers', {
 });
 export const walletTx = sqliteTable('wallet_tx', {
   id: text('id').primaryKey(),
-  kind: text('kind', { enum: ['rp_in', 'rp_out', 'transfer_in', 'transfer_out', 'adjust'] }).notNull(),
+  // bill_in / bill_out (M-J8) = 群收款两个方向。
+  kind: text('kind', {
+    enum: ['rp_in', 'rp_out', 'transfer_in', 'transfer_out', 'bill_in', 'bill_out', 'adjust'],
+  }).notNull(),
   amountFen: integer('amount_fen').notNull(), // signed
   refId: text('ref_id'),
+  /** 对手方 contactId (M-J8)，账单页按联系人筛选；无单一对手方则 NULL。 */
+  peerId: text('peer_id'),
   balanceAfterFen: integer('balance_after_fen').notNull(), // denormalized for 零钱明细
   createdAt: integer('created_at').notNull(),
 });
@@ -411,6 +422,18 @@ export const SCHEDULED_ACTION_KINDS = [
    * no-op if it was accepted in the meantime.
    */
   'transfer_return',
+  /**
+   * 红包 24 小时未领完自动退还 (M-J8). Queued when the packet is sent (stable
+   * id `rp_return_<rpId>`); a no-op once the packet is done/expired. Unclaimed
+   * balance goes back to the sender's wallet — expiresAt finally has a writer.
+   */
+  'rp_return',
+  /**
+   * 群收款/AA：一个 AI 成员付它欠的那份 (M-J8). Queued when the bill is
+   * created, with a persona-seeded delay; 装死的人根本不入队。Zero LLM —
+   * the amounts and the roster were fixed at creation.
+   */
+  'bill_pay',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

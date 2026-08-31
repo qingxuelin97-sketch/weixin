@@ -27,9 +27,19 @@ export function grabDelayMs(
   return Math.round(lo + rng() * (hi - lo));
 }
 
+/** The packet's mode, with the pre-M-J8 rows (no field at all) reading as lucky. */
+export function rpModeOf(rp: Pick<RedPacketVM, 'mode'>): NonNullable<RedPacketVM['mode']> {
+  return rp.mode ?? 'lucky';
+}
+
 /**
  * Assign the next unclaimed share of a red packet.
  * @returns the claim, or null if the packet is already fully claimed / re-claimed.
+ *
+ * 专属红包 (M-J8): only the designated recipient may claim. The guard lives in
+ * THIS pure rule — not in the UI — so a stray `rp_grab` row for a bystander AI
+ * (or a forged open-page URL) is inert by construction, the same reason the
+ * hidden-conversation filter lives inside search().
  */
 export function claimShare(
   rp: RedPacketVM,
@@ -37,6 +47,7 @@ export function claimShare(
   claimerId: string,
   now: number,
 ): RpClaimVM | null {
+  if (rpModeOf(rp) === 'exclusive' && claimerId !== rp.exclusiveId) return null;
   if (existing.some((c) => c.claimerId === claimerId)) return null; // no double-dipping
   const idx = existing.length;
   if (idx >= rp.sharesFen.length) return null; // fully claimed

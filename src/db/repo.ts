@@ -91,7 +91,15 @@ export interface Repo {
   putClaim(c: RpClaimVM): Promise<void>;
   getTransfer(id: string): Promise<TransferVM | undefined>;
   putTransfer(t: TransferVM): Promise<void>;
-  getWalletTxs(): Promise<WalletTxVM[]>;
+  /**
+   * The wallet ledger, ascending by createdAt (the order `currentBalance`
+   * folds). M-J8 grows a backward-compatible cursor: `limit` takes the NEWEST
+   * `limit` rows, `before` pages further back (rows with createdAt < before) —
+   * so the newest page always contains the running balance, and the bill page
+   * pays for a screen, never for the install's whole history. No opts = the
+   * full ledger, exactly the pre-J8 contract (year report, tests).
+   */
+  getWalletTxs(opts?: { limit?: number; before?: number }): Promise<WalletTxVM[]>;
   putWalletTx(t: WalletTxVM): Promise<void>;
 
   // moments
@@ -278,6 +286,14 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
   'groupBuild:': { scope: 'conv', row: 'cascade', why: '一键建群的断点状态，随会话消亡' },
   'giftAt:': { scope: 'conv', row: 'cascade', why: '上次送钱时间戳，随会话消亡' },
   'callAt:': { scope: 'conv', row: 'cascade', why: '上次来电时间戳，随会话消亡' },
+  'bill:': {
+    scope: 'conv',
+    row: 'cascade',
+    // J8 群收款结算真源：一行一会话，值是 billId→BillState 的 map。键尾是
+    // convId 正是为了让本级联能命中（bill:<billId> 谁也删不掉）。真实动过的钱
+    // 已在 wallet_tx（exempt 的账本）里留痕，行本身随会话消亡不丢账。
+    why: 'J8 群收款结算状态（billId→状态 map），随会话消亡；钱的痕迹在 wallet_tx 账本里',
+  },
   'memext:': { scope: 'conv', row: 'cascade', why: '记忆抽取水位（msgId），随会话消亡' },
   'groupNick:': {
     scope: 'conv',
@@ -732,7 +748,16 @@ export class IdbRepo implements Repo {
   async putTransfer(t: TransferVM) {
     await idbPut('transfers', t);
   }
-  async getWalletTxs() {
+  async getWalletTxs(opts: { limit?: number; before?: number } = {}) {
+    // Paged read: walk byCreatedAt backwards (v10) so a page costs a page.
+    // The rows come back newest-first; reverse restores the ascending contract.
+    if (opts.limit != null) {
+      const page = await idbPageDesc<WalletTxVM>('wallet_tx', 'byCreatedAt', {
+        limit: opts.limit,
+        before: opts.before,
+      });
+      return page.reverse();
+    }
     const all = await idbGetAll<WalletTxVM>('wallet_tx');
     return all.sort((a, b) => a.createdAt - b.createdAt);
   }

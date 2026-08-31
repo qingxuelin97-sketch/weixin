@@ -173,20 +173,24 @@ export class FakeSqlDb implements SqlDb {
       return { values: out };
     }
     m = stmt.match(
-      /^SELECT data FROM "?(\w+)"?( WHERE json_extract\(data,'\$\.(\w+)'\) < \?)? ORDER BY json_extract\(data,'\$\.(\w+)'\) DESC LIMIT \?$/,
+      /^SELECT data FROM "?(\w+)"?( WHERE json_extract\(data,'\$\.(\w+)'\) < \?)? ORDER BY json_extract\(data,'\$\.(\w+)'\) DESC(, key DESC)? LIMIT \?$/,
     );
     if (m) {
       const t = this.table(m[1]);
       const beforeField = m[3];
       const orderField = m[4];
+      const keyTiebreak = Boolean(m[5]);
       const before = beforeField ? Number(values[0]) : undefined;
       const limit = Number(values[beforeField ? 1 : 0]);
-      let rows = [...t.values()].map((data) => ({
+      let rows = [...t.entries()].map(([key, data]) => ({
+        key,
         data,
         v: Number((JSON.parse(data) as Record<string, unknown>)[orderField] ?? 0),
       }));
       if (before != null) rows = rows.filter((r) => r.v < before);
-      rows.sort((a, b) => b.v - a.v);
+      rows.sort((a, b) =>
+        b.v - a.v || (keyTiebreak ? (a.key < b.key ? 1 : a.key > b.key ? -1 : 0) : 0),
+      );
       return { values: rows.slice(0, limit).map((r) => ({ data: r.data })) };
     }
     throw new Error(`FakeSqlDb.query: unsupported statement: ${stmt}`);

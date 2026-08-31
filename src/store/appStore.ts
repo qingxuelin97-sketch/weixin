@@ -722,6 +722,8 @@ export function previewOf(m: MessageVM, senderName?: string): string {
       return '[微信红包]';
     case 'transfer':
       return '[转账]';
+    case 'group_bill':
+      return '[群收款]';
     case 'merged':
       return '[聊天记录]';
     case 'location':

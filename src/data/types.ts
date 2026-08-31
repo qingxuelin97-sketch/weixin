@@ -62,7 +62,13 @@ export type MessageType =
   /** 链接分享卡 (M-I13). content = 标题; meta: { title, summary? }. 缩略图为占位色块。 */
   | 'link'
   /** 表情游戏 (M-I13). meta: { game: 'dice' | 'rps', result }. 结果 seeded，落地即定，永不重掷。 */
-  | 'game';
+  | 'game'
+  /**
+   * 群收款/AA (M-J8). meta: { billId, title, totalFen, parts: [{id,name,oweFen}],
+   * paidIds }。名字在发起时定格（同名片快照）；结算真源在 settings `bill:<convId>`，
+   * meta 只是渲染镜像。点卡片 → 确认 → payBill。
+   */
+  | 'group_bill';
 
 export interface MessageVM {
   id: number;
@@ -181,10 +187,22 @@ export interface RedPacketVM {
   totalFen: number;
   count: number;
   kind: 'lucky' | 'normal';
+  /**
+   * 红包玩法 (M-J8)。`undefined` = 'lucky'：M3 起写入的每一行都没有这个字段，
+   * 读侧一律经 `rpModeOf()` 归一，旧行为分毫不变。
+   *  - 'lucky'     拼手气：splitLuckyPacket，份额随机。
+   *  - 'even'      普通（均分）：splitEvenPacket，整数分，余数前置。
+   *  - 'exclusive' 专属：指定 `exclusiveId` 一个人领，count 恒为 1。
+   */
+  mode?: 'lucky' | 'even' | 'exclusive';
+  /** mode==='exclusive' 时的指定领取人；其他人点开只见「专属红包」，不能领。 */
+  exclusiveId?: string;
   greeting: string;
   /** Pre-computed shares (sums exactly to totalFen); claims consume them in order. */
   sharesFen: number[];
   status: 'active' | 'done' | 'expired';
+  /** 24h 未领完自动退还的时刻 (M-J8 起终于有读写；旧行 undefined=没排过期)。 */
+  expiresAt?: number;
   createdAt: number;
 }
 
@@ -212,9 +230,15 @@ export interface TransferVM {
 /** Wallet ledger entry. amountFen is signed; balanceAfterFen is denormalized. */
 export interface WalletTxVM {
   id: string;
-  kind: 'rp_in' | 'rp_out' | 'transfer_in' | 'transfer_out' | 'adjust';
+  /** bill_in/bill_out (M-J8) = 群收款：别人付给我发起的账 / 我付别人发起的账。 */
+  kind: 'rp_in' | 'rp_out' | 'transfer_in' | 'transfer_out' | 'bill_in' | 'bill_out' | 'adjust';
   amountFen: number;
   refId?: string;
+  /**
+   * 这笔钱的对手方 contactId (M-J8)，账单页按联系人筛选用。写入时定格；
+   * 旧行与无单一对手方的行（群发红包的 rp_out）为 undefined，只进「全部」。
+   */
+  peerId?: string;
   title: string;
   balanceAfterFen: number;
   createdAt: number;

@@ -130,10 +130,14 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
     case 'rp': {
       const greeting = str(meta.greeting);
       const opened = meta.opened === true;
+      // 专属红包 (M-J8): the model must know it is FOR someone — thanking the
+      // sender for a packet addressed to somebody else is an instant tell.
+      const exclusive =
+        meta.mode === 'exclusive' ? `专属红包${str(meta.exclusiveName) ? `（给${meta.exclusiveName}）` : ''}` : '红包';
       // The amount deliberately stays out: in WeChat the recipient cannot see it
       // before opening, and leaking it here would let the AI thank you for an
       // exact sum it has no way of knowing.
-      return `[发了一个红包${greeting ? `，留言「${greeting}」` : ''}${opened ? '，已被领取' : ''}]`;
+      return `[发了一个${exclusive}${greeting ? `，留言「${greeting}」` : ''}${opened ? '，已被领取' : ''}]`;
     }
 
     case 'transfer': {
@@ -220,6 +224,27 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
       const game: GameKind = meta.game === 'rps' ? 'rps' : 'dice';
       const result = num(meta.result) ?? 0;
       return `[${describeGame(game, result)}]`;
+    }
+
+    case 'group_bill': {
+      // 群收款 (M-J8). Unlike a red packet, an AA bill's numbers are public in
+      // WeChat — total, per-head, and who has paid — and they are exactly what
+      // "还差谁没付" asks about. Amounts render in integer-fen-derived yuan;
+      // ids never leak (parts carry frozen display names).
+      const total = num(meta.totalFen);
+      const title = str(meta.title);
+      const parts = Array.isArray(meta.parts) ? (meta.parts as Array<Record<string, unknown>>) : [];
+      const paidIds = Array.isArray(meta.paidIds) ? (meta.paidIds as unknown[]) : [];
+      const per = parts.length > 0 ? num(parts[0]?.oweFen) : undefined;
+      const unpaid = parts
+        .filter((p) => !paidIds.includes(p.id))
+        .map((p) => str(p.name))
+        .filter((n): n is string => Boolean(n));
+      const state =
+        parts.length > 0 && unpaid.length === 0
+          ? '，已收齐'
+          : `，已付 ${paidIds.length}/${parts.length}${unpaid.length ? `，未付：${unpaid.join('、')}` : ''}`;
+      return `[发起了群收款${title ? `「${title}」` : ''}：共 ¥${total != null ? yuan(total) : '?'}，每人 ¥${per != null ? yuan(per) : '?'}${state}]`;
     }
 
     default:

@@ -72,6 +72,23 @@ export function splitLuckyPacket(totalFen: number, count: number, seed: string):
   return shares;
 }
 
+/**
+ * Split a NORMAL (普通/均分) red packet — or an AA bill — into `count` equal
+ * integer-fen shares (M-J8). No rng at all: an even split is deterministic by
+ * construction. The remainder is front-loaded (余数前置): 10 fen / 3 →
+ * [4, 3, 3], so the earliest claims absorb the leftover fen and
+ * `sum(shares) === totalFen` holds exactly (铁律 3: no floats, no drift).
+ */
+export function splitEvenPacket(totalFen: number, count: number): number[] {
+  if (count < 1) throw new Error('count must be >= 1');
+  if (!Number.isInteger(totalFen) || totalFen < count) {
+    throw new Error('totalFen must be an integer >= count (每份至少 1 分)');
+  }
+  const base = Math.floor(totalFen / count);
+  const remainder = totalFen - base * count;
+  return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
 /** Index of the largest share (手气最佳); ties resolve to the earliest. */
 export function bestLuckIndex(shares: number[]): number {
   let best = 0;

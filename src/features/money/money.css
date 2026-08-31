@@ -400,3 +400,77 @@
   color: var(--color-text-placeholder);
   font-size: var(--fs-preview);
 }
+
+/* ---- M-J8: 红包玩法选择（群三选） ---- */
+.rp-mode {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+.rp-mode__tab {
+  flex: 1;
+  padding: 8px 0;
+  border: var(--hairline-width) solid var(--color-hairline);
+  border-radius: 6px;
+  background: var(--color-cell-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-preview);
+}
+.rp-mode__tab--on {
+  border-color: var(--color-rp-envelope);
+  color: var(--color-rp-envelope);
+  font-weight: var(--fw-medium);
+}
+.rp-mode__who {
+  appearance: none;
+  border: none;
+  background: transparent;
+}
+
+/* ---- M-J8: 账单页（分页 + 按月小计 + 筛选） ---- */
+.wallet__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 16px;
+}
+.wallet__chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: var(--hairline-width) solid var(--color-hairline);
+  background: var(--color-cell-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-timestamp);
+}
+.wallet__chip--on {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+  font-weight: var(--fw-medium);
+}
+.wallet__month {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 16px 4px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  background: var(--color-page-bg);
+}
+.wallet__month-sum {
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-placeholder);
+}
+.wallet__more {
+  display: block;
+  width: 100%;
+  padding: 12px 0;
+  border: none;
+  background: transparent;
+  color: var(--color-link);
+  font-size: var(--fs-preview);
+}
+
+/* ---- M-J8: 发起群收款面板（BillSheet 复用 money-form 词汇） ---- */
+.bill-sheet {
+  padding: 4px 0 16px;
+}
