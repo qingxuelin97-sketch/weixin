@@ -133,3 +133,19 @@
 4. **OEM 电池页深跳**：各厂商 Activity 名随 ROM 版本漂移，`openBatterySettings` 的阶梯
    逐级回退是否落在可操作页面，只能真机确认。
 5. **widget 实装**：桌面添加小组件 → 未读角标与预览随开关 app 刷新 → 点按直达会话。
+
+## M-J4b · 精确闹钟 + 锁屏来电真着屏
+
+- **manifest 声明双精确闹钟权限**：`SCHEDULE_EXACT_ALARM`（12-13，可被用户在系统
+  设置关掉，@capacitor/local-notifications 会自动退回不精确）+ `USE_EXACT_ALARM`
+  （14+ 自动授予；有 Play 政策限制，但本 App 个人侧载不进店）。不声明时预调度通知
+  在 Android 12+ **全部**静默退化成不精确投递——「早安」中午才到。
+- **锁屏来电 flag 是动态的**（MainActivity.applyLockscreenForIntent）：只有
+  `aiwx://call/...?incoming=1` 的 intent 才 `setShowWhenLocked(true)+setTurnScreenOn(true)`；
+  任何其他 intent 显式复位。**绝不**写进 manifest 静态属性——那会把整个 App 抬到
+  keyguard 之上，锁屏点一条消息通知就能翻聊天记录，是隐私洞不是功能。
+  singleTask 实例活得比一次来电久，不复位=旧旗帜永久漏全 App。
+- 转红：`j4-notify-coverage.test.ts`（manifest 双权限在、`showWhenLocked` 不在
+  manifest、动态 set/复位路径在 MainActivity）。
+- 真机验收追加：锁屏收 AI 来电 → 屏幕自己亮起且铃响页盖在锁屏上（3 的强化版）；
+  Android 14 真机上「设置→应用→闹钟与提醒」应显示已允许。

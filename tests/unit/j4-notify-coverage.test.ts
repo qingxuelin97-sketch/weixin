@@ -13,6 +13,8 @@
  *   5. 泄漏红测：agent_dm 带全须全尾的 payload 也产不出任何通知。
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   NOTIFY_STANCE,
   toNotifiable,
@@ -155,6 +157,26 @@ describe('followup 归并', () => {
       action('ai_money', { contactId: 'ai_a', convId: 'c1', kind: 'transfer', amountFen: 200 }, { id: 'a2', fireAt: NOW + 2 * HOUR }),
     ]);
     expect(buildNotifications(rows, nameOf, NOW)).toHaveLength(2);
+  });
+});
+
+describe('原生硬件面 (M-J4b)', () => {
+  const read = (p: string) => readFileSync(resolve(__dirname, '../../', p), 'utf8');
+
+  it('manifest 声明精确闹钟——不声明 = 预调度通知在 Android 12+ 全部退化不精确', () => {
+    const m = read('android/app/src/main/AndroidManifest.xml');
+    expect(m).toContain('android.permission.SCHEDULE_EXACT_ALARM');
+    expect(m).toContain('android.permission.USE_EXACT_ALARM');
+  });
+
+  it('锁屏来电走动态 flag，绝不在 manifest 里静态声明（那是把整个 App 抬到锁屏之上）', () => {
+    const m = read('android/app/src/main/AndroidManifest.xml');
+    expect(m).not.toContain('showWhenLocked');
+    const act = read('android/app/src/main/java/com/personal/weixinai/MainActivity.kt');
+    expect(act).toContain('setShowWhenLocked(isIncomingCall)');
+    expect(act).toContain('setTurnScreenOn(isIncomingCall)');
+    // 非来电 intent 必须复位——singleTask 实例活得比一次来电久。
+    expect(act).toContain('onNewIntent');
   });
 });
 

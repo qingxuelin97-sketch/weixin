@@ -92,4 +92,10 @@
          不声明 = WebView 权限请求被系统静默拒绝。 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- M-J4b: 精确闹钟。不声明时 @capacitor/local-notifications 在 Android 12+
+         全部退化成不精确投递（早安通知可能中午才到）。SCHEDULE_EXACT_ALARM 覆盖
+         12-13（可在系统设置被用户关掉，插件会自动退回不精确）；USE_EXACT_ALARM
+         在 14+ 自动授予——它有 Play 商店政策限制，但本 App 是个人侧载，不进店。 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 </manifest>
