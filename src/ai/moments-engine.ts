@@ -14,8 +14,12 @@
 import type { PersonaVM, ContactVM, MomentVM } from '../data/types';
 import { seededRng } from '../lib/money';
 import { canSeeMoment } from '../lib/moment-visibility';
+import { maxTier, globalTier } from '../lib/nsfw-tier';
+import type { NsfwTier } from '../llm/router';
 import { assembleSystemPrompt } from './prompt';
 import { toPersonaView, peersOf } from './engine';
+import { hasPoolMaterial } from './photo-send';
+import { generateToLibrary } from './gen-media';
 import { freshArc, arcMomentDirective, aboutYouDirective } from './rel-arcs';
 import { driftedPersona } from './drift';
 import { selectFactsForInjection } from './memory';
@@ -235,6 +239,23 @@ export function planRepost(
 }
 
 /**
+ * ROUTING tier for one persona's Moments generation (M-J3).
+ *
+ * Two different questions used to share one hardcoded 'off', and only one of
+ * them deserved it. The PROMPT layer stays pinned at 'off' — the feed is
+ * unconditionally SFW, that is a content rule. But the ROUTER tier declares
+ * what the request CARRIES, and a full-permit persona's card (core,
+ * nsfwStyleSamples) rides inside the system prompt of every one of her posts —
+ * declaring that 'off' routed it to `defaultProviderId`, i.e. straight to a
+ * mainland official endpoint. The M-D2 breach, re-opened on a fourth surface.
+ * So: derived via `maxTier`, exactly like handlers.ts does (rule #6 — call
+ * sites do not invent tiers).
+ */
+export async function momentRouteTier(persona: Pick<PersonaVM, 'nsfwPermit'>): Promise<NsfwTier> {
+  return maxTier(await globalTier(), [persona]);
+}
+
+/**
  * The reposter's own line above the quote card. One short LLM call; empty
  * string on failure — a wordless repost is a perfectly normal repost, so this
  * degrades to silence rather than to a lost action.
@@ -247,13 +268,14 @@ export async function generateRepostText(
 ): Promise<string> {
   const system = assembleSystemPrompt({
     persona: toPersonaView(persona, reposter.remark ?? reposter.name),
-    nsfwTier: 'off', // constitution #6: Moments are never NSFW
+    nsfwTier: 'off', // constitution #6: Moments CONTENT is never NSFW (prompt layer)
     scene: { kind: 'single', now: new Date(now) },
   });
+  const tier = await momentRouteTier(persona);
   try {
     const router = await getRouter();
     const res = await router.complete(
-      { role: 'chat', nsfwTier: 'off' },
+      { role: 'chat', nsfwTier: tier },
       {
         messages: [
           { role: 'system', content: system },
@@ -354,10 +376,12 @@ export async function generateMomentPost(
   const memory = selectFactsForInjection(facts, now, { surface: 'moments', tier: 'off' });
   const system = assembleSystemPrompt({
     persona: toPersonaView(persona, peer.remark ?? peer.name),
-    nsfwTier: 'off', // constitution #6: Moments are never NSFW
+    nsfwTier: 'off', // constitution #6: Moments CONTENT is never NSFW (prompt layer)
     memory: memory.pinned.length || memory.topK.length ? memory : undefined,
     scene: { kind: 'single', now: new Date(now) },
   });
+  // Routing tier ≠ content tier: see momentRouteTier. Derived, never declared.
+  const tier = await momentRouteTier(persona);
   const rng = seededRng(`mp:${peer.id}:${now}`);
   const imgCount = rng() < 0.45 ? 0 : rng() < 0.6 ? 1 : rng() < 0.85 ? 3 : 4;
   // Something that just happened with a mutual friend, sometimes (M-H1). This
@@ -405,7 +429,7 @@ export async function generateMomentPost(
   try {
     const router = await getRouter();
     const res = await router.complete(
-      { role: 'chat', nsfwTier: 'off' },
+      { role: 'chat', nsfwTier: tier },
       {
         messages: [
           { role: 'system', content: system },
@@ -428,6 +452,23 @@ export async function generateMomentPost(
     );
     const text = cleanPostText(res.text ?? '');
     if (!text) return null;
+    // 配图 (M-J3): the pool wins whenever it holds real material — free, and
+    // already "her" photos. Only a pool with nothing real behind it (empty, or
+    // placeholders all the way down) triggers a paid generation, ONE image per
+    // post at most, prompted by the post itself so picture and words agree.
+    // Failure or an unconfigured endpoint falls back to the old pick, which
+    // may still be placeholders — exactly the pre-J3 feed, never worse.
+    if (imgCount > 0 && !hasPoolMaterial(persona.imageTags)) {
+      const style = persona.imageTags.filter(Boolean).join('、');
+      const ref = await generateToLibrary({
+        prompt: `一张发在朋友圈的生活照片，配文是：「${text.slice(0, 60)}」${style ? `。画面风格贴合：${style}` : ''}。真实感、自然光、不要文字水印。`,
+        tier,
+        now,
+        seed: `mi:${peer.id}:${now}`,
+        tags: persona.imageTags,
+      });
+      if (ref) return { text, imageRefs: [ref] };
+    }
     return { text, imageRefs: pickImages(`mi:${peer.id}:${now}`, imgCount, persona.imageTags) };
   } catch {
     return null;
@@ -448,13 +489,14 @@ export async function generateMomentComment(
 ): Promise<string | null> {
   const system = assembleSystemPrompt({
     persona: toPersonaView(persona, commenter.remark ?? commenter.name),
-    nsfwTier: 'off',
+    nsfwTier: 'off', // prompt layer stays SFW; routing tier derived below
     scene: { kind: 'single', now: new Date(now) },
   });
+  const tier = await momentRouteTier(persona);
   try {
     const router = await getRouter();
     const res = await router.complete(
-      { role: 'chat', nsfwTier: 'off' },
+      { role: 'chat', nsfwTier: tier },
       {
         messages: [
           { role: 'system', content: system },

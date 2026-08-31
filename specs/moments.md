@@ -18,9 +18,17 @@
 
 ## 铁律
 
-**朋友圈无条件 SFW**（宪法铁律 6 / `specs/nsfw.md`）。`generateMomentPost` 与
-`generateMomentComment` 永远传 `nsfwTier: 'off'`，不看全局档位、不看人设 `nsfwPermit`。
-feed 是共享界面，一条越界的帖子是突兀而非「按需开启」。
+**朋友圈无条件 SFW**（宪法铁律 6 / `specs/nsfw.md`）——这是**内容**规则：
+`assembleSystemPrompt` 的 `nsfwTier` 永远钉 `'off'`，不看全局档位、不看人设
+`nsfwPermit`。feed 是共享界面，一条越界的帖子是突兀而非「按需开启」。
+
+但**路由**档位是另一个问题（M-J3 修正）：router 的 `nsfwTier` 声明的是这次请求
+**携带**什么——全开许可人设的卡片（core、nsfwStyleSamples）随每条帖子的 system
+prompt 出网，声明 'off' 就把它路由到 `defaultProviderId`（大陆用户≈DeepSeek 官方），
+这是 M-D2 破口的第四个面。所以三处 `router.complete` 的 tier 一律经
+`momentRouteTier(persona)` = `maxTier(global, [persona])` 派生（handlers.ts 先例）；
+全开档且无宽松通道时 `makePolicy` 抛错 → 该次发帖/评论静默跳过，宁可不发不降档。
+守卫：`tests/unit/j3-model-surface.test.ts`（源码扫描三处 + 派生真值表）。
 
 ## 数据
 
@@ -165,6 +173,28 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
   缩成 390px 的包含块陷阱）。
 - 自定义表情是 `idb:` ref，**收藏/斗图池要过 `startsWith('idb:')`**，词表
   label 混进池子会被当 ref 渲染成裂图。
+
+## M-J3 增补：生成配图与 AI 换头像
+
+### 配图生成（素材池优先，生成兜底）
+
+「配图只有一条路径」的规则不变，路径内部多了一级：`generateMomentPost` 在
+`imgCount > 0` 且 `hasPoolMaterial(imageTags)` 为**假**（素材库无真图可用、只剩
+占位渐变）时，经 `generateToLibrary`（src/ai/gen-media.ts，动态 import
+src/llm/image.ts）生成**最多 1 张**配图（成本考虑），prompt = 帖子正文 + 人设
+`imageTags` 风格词。任何失败/未配置回落 `pickImages` 老路径——退化后与 M-J3 前
+逐字节相同，零报错上屏。生成图落媒体库 `kind:'generated'`，**不进随机照片池**
+（生成的饼干后来变成随机晚霞=穿帮）、进备份、素材库页第四分段可管理。
+
+### AI 换头像（挂 moment_post 尾部，无新 kind）
+
+`runMomentPost` 尾部 → `maybeAvatarSwap`：种子门控 `AVATAR_SWAP_RATE`（3%，
+`shouldSwapAvatar(contactId, stamp)` 纯函数），命中且生成可用时生成 512 头像
+（落库 `kind:'avatar'`——hydration 只对 avatar 急性材质化、LRU 也豁免它，存成
+别的 kind 冷启后头像会退回占位色）、`updateContact` 改 `avatarRef`、再发一条
+「换了个头像」朋友圈（imageRefs=[新头像]，照常吸引赞评）。不加新 action kind：
+它搭发帖的便车，离线回填经同一条 `moment_post` 物化路径自然覆盖。
+守卫：`tests/unit/image-gen.test.ts`（门控确定性 + 行为 + 接线扫描）。
 
 ## M-I18 增补：可见范围（公开 / 私密 / 部分可见 / 不给谁看）
 

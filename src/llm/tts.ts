@@ -7,13 +7,19 @@
  * Model / voice / emotion are all configurable: MiniMax ships new speech model
  * ids every few months, so nothing here is hardcoded past a default.
  *
+ * SOURCE (M-J3): where the endpoint+key come from is its own setting
+ * (`ttsConfig`, page /settings/tts) instead of「chat 列表里第一个 enabled 的
+ * minimax 槽位」— that hard bind meant disabling MiniMax for chat silently
+ * struck every persona mute, and `ttsModel` had a reader but no writer.
+ *
  * NSFW note: explicit text must never be sent to MiniMax (mainland endpoint with
  * input auditing). The engine is responsible for not calling this on a full-tier
  * turn; see specs/nsfw.md.
  */
 import { httpJson } from './http';
 import { LlmError } from './types';
-import { getSecret } from '../lib/keystore';
+import { getSecret, hasSecret } from '../lib/keystore';
+import { recordUsage } from '../lib/usage';
 import { repo } from '../db/repo';
 
 export interface TtsOptions {
@@ -65,30 +71,115 @@ function hexToBuffer(hex: string): ArrayBuffer {
   return buf;
 }
 
+/* ------------------------------------------------------------------ */
+/* Source resolution (M-J3): TTS is no longer chained to the chat list */
+/* ------------------------------------------------------------------ */
+
+/** The settings row key. The row stores a TtsConfigVM — never a key (rule #2). */
+export const TTS_SETTING = 'ttsConfig';
+
+/** Keystore alias for the standalone key mode. */
+export const TTS_STANDALONE_ALIAS = 'key_tts_standalone';
+
+export const DEFAULT_TTS_BASE = 'https://api.minimaxi.com/v1';
+
 /**
- * Whether TTS is usable right now (a MiniMax provider exists with a stored key).
- * Callers use this to degrade gracefully instead of throwing on every voice line.
+ * Where TTS gets its endpoint and key from.
+ *
+ * `provider` — reuse a chat slot's stored key (by id, EXPLICITLY: the slot's
+ * `enabled` flag means "use for chat" and is deliberately ignored here — the
+ * old code required an *enabled* minimax slot, so disabling MiniMax for chat
+ * silently struck every persona mute).
+ * `standalone` — an independent key under its own alias, for users whose TTS
+ * account is not their chat account (or who have no MiniMax chat slot at all).
  */
-export async function isTtsAvailable(): Promise<boolean> {
-  const providers = await repo.getProviders();
-  const mm = providers.find((p) => p.kind === 'minimax' && p.enabled);
-  if (!mm) return false;
-  return Boolean(await getSecret(mm.keyAlias));
+export interface TtsConfigVM {
+  source: 'provider' | 'standalone';
+  /** Chat slot id when source === 'provider'. */
+  providerId?: string;
+  /** Endpoint for standalone mode; defaults to the MiniMax base. */
+  baseUrl?: string;
+}
+
+export async function getTtsConfig(): Promise<TtsConfigVM | null> {
+  const cfg = await repo.getSetting<TtsConfigVM>(TTS_SETTING);
+  if (!cfg || (cfg.source !== 'provider' && cfg.source !== 'standalone')) return null;
+  return cfg;
+}
+
+export async function saveTtsConfig(cfg: TtsConfigVM): Promise<void> {
+  await repo.putSetting(TTS_SETTING, cfg);
+}
+
+export async function clearTtsConfig(): Promise<void> {
+  await repo.putSetting(TTS_SETTING, null);
+}
+
+interface ResolvedTts {
+  baseUrl: string;
+  keyAlias: string;
+  /** For the settings page's status line. */
+  label: string;
 }
 
 /**
- * Synthesize speech. Throws LlmError if MiniMax isn't configured or the call
- * fails — callers should catch and fall back to a silent voice bubble.
+ * Resolve which endpoint+alias a synthesis call will use, WITHOUT reading the
+ * key itself. Order:
+ *   1. explicit `ttsConfig` (provider binding or standalone key);
+ *   2. legacy zero-config fallback: any MiniMax chat slot that has a stored
+ *      key — enabled ones first, but a DISABLED slot still counts, which is
+ *      the fix for「关掉 MiniMax 聊天就静默失声」(its key exists; only the
+ *      chat routing opted out).
+ * Null = genuinely unconfigured.
+ */
+export async function resolveTtsSource(): Promise<ResolvedTts | null> {
+  const cfg = await getTtsConfig();
+  if (cfg?.source === 'standalone') {
+    return {
+      baseUrl: (cfg.baseUrl ?? '').trim() || DEFAULT_TTS_BASE,
+      keyAlias: TTS_STANDALONE_ALIAS,
+      label: '独立密钥',
+    };
+  }
+  const providers = await repo.getProviders();
+  if (cfg?.source === 'provider' && cfg.providerId) {
+    const p = providers.find((x) => x.id === cfg.providerId);
+    // A bound slot that was deleted falls through to the legacy scan rather
+    // than erroring forever on a ghost id.
+    if (p) return { baseUrl: p.baseUrl, keyAlias: p.keyAlias, label: p.label };
+  }
+  const mm = [...providers]
+    .filter((p) => p.kind === 'minimax')
+    .sort((a, b) => Number(b.enabled) - Number(a.enabled))
+    .find((p) => hasSecret(p.keyAlias));
+  return mm ? { baseUrl: mm.baseUrl, keyAlias: mm.keyAlias, label: mm.label } : null;
+}
+
+/**
+ * Whether TTS is usable right now (a resolvable source with a stored key).
+ * Callers use this to degrade gracefully instead of throwing on every voice line.
+ */
+export async function isTtsAvailable(): Promise<boolean> {
+  const src = await resolveTtsSource();
+  if (!src) return false;
+  return Boolean(await getSecret(src.keyAlias));
+}
+
+/**
+ * Synthesize speech. Throws LlmError if no TTS source is configured or the
+ * call fails — callers should catch and fall back to a silent voice bubble.
  */
 export async function synthesize(opts: TtsOptions): Promise<TtsResult> {
-  const providers = await repo.getProviders();
-  const mm = providers.find((p) => p.kind === 'minimax' && p.enabled);
-  if (!mm) throw new LlmError('auth', 'MiniMax provider 未配置', 401, 'minimax');
-  const key = await getSecret(mm.keyAlias);
-  if (!key) throw new LlmError('auth', 'MiniMax 密钥未设置', 401, mm.id);
+  const src = await resolveTtsSource();
+  if (!src) throw new LlmError('auth', 'TTS 未配置（设置 → 语音合成）', 401, 'tts');
+  const key = await getSecret(src.keyAlias);
+  if (!key) throw new LlmError('auth', 'TTS 密钥未保存', 401, 'tts');
 
   const model = (await repo.getSetting<string>('ttsModel')) ?? DEFAULT_TTS_MODEL;
-  const base = mm.baseUrl.replace(/\/$/, '');
+  const base = src.baseUrl.replace(/\/$/, '');
+
+  // Paid call, per synthesis attempt (cache hits never reach here) — M-J3.
+  void recordUsage('tts', Date.now()).catch(() => {});
 
   const res = await httpJson({
     url: `${base}/t2a_v2`,
@@ -116,10 +207,10 @@ export async function synthesize(opts: TtsOptions): Promise<TtsResult> {
   if (code && code !== 0) {
     // 1026/1027 are MiniMax's input/output content-audit codes.
     const kind = code === 1026 || code === 1027 ? 'content_filter' : 'unknown';
-    throw new LlmError(kind, data.base_resp?.status_msg ?? `TTS 失败 (${code})`, code, mm.id);
+    throw new LlmError(kind, data.base_resp?.status_msg ?? `TTS 失败 (${code})`, code, 'tts');
   }
   const hex = data?.data?.audio;
-  if (!hex) throw new LlmError('bad_response', 'TTS 未返回音频', res.status, mm.id);
+  if (!hex) throw new LlmError('bad_response', 'TTS 未返回音频', res.status, 'tts');
 
   return {
     audio: hexToBuffer(hex),

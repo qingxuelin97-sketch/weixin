@@ -17,7 +17,7 @@
  * 它要走的全部 URL，自己**不许**再维护清单——有守卫盯着它的 import。
  */
 
-export type GoldenDecision = { golden: string } | { exempt: string };
+export type GoldenDecision = { golden: string; pendingCast?: true } | { exempt: string };
 export type SmokeDecision = { path: string } | { skip: string };
 export type RouteRow = GoldenDecision & { smoke: SmokeDecision };
 
@@ -47,6 +47,11 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/settings': { golden: 'settings', smoke: { path: '/settings' } },
   '/settings/api': { golden: 'settings-api', smoke: { path: '/settings/api' } },
   '/settings/asr': { golden: 'settings-asr', smoke: { path: '/settings/asr' } },
+  // pendingCast (M-J3): the shot is WIRED (pages.spec.ts) but the PNG can only
+  // be minted by CI's regen-goldens — local Chromium baselines are宪法-banned.
+  // The flag is self-cleaning: once the PNG lands in the repo, a guard in
+  // route-goldens.test.ts demands the flag be removed.
+  '/settings/tts': { golden: 'settings-tts', pendingCast: true, smoke: { path: '/settings/tts' } },
   '/settings/backup': { golden: 'backup', smoke: { path: '/settings/backup' } },
   '/settings/notify-test': { golden: 'settings-notify-test', smoke: { path: '/settings/notify-test' } },
   '/settings/env': {

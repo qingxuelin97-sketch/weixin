@@ -8,10 +8,11 @@ import {
   ensureFreshModelDefaults,
   diagnoseProvider,
   withDeadline,
+  isPermissiveKind,
 } from '../../llm/service';
 import { repo } from '../../db/repo';
 import { logError } from '../../lib/errlog';
-import { setSecret, hasSecret } from '../../lib/keystore';
+import { setSecret, hasSecret, deleteSecret } from '../../lib/keystore';
 import {
   isRecordingEnabled,
   setRecordingEnabled,
@@ -21,8 +22,13 @@ import {
 } from '../../lib/llm-recorder';
 import { saveTextFile } from '../../lib/save-file';
 import type { ProviderVM } from '../../data/types';
+// Type-only on purpose: the image module is a paid-path lazy chunk (10KB 余量
+// 的启动包棘轮), loaded with await import() inside the handlers that need it.
+import type { ImageProviderVM } from '../../llm/image';
 import './settings.css';
 import { Switch } from '../../components/Switch';
+
+const loadImageMod = () => import('../../llm/image');
 
 /** Build a default ProviderVM from a preset kind. */
 function presetToVm(kind: keyof typeof PRESETS): ProviderVM {
@@ -50,6 +56,10 @@ export function ApiConfigPage() {
   const [fetching, setFetching] = useState(false);
   const [recording, setRecording] = useState(isRecordingEnabled());
   const [recCount, setRecCount] = useState(() => getRecordings().length);
+  const [imgCfg, setImgCfg] = useState<ImageProviderVM | null>(null);
+  const [imgKeyInput, setImgKeyInput] = useState('');
+  const [imgTesting, setImgTesting] = useState(false);
+  const [imgMsg, setImgMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const reload = async () => {
     try {
@@ -57,6 +67,7 @@ export function ApiConfigPage() {
       setProviders(await repo.getProviders());
       setDefaultId(await repo.getSetting<string>('defaultProviderId'));
       setNsfwId(await repo.getSetting<string>('nsfwProviderId'));
+      setImgCfg(await (await loadImageMod()).getImageProvider());
     } catch (e) {
       // This page is the only place a broken storage layer can be diagnosed
       // from. If its own read throws, it must say so rather than render an
@@ -88,6 +99,33 @@ export function ApiConfigPage() {
         await repo.putSetting('defaultProviderId', vm.id);
       }
       if (kind === 'zen') await repo.putSetting('nsfwProviderId', vm.id);
+      invalidateRouter();
+      await reload();
+      setEditing(vm);
+      setKeyInput('');
+      setTestMsg(null);
+    });
+
+  /**
+   * 自定义 OpenAI 兼容槽位 (M-J3)。The kind has been first-class in the router
+   * since M-C1 — `PERMISSIVE_KINDS` includes 'custom', so the NSFW routing
+   * treats a user-declared endpoint as a permissive channel automatically —
+   * but no UI could ever CREATE one. Id carries a timestamp so several custom
+   * slots coexist (Date.now here is UI plumbing, not engine logic).
+   */
+  const addCustom = () =>
+    guard('addCustom', async () => {
+      const stamp = Date.now().toString(36);
+      const vm: ProviderVM = {
+        id: `prov_custom_${stamp}`,
+        kind: 'custom',
+        label: '自定义（OpenAI 兼容）',
+        baseUrl: '',
+        keyAlias: `key_custom_${stamp}`,
+        models: [],
+        enabled: true,
+      };
+      await repo.putProvider(vm);
       invalidateRouter();
       await reload();
       setEditing(vm);
@@ -188,6 +226,60 @@ export function ApiConfigPage() {
       await reload();
     });
 
+  /* ---------------- 图片生成 (M-J3) ---------------- */
+
+  const pickImgPreset = (kind: string) =>
+    guard('imgPreset', async () => {
+      const img = await loadImageMod();
+      const next = img.imagePresetToConfig(kind);
+      await img.saveImageProvider(next);
+      setImgCfg(next);
+      setImgKeyInput('');
+      setImgMsg(null);
+    });
+
+  const patchImg = (p: Partial<ImageProviderVM>) => {
+    if (imgCfg) setImgCfg({ ...imgCfg, ...p });
+  };
+  const persistImg = () => {
+    if (imgCfg) void guard('imgPersist', async () => (await loadImageMod()).saveImageProvider(imgCfg));
+  };
+
+  const saveImgKey = () =>
+    guard('imgKey', async () => {
+      if (!imgCfg || !imgKeyInput.trim()) return;
+      await setSecret(imgCfg.keyAlias, imgKeyInput.trim());
+      setImgKeyInput('');
+      setImgMsg({ ok: true, text: '密钥已加密保存到本机' });
+    });
+
+  const runImgTest = async () => {
+    if (!imgCfg) return;
+    setImgTesting(true);
+    setImgMsg(null);
+    try {
+      // The real path, one real (smallest) generation — the only honest probe
+      // for a diffusion queue. Belt-and-braces deadline keeps the button alive.
+      const img = await loadImageMod();
+      const r = await withDeadline(img.testImageGeneration(imgCfg), 70_000);
+      setImgMsg({ ok: r.ok, text: r.message });
+    } catch (e) {
+      setImgMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setImgTesting(false);
+    }
+  };
+
+  const removeImgCfg = () =>
+    guard('imgRemove', async () => {
+      if (!imgCfg) return;
+      deleteSecret(imgCfg.keyAlias);
+      await (await loadImageMod()).clearImageProvider();
+      setImgCfg(null);
+      setImgKeyInput('');
+      setImgMsg(null);
+    });
+
   const notAdded = (Object.keys(PRESETS) as Array<keyof typeof PRESETS>).filter(
     (k) => !providers.some((p) => p.id === `prov_${k}`),
   );
@@ -204,34 +296,59 @@ export function ApiConfigPage() {
                 {hasSecret(p.keyAlias) ? '已配置密钥' : '未配置密钥'}
               </span>
             </div>
-            <div className="provider-card__meta">{p.baseUrl}</div>
-            <div className="provider-card__meta">模型：{p.models.join(', ')}</div>
+            <div className="provider-card__meta">{p.baseUrl || '（未填 Base URL）'}</div>
+            <div className="provider-card__meta">模型：{p.models.join(', ') || '（未配置）'}</div>
             <div className="provider-card__meta">
               {defaultId === p.id && '· 默认聊天路由 '}
-              {nsfwId === p.id && '· NSFW 宽松通道'}
+              {nsfwId === p.id && '· NSFW 宽松通道 '}
+              {/* 宽松通道徽标 (M-J3): kind 属于 PERMISSIVE_KINDS 即被 NSFW 路由
+                  认作可承载全开档的通道——徽标读的是路由器同一份集合，不会说谎。 */}
+              {isPermissiveKind(p.kind) && '· 可作宽松通道'}
             </div>
           </div>
         ))}
 
-        {notAdded.length > 0 && (
-          <div className="settings__group" style={{ marginTop: 16 }}>
-            <div className="settings__group-title">添加预设 Provider</div>
-            {notAdded.map((k, i) => (
-              <div
-                key={k}
-                className={`settings__row${i < notAdded.length - 1 ? ' settings__row--divided' : ''}`}
-                onClick={() => addPreset(k)}
-              >
-                <span className="settings__label">{PRESETS[k].label}</span>
-                <span className="settings__chevron">＋</span>
-              </div>
-            ))}
+        <div className="settings__group" style={{ marginTop: 16 }}>
+          <div className="settings__group-title">添加 Provider</div>
+          {notAdded.map((k) => (
+            <div
+              key={k}
+              className="settings__row settings__row--divided"
+              onClick={() => addPreset(k)}
+            >
+              <span className="settings__label">{PRESETS[k].label}</span>
+              <span className="settings__chevron">＋</span>
+            </div>
+          ))}
+          <div className="settings__row" onClick={() => void addCustom()}>
+            <span className="settings__label">自定义（任意 OpenAI 兼容端点）</span>
+            <span className="settings__chevron">＋</span>
           </div>
-        )}
+          <p className="settings__hint">
+            自定义槽位自动被 NSFW 路由认作宽松通道（与 Zen 同级）——只把你确认过内容政策的
+            端点填进来。名称 / Base URL / 模型 id 全部自填。
+          </p>
+        </div>
 
         {editing && (
           <div className="settings__group" style={{ marginTop: 16 }}>
             <div className="settings__group-title">配置：{editing.label}</div>
+            {editing.kind === 'custom' && (
+              <div className="field field--divided">
+                <span className="field__label">名称</span>
+                <input
+                  className="field__input"
+                  value={editing.label}
+                  onChange={(e) => setEditing({ ...editing, label: e.target.value })}
+                  onBlur={() => {
+                    void repo.putProvider(editing);
+                    invalidateRouter();
+                  }}
+                  placeholder="我的中转站"
+                  spellCheck={false}
+                />
+              </div>
+            )}
             <div className="field field--divided">
               <span className="field__label">Base URL</span>
               <input
@@ -330,6 +447,119 @@ export function ApiConfigPage() {
             </button>
           </div>
         )}
+
+        <div className="settings__group" style={{ marginTop: 16 }}>
+          <div className="settings__group-title">图片生成（可选，聊天配图 / 朋友圈配图 / AI 换头像）</div>
+          {!imgCfg && (
+            <>
+              <div className="settings__row settings__row--divided" onClick={() => pickImgPreset('siliconflow')}>
+                <span className="settings__label">SiliconFlow 硅基流动（国内直连）</span>
+                <span className="settings__chevron">＋</span>
+              </div>
+              <div className="settings__row settings__row--divided" onClick={() => pickImgPreset('openai')}>
+                <span className="settings__label">OpenAI（gpt-image / DALL·E）</span>
+                <span className="settings__chevron">＋</span>
+              </div>
+              <div className="settings__row" onClick={() => pickImgPreset('custom')}>
+                <span className="settings__label">自定义（任意 OpenAI 兼容 images 端点）</span>
+                <span className="settings__chevron">＋</span>
+              </div>
+              <p className="settings__hint">
+                不配也完全能用：AI 发图会继续从素材库抽取。配置后，素材池没有命中素材时才会
+                真的生成一张（每次生成计入用量）。
+              </p>
+            </>
+          )}
+          {imgCfg && (
+            <>
+              <div className="field field--divided">
+                <span className="field__label">Base URL</span>
+                <input
+                  className="field__input"
+                  value={imgCfg.baseUrl}
+                  onChange={(e) => patchImg({ baseUrl: e.target.value })}
+                  onBlur={persistImg}
+                  placeholder="https://api.siliconflow.cn/v1"
+                  spellCheck={false}
+                />
+                <span className="field__hint">自动追加 /images/generations；一般以 /v1 结尾</span>
+              </div>
+              <div className="field field--divided">
+                <span className="field__label">模型</span>
+                <input
+                  className="field__input"
+                  value={imgCfg.model}
+                  onChange={(e) => patchImg({ model: e.target.value })}
+                  onBlur={persistImg}
+                  placeholder="Kwai-Kolors/Kolors"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="field field--divided">
+                <span className="field__label">可用尺寸（逗号分隔，第一个为默认）</span>
+                <input
+                  className="field__input"
+                  value={imgCfg.sizes.join(', ')}
+                  onChange={(e) =>
+                    patchImg({ sizes: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })
+                  }
+                  onBlur={persistImg}
+                  spellCheck={false}
+                />
+              </div>
+              {imgCfg.kind === 'custom' && (
+                <>
+                  {/* 铁律 6 的生成面：与 ASR 的 nsfwSafe、宽松通道 LLM 同一个用户判断。 */}
+                  <div className="settings__row settings__row--divided">
+                    <span className="settings__label">允许承载全开档生成提示</span>
+                    <Switch
+                      on={Boolean(imgCfg.nsfwCapable)}
+                      onChange={(next) => {
+                        patchImg({ nsfwCapable: next });
+                        void persistImg();
+                      }}
+                      label="允许承载全开档生成提示"
+                    />
+                  </div>
+                  <p className="settings__hint">
+                    关闭时（默认），全开档会话里的配图会直接跳过生成、回落素材池。
+                    只有你确认这家端点适合承载这类内容时才打开。
+                  </p>
+                </>
+              )}
+              {imgCfg.kind !== 'custom' && (
+                <p className="settings__hint">
+                  预设端点在全开档下一律不生成（SiliconFlow 是国内官方端点，铁律 6）——
+                  全开档要用生成配图，请改配自定义端点并显式勾选。
+                </p>
+              )}
+              <div className="field">
+                <span className="field__label">API Key（加密存本机，不入库、不上传）</span>
+                <input
+                  className="field__input"
+                  value={imgKeyInput}
+                  onChange={(e) => setImgKeyInput(e.target.value)}
+                  placeholder={hasSecret(imgCfg.keyAlias) ? '已保存，输入可覆盖' : 'sk-...'}
+                  type="password"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </div>
+              <button className="btn-primary" onClick={() => void saveImgKey()} disabled={!imgKeyInput.trim()}>
+                保存密钥
+              </button>
+              <button className="btn-ghost" onClick={() => void runImgTest()} disabled={imgTesting}>
+                {imgTesting ? '生成中…' : '测试生成（会真的画一张小图）'}
+              </button>
+              {imgMsg && (
+                <div className={`test-result${imgMsg.ok ? ' test-result--ok' : ''}`}>{imgMsg.text}</div>
+              )}
+              <button className="btn-ghost" onClick={() => void removeImgCfg()}>
+                清除图片生成配置
+              </button>
+            </>
+          )}
+        </div>
 
         <div className="settings__group" style={{ marginTop: 16 }}>
           <div className="settings__group-title">对话录制（调优语料，只存本机）</div>

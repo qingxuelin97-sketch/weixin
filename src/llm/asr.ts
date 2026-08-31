@@ -19,6 +19,7 @@
  */
 import { repo } from '../db/repo';
 import { getSecret, hasSecret } from '../lib/keystore';
+import { recordUsage } from '../lib/usage';
 import { nativeHttp, raceDeadline } from './http';
 
 /* ------------------------------------------------------------------ */
@@ -270,6 +271,10 @@ export async function transcribeWith(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_ASR_TIMEOUT;
   const language = (opts.language ?? cfg.language ?? '').trim();
   if (opts.signal?.aborted) throw new AsrError('aborted', 'aborted');
+
+  // Paid call, ONE per upload attempt no matter how many transport channels it
+  // burns (the bridge fallback re-sends the same clip, not a new job) — M-J3.
+  void recordUsage('asr', Date.now()).catch(() => {});
 
   // Same policy as http.ts: WebView fetch is the primary transport everywhere;
   // the native bridge exists only as a fallback for no-CORS gateways.

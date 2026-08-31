@@ -42,6 +42,43 @@ NSFW 全开=宽松通道（Zen: deepseek-v3→glm→kimi）。
   （空壳 setTimeout 曾导致真机测试连接永久卡死）；`testConnection` 固定 15s。
 - 见 http-timeout.test.ts。
 
+## 自定义槽位（M-J3 收口）
+- ApiConfigPage 可添加 `kind:'custom'` 槽位（label/baseUrl/models 全自填，id 带时间戳
+  可多个并存）。`PERMISSIVE_KINDS` 自 M-C1 就含 custom——路由早认，UI 才补上入口。
+- 卡片「可作宽松通道」徽标读 `isPermissiveKind()`（service.ts 导出，与路由策略同一份
+  集合），不许第二份手写清单。
+
+## TTS 来源（M-J3 解绑，页 /settings/tts）
+- 旧形态：`synthesize` 绑死「chat 列表第一个 **enabled** 的 minimax 槽位」——关掉
+  MiniMax 聊天=全员静默失声；`ttsModel` 有读点无写点。
+- 现在：settings 键 `ttsConfig`（台账 global）三态——缺失=自动（任何**存过密钥**的
+  minimax 槽位，enabled 优先但**不再必需**）；`{source:'provider', providerId}` 显式
+  绑定某槽位（绑定被删除则回落自动扫描）；`{source:'standalone', baseUrl}` 独立密钥
+  （alias `key_tts_standalone`，走 keystore）。`resolveTtsSource()` 是唯一解析点。
+- `/settings/tts`：来源三段选择 + ttsModel 写点 + 真合成测试按钮。守卫
+  `tests/unit/j3-model-surface.test.ts`。
+
+## 图片生成（M-J3，src/llm/image.ts —— 全仓第二个直连网络的模块）
+- OpenAI 兼容 `POST {base}/images/generations`。配置存 settings 键 `imageProvider`
+  （台账 global）：`{kind:'siliconflow'|'openai'|'custom', label, baseUrl, keyAlias,
+  model, sizes, nsfwCapable?}`，key 走 keystore（rule #2）。预设 SiliconFlow
+  （api.siliconflow.cn/v1，Kwai-Kolors/Kolors，国内直连）/ OpenAI / custom；
+  入口在 ApiConfigPage 底部分组（无新路由）。
+- 传输复用 http.ts 策略：fetch 优先、原生桥兜底、`raceDeadline` 真拒绝；响应
+  `b64_json` 优先，`url` 兜底（**立即**再 fetch 成 blob——CDN 链接短命；下载同样
+  fetch 优先 + 桥回退 base64）。SiliconFlow 说方言（image_size/batch_size），
+  openai/custom 说 OpenAI（size/n/response_format）。
+- **铁律 6 分档**：`generateImage(prompt, tier, opts?)` 的 `tier` 必传无默认
+  （编译期强制，M-I18 教训）；`tier==='full'` 只放行 `kind==='custom' ∧
+  nsfwCapable===true`——SiliconFlow 是国内官方端点，预设在全开档**无条件**拒绝，
+  拒绝发生在读 key 与出网**之前**。`isImageGenReady(tier)` 把闸门折进就绪检查，
+  调用面（photo-send / moments / 换头像）拿 null 静默回落素材池。守卫：
+  `tests/unit/nsfw-callsite.test.ts`（call site 6）+ `tests/unit/image-gen.test.ts`。
+- 业务半边在 `src/ai/gen-media.ts`：`generateToLibrary` 动态 import 传输模块
+  （启动包棘轮只剩个位数 KB 余量）、生成图落媒体库 `kind:'generated'`、每次生成
+  `recordUsage('image')`。`simulate()` 纯函数碰不到它（回填只在 handler 物化时才
+  可能生成，守卫钉在 image-gen.test）。
+
 ## 验收（router.test.ts / bubbles.test.ts 已覆盖）
 - [ ] 正常返回直出；拒答走宽松链并粘性；tier-1 prefill 可救场；全失败出人设拒绝；auth 不 ladder。
 - [ ] NDJSON/数组/纯文本/坏 JSON 均能解析出气泡；delay 越界被 clamp。

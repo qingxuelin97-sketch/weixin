@@ -36,9 +36,13 @@ ZIP{manifest, VACUUM INTO 快照 db, media 可选}。两档（仅数据 MB 级 /
 
 ## media 表（v5，M-C2 运行时媒体库）
 
-`{ id, kind: 'avatar'|'photo', tags: string[], mime, blob: Blob, createdAt }`，
-IndexedDB store `media`（`DB_VERSION=5`）。这是**真机唯一可行**的素材通道——APK 由
-CI 构建，`src/assets/` 构建期槽位在设备上永远不可达。
+`{ id, kind: 'avatar'|'photo'|'sticker'|'generated', tags: string[], mime, blob: Blob,
+createdAt }`，IndexedDB store `media`（`DB_VERSION=5`；kind 是行内字段，加值**不需要**
+迁移——'sticker' M-I15、'generated' M-J3 都是这样加的）。这是**真机唯一可行**的素材
+通道——APK 由 CI 构建，`src/assets/` 构建期槽位在设备上永远不可达。
+'generated' 行是 AI 生成图（`gen-media.putGeneratedMedia` 唯一写入点，id 确定性派生自
+now+seed）：只被生成它的那条消息/帖子引用，`photoPoolIds` 不吐它（不进随机池），
+LRU 逐出与 photo 同策略，备份/恢复照常。
 
 - ref 体系新增 `idb:<id>`（`resolveImageRef` 同步解析，经 `data/media-registry` 的
   进程级 objectURL 注册表；启动水合时 prime，删除时 revoke）。

@@ -22,12 +22,12 @@
 
 export interface RegisteredMedia {
   url: string;
-  kind: 'avatar' | 'photo' | 'sticker';
+  kind: 'avatar' | 'photo' | 'sticker' | 'generated';
   tags: string[];
 }
 
 interface Entry {
-  kind: 'avatar' | 'photo' | 'sticker';
+  kind: 'avatar' | 'photo' | 'sticker' | 'generated';
   tags: string[];
   /** Live object URL, or undefined when not currently materialized. */
   url?: string;
@@ -65,7 +65,7 @@ export function subscribeMedia(fn: () => void): () => void {
 /** Register what an item IS, without paying for a URL. */
 export function registerMediaMeta(
   id: string,
-  meta: { kind: 'avatar' | 'photo' | 'sticker'; tags: string[] },
+  meta: { kind: 'avatar' | 'photo' | 'sticker' | 'generated'; tags: string[] },
 ): void {
   const prev = registry.get(id);
   registry.set(id, { ...meta, url: prev?.url, touched: prev?.touched ?? 0 });
@@ -109,10 +109,14 @@ export function unmaterialized(ids: readonly string[]): string[] {
  * Avatars are never evicted: a handful of small images that every conversation
  * row draws, so dropping them would mean visible flicker on every scroll for
  * no meaningful memory saving. Stickers (M-I15) are exempt for the same
- * reason — small, few, redrawn on every composer open.
+ * reason — small, few, redrawn on every composer open. Generated pictures
+ * (M-J3) evict exactly like photos: they accumulate for the life of the
+ * install and each is a full-size image, which is the shape the cap exists for.
  */
 function evict(): void {
-  const live = [...registry.entries()].filter(([, e]) => e.url && e.kind === 'photo');
+  const live = [...registry.entries()].filter(
+    ([, e]) => e.url && (e.kind === 'photo' || e.kind === 'generated'),
+  );
   if (live.length <= MAX_LIVE_URLS) return;
   live.sort((a, b) => a[1].touched - b[1].touched);
   for (const [, e] of live.slice(0, live.length - MAX_LIVE_URLS)) {
@@ -135,8 +139,18 @@ export function getMediaUrl(id: string): string | undefined {
   return e.url;
 }
 
-/** All registered photo-pool ids, optionally narrowed to items matching any of `tags`. */
-export function photoPoolIds(tags?: string[]): string[] {
+/**
+ * All registered photo-pool ids, optionally narrowed to items matching any of
+ * `tags`. Only `kind: 'photo'` — generated items (M-J3) are pinned to the one
+ * message/post that caused them and never re-enter the random pool.
+ *
+ * `strict` (M-J3): report a tag miss as a MISS ([]) instead of falling back to
+ * the whole pool. The fallback stays right for random picking (an empty result
+ * would silently turn a persona's Moments text-only forever); the generation
+ * path needs the honest answer, because "没有命中素材" is exactly its cue to
+ * generate one instead.
+ */
+export function photoPoolIds(tags?: string[], strict = false): string[] {
   const ids: string[] = [];
   const want = tags?.filter(Boolean) ?? [];
   for (const [id, m] of registry) {
@@ -146,7 +160,7 @@ export function photoPoolIds(tags?: string[]): string[] {
   }
   // A tag filter that matches nothing falls back to the whole pool — an empty
   // result would silently turn the persona's Moments into text-only forever.
-  if (want.length && ids.length === 0) return photoPoolIds();
+  if (want.length && ids.length === 0) return strict ? [] : photoPoolIds();
   return ids;
 }
 

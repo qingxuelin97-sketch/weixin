@@ -32,6 +32,18 @@ function usageKindFor(role: Role, convKey: string): UsageKind {
   return 'chat';
 }
 
+/**
+ * Best-effort token count out of a completion's raw response (M-J3). OpenAI
+ * shape only, read defensively: gateways that report differently (or not at
+ * all) yield 0, and 0 is deliberately recorded as NOTHING rather than as a
+ * zero — see src/lib/usage.ts on why an absent number beats a wrong one.
+ */
+export function tokensOf(r: CompletionResult): number {
+  const u = (r.raw as { usage?: { total_tokens?: unknown } } | null | undefined)?.usage;
+  const n = u?.total_tokens;
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -150,6 +162,23 @@ export class LlmRouter {
     ctx: GenerateContext = {},
     convKey = 'default',
   ): Promise<CompletionResult> {
+    return this.completeInner(req, opts, ctx, convKey, false);
+  }
+
+  /**
+   * The ladder itself. `usageAlreadyRecorded` exists for exactly one caller:
+   * `generate()`'s streaming rung counts the turn BEFORE streaming, and when
+   * the stream dies pre-first-bubble it falls through to here — which used to
+   * count the SAME turn a second time (M-J3 fix). One turn, one count, no
+   * matter how many transports it burned on the way.
+   */
+  private async completeInner(
+    req: RouteRequest,
+    opts: Omit<GenerateOptions, 'model'>,
+    ctx: GenerateContext,
+    convKey: string,
+    usageAlreadyRecorded: boolean,
+  ): Promise<CompletionResult> {
     // Every rung's failure is recorded. Pre-M-E all three catches were bare
     // `{}` blocks: a user whose key had expired saw a persona-styled "我现在不太
     // 想聊这个" and there was no trace anywhere of the 401 that caused it.
@@ -174,8 +203,16 @@ export class LlmRouter {
 
     // Every call the app makes passes through here — the one honest place to
     // count them. The user's own key pays for the heartbeats, memory passes and
-    // group casting that happen with nobody pressing anything (M-E6).
-    void recordUsage(usageKindFor(req.role, convKey), Date.now()).catch(() => {});
+    // group casting that happen with nobody pressing anything (M-E6). Counted
+    // UP FRONT so a turn that fails on every rung is still a turn that spent
+    // money; tokens ride a second zero-count record once a response actually
+    // reports them (M-J3).
+    const usageKind = usageKindFor(req.role, convKey);
+    if (!usageAlreadyRecorded) void recordUsage(usageKind, Date.now()).catch(() => {});
+    const noteTokens = (r: CompletionResult) => {
+      const t = tokensOf(r);
+      if (t > 0) void recordUsage(usageKind, Date.now(), 0, t).catch(() => {});
+    };
 
     // Attempt 0: primary (or sticky) model.
     try {
@@ -183,6 +220,7 @@ export class LlmRouter {
       if (!isRefusal(r)) {
         if (pinned) pinned.remaining--;
         if (pinned && pinned.remaining <= 0) this.sticky.delete(stickyKey);
+        noteTokens(r);
         return r;
       }
     } catch (e) {
@@ -202,7 +240,10 @@ export class LlmRouter {
         : messages;
       try {
         const r = await primary.provider.complete({ ...opts, messages: withPrefill, model: primary.model });
-        if (!isRefusal(r)) return r;
+        if (!isRefusal(r)) {
+          noteTokens(r);
+          return r;
+        }
       } catch (e) {
         note('soften', primary.provider.id, e);
       }
@@ -214,6 +255,7 @@ export class LlmRouter {
         const r = await fb.provider.complete({ ...opts, model: fb.model });
         if (!isRefusal(r)) {
           this.sticky.set(stickyKey, { provider: fb.provider, model: fb.model, remaining: 10 });
+          noteTokens(r);
           return r;
         }
       } catch (e) {
@@ -256,6 +298,11 @@ export class LlmRouter {
     const stickyKey = `${convKey}::${req.nsfwTier}`;
     const pinned = this.sticky.get(stickyKey);
     const primary = pinned ?? { provider: plan.provider, model: plan.model };
+    // Whether THIS turn is already on the usage ledger. The streaming rung
+    // counts up front (the stream may put paid-for bubbles on screen and then
+    // die), and the one-shot fallback below must not count the turn again —
+    // pre-M-J3 a stream that failed before its first bubble billed twice.
+    let usageRecorded = false;
     if (!opts.json && primary.provider.canStream?.() && primary.provider.generateStream) {
       let released = 0;
       try {
@@ -263,6 +310,7 @@ export class LlmRouter {
         // one-shot path below, which re-checks and throws it out to the caller.
         if (preflight) await preflight(Date.now());
         void recordUsage(usageKindFor(req.role, convKey), Date.now()).catch(() => {});
+        usageRecorded = true;
         for await (const b of primary.provider.generateStream({ ...opts, model: primary.model })) {
           if (released === 0 && isRefusal({ text: b.content, finishReason: null, raw: null })) {
             // First bubble reads as a refusal — abandon the stream unshown
@@ -294,7 +342,7 @@ export class LlmRouter {
     }
 
     try {
-      const r = await this.complete(req, opts, ctx, convKey);
+      const r = await this.completeInner(req, opts, ctx, convKey, usageRecorded);
       for (const b of parseBubbles(r.text)) yield b;
     } catch (e) {
       // A budget rejection is not a refusal (M-J1): the persona-refusal line

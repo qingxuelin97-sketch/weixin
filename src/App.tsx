@@ -16,6 +16,7 @@ import { ChatPage } from './features/chat/ChatPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ApiConfigPage } from './features/settings/ApiConfigPage';
 import { AsrConfigPage } from './features/settings/AsrConfigPage';
+import { TtsConfigPage } from './features/settings/TtsConfigPage';
 import { PersonaEditPage } from './features/settings/PersonaEditPage';
 import { RedPacketSendPage } from './features/money/RedPacketSendPage';
 import { RedPacketOpenPage } from './features/money/RedPacketOpenPage';
@@ -149,6 +150,7 @@ export function App() {
               <Route path="/settings" element={<Push><SettingsPage /></Push>} />
               <Route path="/settings/api" element={<Push><ApiConfigPage /></Push>} />
               <Route path="/settings/asr" element={<Push><AsrConfigPage /></Push>} />
+              <Route path="/settings/tts" element={<Push><TtsConfigPage /></Push>} />
               <Route path="/settings/backup" element={<Push><BackupPage /></Push>} />
               <Route path="/settings/notify-test" element={<Push><NotifyTestPage /></Push>} />
               <Route path="/settings/env" element={<Push><EnvDiagPage /></Push>} />

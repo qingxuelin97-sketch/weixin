@@ -15,8 +15,11 @@
  * words reads as her not having a picture to hand.
  */
 import type { Bubble } from '../llm/types';
+import type { NsfwTier } from '../llm/router';
 import type { PersonaVM } from '../data/types';
-import { pickImages } from '../data/moments-images';
+import { pickImages, hasRealAssets } from '../data/moments-images';
+import { photoPoolIds } from '../data/media-registry';
+import { generateToLibrary } from './gen-media';
 
 /**
  * Recently-sent refs per conversation, so she does not send the same photo
@@ -60,6 +63,60 @@ export function resolvePhotoBubble(
   if (!ref) return null;
   remember(convId, ref);
   return { ref, caption };
+}
+
+/**
+ * Does the pool hold REAL material for these tags (M-J3)?
+ *
+ * "Real" means a runtime-library photo matching the persona's tags (any
+ * library photo when she has none), or — with an empty library — a build-time
+ * asset. Placeholder gradients do NOT count: they exist so an unconfigured
+ * feed stays populated, and "only placeholders left" is precisely the state
+ * where generating a real picture is an upgrade rather than a cost.
+ */
+export function hasPoolMaterial(tags?: string[]): boolean {
+  if (photoPoolIds(tags, true).length > 0) return true;
+  return photoPoolIds().length === 0 && hasRealAssets;
+}
+
+/**
+ * The pool-first, generate-second resolver (M-J3).
+ *
+ * Priority is deliberate and cost-shaped: a tagged hit in the user's own pool
+ * is free and already looks like "her" photos, so it always wins. Only when
+ * the pool has nothing real to offer AND a generation endpoint is configured
+ * (and passes the 铁律 6 tier gate — `tier` comes from the calling surface,
+ * never from here) does a paid generation run, prompted by the model's own
+ * description of the picture plus the persona's style words. Every failure
+ * falls back to the old pool path; this function upgrades outcomes and never
+ * introduces a new way to break a turn.
+ */
+export async function resolvePhotoOrGenerate(
+  bubble: Bubble,
+  persona: Pick<PersonaVM, 'contactId' | 'imageTags'>,
+  convId: string,
+  seed: string,
+  tier: NsfwTier,
+  now: number,
+): Promise<{ ref: string; caption: string } | null> {
+  const caption = (bubble.content ?? '').trim().slice(0, 40);
+  if (!hasPoolMaterial(persona.imageTags) && caption) {
+    const style = persona.imageTags.filter(Boolean).join('、');
+    const ref = await generateToLibrary({
+      prompt: `一张随手拍的生活照片：${caption}${style ? `。画面风格贴合：${style}` : ''}。真实感、自然光、不要文字水印。`,
+      tier,
+      now,
+      seed,
+      tags: persona.imageTags,
+    });
+    if (ref) {
+      remember(convId, ref);
+      return { ref, caption };
+    }
+    // Generation unavailable or failed → the pool path below (which may still
+    // resolve to a placeholder, exactly as before this feature existed).
+  }
+  return resolvePhotoBubble(bubble, persona, convId, seed);
 }
 
 /**
