@@ -33,6 +33,7 @@
  */
 import type { ScheduledAction } from './scheduler';
 import type { ContactVM } from '../data/types';
+import type { ScheduledActionKind as ActionKind } from '../db/schema';
 import type { NotifyKind } from '../lib/notify';
 import {
   notificationId,
@@ -44,17 +45,108 @@ import {
 /** Don't bother the OS with things further out than this. */
 const HORIZON_MS = 24 * 3_600_000;
 
+/* ==================================================================== */
+/* 通知表态台账 (M-J4a)                                                  */
+/* ==================================================================== */
+
+export type NotifyStance = { via: 'eligible' } | { via: 'silent'; why: string };
+
+/**
+ * 每个排期 kind 对「App 关着时该不该出通知」的表态——M-J 侦察结论 #3 的
+ * 永久修复：此前 21 种 kind 里只有 4 种出通知，她转账/打电话/群里说话在
+ * App 关闭时全部无声，而且新增 kind 默认就是无声的，没人会想起来问。
+ *
+ * 现在这份台账是 `Record<ActionKind, …>`：加 kind 不表态直接编译不过；
+ * 守卫测试再断言键集合与 SCHEDULED_ACTION_KINDS 完全相等。
+ *
+ * eligible 的准入门槛是**一致性铁律**（见文件头）：通知内容必须在排期时刻
+ * 就完全可知，且落地物（消息/记录）在用户点开时必然存在（回填物化）。
+ * 内容 fire 时才定的，最多给 followup 档「[你收到一条消息]」；连「会不会
+ * 发生」都 fire 时才定的，一律 silent——通知说了却没发生，是最响的穿帮。
+ */
+export const NOTIFY_STANCE: Record<ActionKind, NotifyStance> = {
+  heartbeat: { via: 'eligible' }, // 预写 greeting 可逐字展示；无预写降 followup
+  moment_like: { via: 'eligible' }, // 赞的"动作"即内容，排期时刻全知（仅自己的帖）
+  moment_comment: { via: 'eligible' }, // 评论文本 fire 时生成 → followup 档
+  moment_repost: { via: 'eligible' }, // 同赞：转发动作全知
+  ai_money: { via: 'eligible' }, // 红包/转账/群收款三分支都在 payload 里定死
+  ai_call: { via: 'eligible' }, // 「给你打过语音电话」——过去式措辞，点开进聊天页而非响铃页
+  bill_pay: { via: 'eligible' }, // 谁付了群收款在开单时刻就定死（装死的根本不排）
+  group_msg: { via: 'eligible' }, // 内容 fire 时生成 → followup 档，标题用群名
+  group_chatter: { via: 'eligible' }, // 同上；静默期避让可能让单条落空，followup 档承受得起
+  moment_post: {
+    via: 'silent',
+    why: '真微信不推送好友新动态——朋友圈是你去看的，不是它来找你的。保真优先。',
+  },
+  agent_dm: {
+    via: 'silent',
+    why: '隐藏 AI↔AI 私信面。任何通知都是不可逆的穿帮泄漏（红测钉死零产出）。',
+  },
+  recall: {
+    via: 'silent',
+    why: '真微信撤回不出新通知；而且撤回的是哪条、成不成功都是 fire 时才定的。',
+  },
+  mem_extract: { via: 'silent', why: '纯内部记忆管线，没有用户可见落地物。' },
+  story_tick: {
+    via: 'silent',
+    why: '剧情节拍失败会暂停自续链（M-G0 的修复点），预告一个可能没发生的节拍必穿帮；离线节拍由回填物化，回来自然看到。',
+  },
+  auto_backup: { via: 'silent', why: '纯内部备份任务，成功本就该无感。' },
+  rp_grab: {
+    via: 'silent',
+    why: 'payload 只有 rpId+抢包人，排期时刻判不出包是不是用户发的——把 AI 抢 AI 红包也报给你就是噪音。扩展路径：仿 selfMomentIds 传自发包 allowlist。',
+  },
+  transfer_accept: {
+    via: 'silent',
+    why: 'payload 只有 transferId，无收款人无会话可显示；结果消息由回填物化。',
+  },
+  transfer_return: { via: 'silent', why: '同 transfer_accept：payload 只有 id。' },
+  rp_return: { via: 'silent', why: '同 transfer_accept：payload 只有 id。' },
+  joint_plan: {
+    via: 'silent',
+    why: 'payload 携带隐藏 DM 编排面（dmId/a/b），且物化与否 fire 时才定——泄漏风险大于价值。',
+  },
+  group_event: {
+    via: 'silent',
+    why: '多阶段状态机（提议/RSVP/事件日/事后），每阶段内容与成败 fire 时才定。',
+  },
+  agent_forward: {
+    via: 'silent',
+    why: '转发是否通过隐藏来源检查 fire 时才定；预告一条可能被拒的转发必穿帮。',
+  },
+  agent_invite: { via: 'silent', why: '提议卡内容 fire 时生成，且用户在场才有意义。' },
+  sticker_reply: {
+    via: 'silent',
+    why: '秒级斗图节拍，只在用户正看着聊天页时才会排——给盯着屏幕的人弹横幅是骚扰。',
+  },
+};
+
 /** The fixed like line. The act is the content; nothing here can go stale. */
 export const LIKE_NOTIFY_BODY = '赞了你的朋友圈';
 
 /** Same grading logic as a like: the repost ACT is fully known at schedule time. */
 export const REPOST_NOTIFY_BODY = '转发了你的朋友圈';
 
+/** Money acts (M-J4a): the branch is fixed in the payload at schedule time. */
+export const MONEY_NOTIFY_BODY: Record<'rp' | 'transfer' | 'bill', string> = {
+  rp: '给你发了一个红包',
+  transfer: '给你转了一笔钱',
+  bill: '发起了群收款',
+};
+
+/** Past-tense on purpose: tapping hours later must read as a missed call. */
+export const CALL_NOTIFY_BODY = '给你打过语音电话';
+
+export const BILL_PAY_NOTIFY_BODY = '支付了群收款';
+
 export interface NotifiableAction {
   id: string;
   kind: string;
   fireAt: number;
-  contactId: string;
+  /** Absent for group-titled kinds (group_msg/group_chatter) — `title` rules. */
+  contactId?: string;
+  /** Pre-resolved title (group name); wins over contactId resolution. */
+  title?: string;
   /** Pre-written text; present only when it can be shown verbatim. */
   body?: string;
   /** Explicit grading for non-heartbeat kinds (M-I15); heartbeats derive theirs. */
@@ -86,6 +178,13 @@ export interface NotifiableOpts {
    * also the safe default for any caller that has no feed context.
    */
   selfMomentIds?: ReadonlySet<string>;
+  /**
+   * Resolve a convId to its VISIBLE group title (M-J4a). The caller builds it
+   * from store conversations excluding isHidden rows — so a hidden conv id in
+   * a payload resolves to nothing and the row silently drops. Absent = group
+   * kinds don't notify (safe default for callers without conv context).
+   */
+  groupTitleOf?: (convId: string) => string | undefined;
 }
 
 /** Parse the queue rows into the minimum this module needs. Bad rows are skipped. */
@@ -96,16 +195,36 @@ export function toNotifiable(
   const out: NotifiableAction[] = [];
   for (const a of actions) {
     if (a.status !== 'pending') continue;
+    // 台账是唯一准入（M-J4a）：不认识的 kind（台账外）和表态 silent 的都出局。
+    if (NOTIFY_STANCE[a.kind as ActionKind]?.via !== 'eligible') continue;
     const isMomentKind =
       a.kind === 'moment_like' || a.kind === 'moment_comment' || a.kind === 'moment_repost';
-    if (a.kind !== 'heartbeat' && !isMomentKind) continue;
     try {
       const p = JSON.parse(a.payloadJson) as {
         contactId?: unknown;
         convId?: unknown;
         body?: unknown;
         momentId?: unknown;
+        kind?: unknown;
       };
+      const convId = typeof p.convId === 'string' && p.convId ? p.convId : undefined;
+
+      // 群标题类（发言人 fire 时才定，标题只能是群名）。
+      if (a.kind === 'group_msg' || a.kind === 'group_chatter') {
+        if (!convId) continue;
+        const title = opts.groupTitleOf?.(convId);
+        if (!title) continue; // 没群名 = 没上下文（或隐藏会话）——静默出局
+        out.push({
+          id: a.id,
+          kind: a.kind,
+          fireAt: a.fireAt,
+          title,
+          notifyKind: 'followup',
+          route: chatRoute(convId),
+        });
+        continue;
+      }
+
       if (typeof p.contactId !== 'string') continue;
       if (isMomentKind) {
         // Only reactions to the user's OWN posts, and only when the caller
@@ -128,13 +247,38 @@ export function toNotifiable(
         });
         continue;
       }
+
+      // 动作即内容类（M-J4a）：分支在排期时刻定死，可逐字展示。
+      if (a.kind === 'ai_money' || a.kind === 'ai_call' || a.kind === 'bill_pay') {
+        if (!convId) continue;
+        const body =
+          a.kind === 'ai_call'
+            ? CALL_NOTIFY_BODY
+            : a.kind === 'bill_pay'
+              ? BILL_PAY_NOTIFY_BODY
+              : MONEY_NOTIFY_BODY[
+                  p.kind === 'transfer' ? 'transfer' : p.kind === 'bill' ? 'bill' : 'rp'
+                ];
+        out.push({
+          id: a.id,
+          kind: a.kind,
+          fireAt: a.fireAt,
+          contactId: p.contactId,
+          body,
+          notifyKind: 'reaction',
+          // 来电也进聊天页：几小时后才点开的"来电"通知落在响铃页是个陷阱。
+          route: chatRoute(convId),
+        });
+        continue;
+      }
+
       out.push({
         id: a.id,
         kind: a.kind,
         fireAt: a.fireAt,
         contactId: p.contactId,
         body: typeof p.body === 'string' && p.body.trim() ? p.body : undefined,
-        ...(typeof p.convId === 'string' && p.convId ? { route: chatRoute(p.convId) } : {}),
+        ...(convId ? { route: chatRoute(convId) } : {}),
       });
     } catch {
       /* malformed payload — not worth failing the whole sync over */
@@ -155,11 +299,20 @@ export function buildNotifications(
   now: number,
 ): ScheduledNotification[] {
   const out: ScheduledNotification[] = [];
-  for (const a of actions) {
+  // followup 归并（M-J4a）：同一会话的多条「[你收到一条消息]」内容一模一样，
+  // 叠三条就是骚扰——每条路由只留最早那条。有正文的（greeting/reaction）
+  // 各是各的信息，不归并。
+  const followupSeen = new Set<string>();
+  for (const a of [...actions].sort((x, y) => x.fireAt - y.fireAt)) {
     if (a.fireAt <= now) continue; // already due — the live tick handles it
     if (a.fireAt - now > HORIZON_MS) continue;
-    const title = nameOf(a.contactId);
+    const title = a.title ?? (a.contactId ? nameOf(a.contactId) : undefined);
     if (!title) continue; // contact deleted since the action was queued
+    const kind = a.notifyKind ?? (a.body ? 'greeting' : 'followup');
+    if (kind === 'followup' && !a.body && a.route) {
+      if (followupSeen.has(a.route)) continue;
+      followupSeen.add(a.route);
+    }
     out.push({
       id: notificationId(a.id),
       title,
@@ -168,7 +321,7 @@ export function buildNotifications(
       // because a leaked preview is not a recoverable mistake.
       body: a.body ?? '',
       fireAt: a.fireAt,
-      kind: a.notifyKind ?? (a.body ? 'greeting' : 'followup'),
+      kind,
       ...(a.route ? { route: a.route } : {}),
     });
   }

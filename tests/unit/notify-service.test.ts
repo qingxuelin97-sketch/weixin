@@ -93,11 +93,13 @@ describe('buildNotifications', () => {
     expect(buildNotifications(toNotifiable([a]), nameOf, NOW)).toEqual([]);
   });
 
+  // 注意 (M-J4a)：同会话的无正文 followup 会被归并，所以这两条排序/id 测试
+  // 用不同的 conv（归并本身在 j4-notify-coverage.test.ts 里有专门断言）。
   it('returns them in fire order', () => {
     const items = buildNotifications(
       toNotifiable([
-        action({ id: 'x', fireAt: NOW + 5 * HOUR }),
-        action({ id: 'y', fireAt: NOW + 2 * HOUR }),
+        action({ id: 'x', fireAt: NOW + 5 * HOUR, payload: { contactId: 'a', convId: 'c1' } }),
+        action({ id: 'y', fireAt: NOW + 2 * HOUR, payload: { contactId: 'a', convId: 'c2' } }),
       ]),
       nameOf,
       NOW,
@@ -108,8 +110,8 @@ describe('buildNotifications', () => {
   it('gives distinct actions distinct notification ids', () => {
     const items = buildNotifications(
       toNotifiable([
-        action({ id: 'hb_a_1', fireAt: NOW + HOUR }),
-        action({ id: 'hb_a_2', fireAt: NOW + 2 * HOUR }),
+        action({ id: 'hb_a_1', fireAt: NOW + HOUR, payload: { contactId: 'a', convId: 'c1' } }),
+        action({ id: 'hb_a_2', fireAt: NOW + 2 * HOUR, payload: { contactId: 'a', convId: 'c2' } }),
       ]),
       nameOf,
       NOW,

@@ -913,7 +913,15 @@ async function runForegroundPass(): Promise<void> {
         .filter((m) => m.authorId === 'self')
         .map((m) => m.id),
     );
-    await syncNotifications(await pendingActions(), s.contacts, now, { selfMomentIds });
+    // 群消息通知 (M-J4a): the map is built here from VISIBLE groups only, so a
+    // hidden conv id in a payload resolves to nothing and the row drops.
+    const groupTitles = new Map(
+      s.conversations.filter((c) => c.type === 'group' && !c.isHidden).map((c) => [c.id, c.title]),
+    );
+    await syncNotifications(await pendingActions(), s.contacts, now, {
+      selfMomentIds,
+      groupTitleOf: (convId) => groupTitles.get(convId),
+    });
   } catch (e) {
     // Notifications are the app's only presence while it is closed, and the
     // plugin-proxy bug that cost three weeks of dead device builds was hidden

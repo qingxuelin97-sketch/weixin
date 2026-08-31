@@ -67,6 +67,26 @@
 
 每次回前台 `cancelAll()` 全量撤销重排：还挂着的通知是按用户已经走过的世界状态写的。
 
+### 通知表态台账（M-J4a）
+
+**每个排期 kind 必须对「App 关着时该不该出通知」表态**——`NOTIFY_STANCE`
+（`src/ai/notify-service.ts`），`Record<ActionKind,…>` 编译期强制 + 守卫测试断言键
+集合与 `SCHEDULED_ACTION_KINDS` 相等（`j4-notify-coverage.test.ts`）。此前 21 种
+kind 里只有 4 种出通知，她转账/打电话/群里说话在 App 关闭时全部无声，且新 kind
+默认无声没人会想起来问。
+
+- **eligible 准入 = 一致性铁律**：内容排期时刻全知（动作即内容：`ai_money` 按
+  payload 分支出「发红包/转账/群收款」、`ai_call` 过去式「给你打过语音通话」且
+  路由进聊天页不进响铃页、`bill_pay`）或降 followup 无预览档（`group_msg` /
+  `group_chatter`，标题用群名，经 `groupTitleOf`——调用方只喂可见群，隐藏会话
+  解析不到名字静默出局）。金额永不进正文。
+- **silent 必须写理由**：保真类（moment_post/recall 真微信就不推）、隐藏面
+  （agent_dm/joint_plan——泄漏即穿帮）、fire 时才定成败的（story_tick/
+  group_event/agent_forward/agent_invite）、payload 无人可显示的（transfer_accept
+  等只有 id）、内部管线（mem_extract/auto_backup）、秒级节拍（sticker_reply）。
+- **followup 归并**：同一会话的多条「[你收到一条消息]」只留最早那条——三条一样
+  的横幅是骚扰不是存在感。有正文的各是各的信息，不归并。
+
 ## 三、备份 / 恢复（.aiwx）→ 见 `specs/backup.md`
 
 备份自 M-I17（增量 / 货架 / 自动备份）与 M-I18（内容哈希判据 / 删除墓碑 / 设备本地行清单 /
