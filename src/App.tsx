@@ -5,6 +5,7 @@ import { TabScaffold } from './app/TabScaffold';
 import { PageStack } from './app/PageStack';
 import { Toast } from './components/Toast';
 import { IncomingCall } from './features/call/IncomingCall';
+import { MiniCallPill } from './features/call/MiniCallPill';
 import { DialogHost } from './components/dialog';
 import { useBackButton } from './app/useBackButton';
 import { ChatListPage } from './features/chat-list/ChatListPage';
@@ -202,6 +203,7 @@ export function App() {
         {/* Over everything, on any route: a call you have to navigate to is not
             a call. Renders nothing until an agent actually rings (M-H1). */}
         <IncomingCall />
+        <MiniCallPill />
       </div>
     </HashRouter>
   );

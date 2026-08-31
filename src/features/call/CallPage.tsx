@@ -25,7 +25,14 @@ import { logError } from '../../lib/errlog';
 import { cancelNotify } from '../../native/bridge';
 import { callNotifId } from '../../native/background-notify';
 import { repo } from '../../db/repo';
-import { CallSession, type CallTurn } from '../../ai/call-script';
+import { type CallTurn } from '../../ai/call-script';
+import {
+  adoptCall,
+  useActiveCall,
+  getActiveCall,
+  hangupActiveCall,
+  setCallMuted,
+} from './call-host';
 import { isAsrReady, transcribe, friendlyAsrError, AsrError } from '../../llm/asr';
 import {
   isRecordingSupported,
@@ -40,6 +47,9 @@ type Phase = 'incoming' | 'dialing' | 'active' | 'ended';
 
 /** Presses shorter than this are accidental taps, same floor as hold-to-talk. */
 const MIN_TALK_MS = 500;
+
+/** Stable empty subtitle list (the zustand-selector lesson, applied here). */
+const NO_SUBS: readonly CallTurn[] = [];
 
 export function CallPage() {
   const { convId = '' } = useParams();
@@ -56,24 +66,33 @@ export function CallPage() {
   const contactById = useAppStore((s) => s.contactById);
   const personaFor = useAppStore((s) => s.personaFor);
   const appendMessage = useAppStore((s) => s.appendMessage);
-  const updateMessage = useAppStore((s) => s.updateMessage);
   const showToast = useAppStore((s) => s.showToast);
   const peer = conv?.peerId ? contactById(conv.peerId) : undefined;
   const persona = conv?.peerId ? personaFor(conv.peerId) : undefined;
 
+  // Returning from the pill (M-J6): the call kept running while this page was
+  // gone, so mounting over a live call for THIS conversation opens connected —
+  // no re-ring, no re-dial, and above all no second session.
+  const resumed = getActiveCall()?.convId === convId;
   const [phase, setPhase] = useState<Phase>(() =>
-    incoming ? (autoAccept ? 'active' : 'incoming') : 'dialing',
+    resumed ? 'active' : incoming ? (autoAccept ? 'active' : 'incoming') : 'dialing',
   );
-  const [seconds, setSeconds] = useState(0);
-  const connectedAt = useRef<number | null>(autoAccept ? Date.now() : null);
+  const [seconds, setSeconds] = useState(() =>
+    resumed ? Math.max(0, Math.floor((Date.now() - getActiveCall()!.connectedAt) / 1000)) : 0,
+  );
+  const connectedAt = useRef<number | null>(
+    resumed ? getActiveCall()!.connectedAt : autoAccept ? Date.now() : null,
+  );
   const finished = useRef(false);
 
-  // ---- 通话中对话 (M-I16) ----
-  const sessionRef = useRef<CallSession | null>(null);
-  const [subs, setSubs] = useState<CallTurn[]>([]);
-  const [speaking, setSpeaking] = useState(false);
-  /** null until the session resolves it; false = subtitle-only mode. */
-  const [voiceOn, setVoiceOn] = useState<boolean | null>(null);
+  // ---- 通话中对话 (M-I16 → M-J6: the session lives in call-host now) ----
+  const live = useActiveCall();
+  // Module-level constant, not [] inline: the subtitle autoscroll effect keys
+  // on `subs`, and a fresh empty array every render would re-fire it forever.
+  const subs: readonly CallTurn[] = live?.convId === convId ? live.subs : NO_SUBS;
+  const speaking = live?.convId === convId ? live.speaking : false;
+  const voiceOn: boolean | null = live?.convId === convId ? live.voiceOn : null;
+  const muted = live?.convId === convId ? live.muted : false;
   const [asrOk, setAsrOk] = useState<boolean | null>(null);
   const [talkHeld, setTalkHeld] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -131,32 +150,34 @@ export function CallPage() {
       });
     void (async () => {
       try {
+        // Already owned (returned from the pill) → nothing to create.
+        if (getActiveCall()?.convId === convId) return;
         const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
         const recent = await repo.getMessages(convId, { limit: 20 });
         if (dead) return;
-        const sess = new CallSession({
+        adoptCall({
           convId,
-          peer,
-          persona,
-          globalTier,
+          peerId: peer.id,
+          peerName: peer.remark ?? peer.name,
           direction: incoming ? 'in' : 'out',
-          recent,
-          now: () => Date.now(),
-          onLine: (t) => setSubs((s) => [...s, t]),
-          onSpeaking: setSpeaking,
-          onReady: (v) => {
-            if (!dead) setVoiceOn(v);
+          sessionOpts: {
+            convId,
+            peer,
+            persona,
+            globalTier,
+            direction: incoming ? 'in' : 'out',
+            recent,
+            now: () => Date.now(),
           },
         });
-        sessionRef.current = sess;
-        await sess.start();
       } catch (e) {
         logError('call.session', e);
       }
     })();
     return () => {
+      // Leaving the page is NOT hanging up any more (M-J6): the session lives
+      // in call-host and keeps talking; MiniCallPill represents it until 挂断.
       dead = true;
-      sessionRef.current?.end();
     };
     // Session identity is the CALL, not the render: peer/persona are stable for
     // a mounted call page, and restarting the session on a re-render would
@@ -204,8 +225,6 @@ export function CallPage() {
   const decline = async () => {
     if (finished.current) return;
     finished.current = true;
-    sessionRef.current?.end();
-    sessionRef.current = null;
     setPhase('ended');
     await recordCall(undefined, '未接听');
     setTimeout(() => navigate(-1), 400);
@@ -214,31 +233,16 @@ export function CallPage() {
   const hangUp = async () => {
     if (finished.current) return;
     finished.current = true;
-    // The session owns its own 纪要 since M-J1: `end()` triggers the idempotent
-    // finalize (summary → conv-state promises → memory → rolling summary), so
-    // the unmount path and this button write the SAME record exactly once.
-    const sess = sessionRef.current;
-    sessionRef.current = null;
-    const hadTurns = (sess?.turns.length ?? 0) > 0;
-    sess?.end();
     setPhase('ended');
-    const durationMs = connectedAt.current ? Date.now() - connectedAt.current : undefined;
-    const saved = await recordCall(durationMs, incoming ? '未接听' : '已取消');
-    setTimeout(() => navigate(-1), 400);
-
-    // Stamp the summary onto the call record's meta once the (shared) finalize
-    // resolves. Fire-and-forget — the user is off this screen; a failed summary
-    // loses a nicety, never the call record.
-    if (saved && durationMs != null && hadTurns && sess) {
-      void (async () => {
-        try {
-          const summary = await sess.finalize();
-          if (summary) await updateMessage({ ...saved, meta: { ...saved.meta, summary } });
-        } catch (e) {
-          logError('call.finalize', e);
-        }
-      })();
+    if (getActiveCall()?.convId === convId) {
+      // The host writes the call record + summary stamp — the pill's 挂断 and
+      // this button are the SAME code path (M-J6), so the record is once-only.
+      void hangupActiveCall();
+    } else {
+      // Never connected (dialing was abandoned before the session existed).
+      await recordCall(undefined, incoming ? '未接听' : '已取消');
     }
+    setTimeout(() => navigate(-1), 400);
   };
 
   /* ---- 按住说话 (hold-to-talk over I9's ASR) ---- */
@@ -267,9 +271,9 @@ export function CallPage() {
       // 铁律 6 入站面 (M-I18): this call's tier decides whether the user's
       // own speech may be uploaded at all. Full tier + an endpoint the user
       // has not marked permissive → refuse, and the toast says to type.
-      const text = await transcribe(clip, { tier: sessionRef.current?.tier ?? 'off' });
+      const text = await transcribe(clip, { tier: getActiveCall()?.session.tier ?? 'off' });
       setTranscribing(false);
-      if (text) void sessionRef.current?.userSaid(text).catch(() => {});
+      if (text) void getActiveCall()?.session.userSaid(text).catch(() => {});
       else showToast('没有听清');
     } catch (err) {
       setTranscribing(false);
@@ -279,6 +283,9 @@ export function CallPage() {
 
   const onTalkDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (holdRef.current || transcribing) return;
+    // Barge-in (M-J6): she shuts up the INSTANT your finger lands — not after
+    // you release, wait out an ASR round-trip and userSaid finally aborts her.
+    getActiveCall()?.session.holdFloor();
     e.preventDefault();
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -332,7 +339,7 @@ export function CallPage() {
     const t = textDraft.trim();
     if (!t) return;
     setTextDraft('');
-    void sessionRef.current?.userSaid(t).catch(() => {});
+    void getActiveCall()?.session.userSaid(t).catch(() => {});
   };
 
   const mmss = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
@@ -430,13 +437,84 @@ export function CallPage() {
         </div>
       ) : (
         <div className="call-page__controls">
-          <button className="call-page__btn call-page__btn--hangup" aria-label="挂断" onClick={() => void hangUp()}>
-            <HandsetIcon />
-          </button>
-          <span className="call-page__hint">{phase === 'dialing' ? '取消' : '挂断'}</span>
+          {phase === 'active' && voiceOn && (
+            <div className="call-page__ctrl">
+              <button
+                className={`call-page__btn call-page__btn--mute${muted ? ' call-page__btn--mute-on' : ''}`}
+                aria-label={muted ? '取消静音' : '静音'}
+                onClick={() => setCallMuted(!muted)}
+              >
+                <MuteIcon on={muted} />
+              </button>
+              <span className="call-page__hint">{muted ? '已静音' : '静音'}</span>
+            </div>
+          )}
+          <div className="call-page__ctrl">
+            <button className="call-page__btn call-page__btn--hangup" aria-label="挂断" onClick={() => void hangUp()}>
+              <HandsetIcon />
+            </button>
+            <span className="call-page__hint">{phase === 'dialing' ? '取消' : '挂断'}</span>
+          </div>
+          {phase === 'active' && (
+            <div className="call-page__ctrl">
+              <button
+                className="call-page__btn call-page__btn--minimize"
+                aria-label="最小化"
+                onClick={() => navigate(-1)}
+              >
+                <MinimizeIcon />
+              </button>
+              <span className="call-page__hint">收起</span>
+            </div>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+function MuteIcon({ on }: { on: boolean }) {
+  // Simple hand-drawn speaker glyph; the slash appears when muted. Zero PNG.
+  return (
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden>
+      <path
+        d="M6 12h5l7-6v20l-7-6H6a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 6 12z"
+        fill="currentColor"
+      />
+      {!on && (
+        <path
+          d="M22 12a6 6 0 0 1 0 8M25 9a10 10 0 0 1 0 14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+        />
+      )}
+      {on && (
+        <path
+          d="M5 27 27 5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.6"
+          strokeLinecap="round"
+        />
+      )}
+    </svg>
+  );
+}
+
+function MinimizeIcon() {
+  return (
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden>
+      <path
+        d="M19 5h8v8M27 5 17 15M13 27H5v-8M5 27l10-10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

@@ -199,6 +199,8 @@ export class CallSession {
 
   private ctrl: AbortController | null = null;
   private ended = false;
+  /** 用户手动静音（切字幕模式）；与 voiceOn（能力）无关（M-J6）。 */
+  private muted = false;
   private system = '';
   private startedAt = 0;
   private finalizePromise: Promise<string> | null = null;
@@ -224,6 +226,30 @@ export class CallSession {
       convId: this.o.convId,
     });
     await this.respond(openerDirective(this.o.direction));
+  }
+
+  /**
+   * Barge-in（M-J6）：你按下说话键的**瞬间**她闭嘴。此前打断要等
+   * 录完 → 一次 ASR 往返 → userSaid 里的 abort——两三秒里两个人同时在说话，
+   * 是整个通话里最出戏的时刻。半双工：按住期间她的在飞生成与播放全部废弃，
+   * 会话不结束，松手转写完她照常接话。
+   */
+  holdFloor(): void {
+    if (this.ended) return;
+    this.ctrl?.abort();
+    this.ctrl = null;
+    (this.o.tts ?? DEFAULT_TTS).stop();
+    this.o.onSpeaking?.(false);
+  }
+
+  /** 通话中把她静音/取消静音。静音立即停播当前句，后续句走字幕停留。 */
+  setMuted(m: boolean): void {
+    this.muted = m;
+    if (m) (this.o.tts ?? DEFAULT_TTS).stop();
+  }
+
+  get isMuted(): boolean {
+    return this.muted;
   }
 
   /** 你说了一句（ASR 转写或打字）：入上下文，她接话。打断她没说完的队列。 */
@@ -292,6 +318,16 @@ export class CallSession {
     this.ctrl = ctrl;
     try {
       const lines = await this.generate(directive, ctrl.signal);
+      // 句间预取（M-J6）：单聊引擎「气泡到达即预热」的同一招搬进通话。此前
+      // speak() 串行 ensure→play，每两句之间必然插进一次完整合成往返的静默，
+      // 通话感被切碎。ensure 是内容寻址缓存，fire-and-forget 即可；播到第 n
+      // 句时第 n+1 句多半已经在缓存里了。
+      if (this.voiceOn && !this.muted) {
+        const tts = this.o.tts ?? DEFAULT_TTS;
+        for (const l of lines.slice(1)) {
+          void tts.ensure(l, this.o.persona.ttsVoice ?? DEFAULT_VOICE).catch(() => {});
+        }
+      }
       for (const line of lines) {
         if (ctrl.signal.aborted || this.ended) return;
         const turn: CallTurn = { speaker: 'peer', text: line, at: this.o.now() };
@@ -354,7 +390,7 @@ export class CallSession {
    */
   private async speak(line: string, signal: AbortSignal): Promise<void> {
     const tts = this.o.tts ?? DEFAULT_TTS;
-    if (this.voiceOn) {
+    if (this.voiceOn && !this.muted) {
       const audio = await tts.ensure(line, this.o.persona.ttsVoice ?? DEFAULT_VOICE).catch(() => null);
       if (signal.aborted) return;
       if (audio) {

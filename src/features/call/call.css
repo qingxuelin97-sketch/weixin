@@ -206,3 +206,117 @@
     opacity: 0.7;
   }
 }
+
+/* ---- 最小化通话胶囊 (M-J6) ---- */
+
+.call-pill {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-call-pill-bg);
+  color: var(--color-text-on-brand);
+  border-radius: 999px;
+  padding: 4px 6px 4px 12px;
+  box-shadow: 0 4px 16px var(--color-overlay);
+  animation: call-pill-in 220ms ease-out backwards;
+}
+
+@keyframes call-pill-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.call-pill__body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font-size: 14px;
+  padding: 0;
+}
+
+.call-pill__name {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-pill__time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  font-size: 13px;
+}
+
+.call-pill__wave {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+
+.call-pill__wave i {
+  width: 2.5px;
+  border-radius: 2px;
+  background: currentColor;
+  animation: call-pill-wave 900ms ease-in-out infinite;
+}
+
+.call-pill__wave i:nth-child(1) {
+  height: 6px;
+}
+.call-pill__wave i:nth-child(2) {
+  height: 11px;
+  animation-delay: 150ms;
+}
+.call-pill__wave i:nth-child(3) {
+  height: 8px;
+  animation-delay: 300ms;
+}
+
+@keyframes call-pill-wave {
+  0%,
+  100% {
+    transform: scaleY(0.6);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.call-pill__hangup {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--color-call-hangup);
+  color: var(--color-text-on-brand);
+}
+
+/* ---- 通话中静音/收起按钮 (M-J6) ---- */
+
+.call-page__btn--mute,
+.call-page__btn--minimize {
+  background: var(--color-call-secondary-btn);
+  color: var(--color-text-on-brand);
+}
+
+.call-page__btn--mute-on {
+  background: var(--color-text);
+  color: var(--color-bg);
+}
