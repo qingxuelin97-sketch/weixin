@@ -106,7 +106,13 @@ export interface Repo {
   getMoments(opts?: { limit?: number; before?: number; viewer?: string }): Promise<MomentVM[]>;
   /** Likes+comments for a page of posts in two queries rather than 2N. */
   getMomentSocial(momentIds: string[]): Promise<{ likes: Record<string, MomentLikeVM[]>; comments: Record<string, MomentCommentVM[]> }>;
-  getMoment(id: string): Promise<MomentVM | undefined>;
+  /**
+   * One post by id, or undefined when missing OR not for this viewer's eyes
+   * (M-J12): the audience rule lives in the driver, not in whichever page
+   * holds the URL — a forged /moments/:id deep link gets the same "gone" as a
+   * deleted post. `viewer` defaults to 'self', like every other moment read.
+   */
+  getMoment(id: string, viewer?: string): Promise<MomentVM | undefined>;
   /** One person's whole timeline, newest first (个人相册页, M-I15). Audience-filtered. */
   getMomentsByAuthor(authorId: string, viewer?: string): Promise<MomentVM[]>;
   putMoment(m: MomentVM): Promise<void>;
@@ -785,8 +791,11 @@ export class IdbRepo implements Repo {
     // and 10), and 'self' — the paginating reader — never loses a row.
     return visibleMoments(page, opts.viewer ?? 'self');
   }
-  async getMoment(id: string) {
-    return idbGet<MomentVM>('moments', id);
+  async getMoment(id: string, viewer = 'self') {
+    const m = await idbGet<MomentVM>('moments', id);
+    // Same in-driver audience gate as getMoments — a by-id read must not be
+    // the one path that skips the rule.
+    return m && visibleMoments([m], viewer).length > 0 ? m : undefined;
   }
   /**
    * Full scan by design: the album page is an occasional destination, one

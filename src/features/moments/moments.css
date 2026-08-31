@@ -493,6 +493,23 @@
 .moments__list--album {
   padding: 0 0 24px;
 }
+/* 单条详情页 (M-J12): one card on the album ground; the empty state is what a
+   stale deep link (deleted post, forged id) lands on — never a white screen. */
+.moment-detail {
+  background: var(--color-moments-bg);
+}
+.moment-detail__empty {
+  padding: 72px 24px 0;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--fs-cell-sub);
+}
+.moment-detail__empty-sub {
+  margin-top: 8px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-placeholder);
+}
+
 .moments__topic-head {
   display: flex;
   align-items: baseline;

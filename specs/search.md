@@ -53,3 +53,10 @@
 
 `src/lib/search.ts` 全是纯函数（`findRanges` / `highlightParts` / `excerpt` / `search` /
 `groupByKind`），无存储、无时钟，输入由调用方从 store 传入——29 条单测直接打在这一层。
+
+## M-J12 增补
+
+- 朋友圈命中改跳 `/moments/:momentId` 单条详情页（此前落 feed 顶部，命中帖
+  在折叠线以下）。id 正确性由 moment-detail-e2e.spec.ts 转红。
+- 收藏页有自己的全文过滤（`lib/favorites.filterFavorites`，收藏行是快照，
+  不进全局 search() 的语料）；隐藏会话零可见仍由 `repo.getFavorites()` 兜底。

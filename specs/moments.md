@@ -266,3 +266,24 @@ AI 发的每一条帖子都是这个状态，所以旧库零迁移。
 - 未知 mode **fail closed**
 - 人选器只出 AI 联系人；隐藏会话结构上进不来
 - 级联手术后活人仍在名单里；空白名单变私密不变公开
+
+## M-J12 增补：单条详情页
+
+`/moments/:momentId`（App.tsx 路由表尾部；静态兄弟 `/moments/publish` 等按
+React Router 段排名优先，参数路由只接 id）。
+
+- **入口**：feed 点正文（`MomentCard.onTextTap`，#话题# 段 stopPropagation
+  仍优先进话题页）；全局搜索朋友圈命中直落详情（带正确 id，e2e 转红）；
+  未来的通知/深链同 URL。
+- **数据**：feed store 只有最新一页，本页从 Repo 直读单帖 + 自己的社交行切片
+  （相册页的既有纪律）；赞/评论/删除操作走 store，操作后 reload 本地切片。
+- **可见范围在驱动层**：`repo.getMoment(id, viewer='self')` 自 M-J12 起在
+  IdbRepo/SqliteRepo 内部过 `visibleMoments`——查无此帖与不给你看同为
+  undefined。守卫测试禁止 feature 组件调用 `canSeeMoment`/`visibleMoments`，
+  详情页因此**不自带**检查。
+- **优雅空态**：不存在的 id（删帖、伪造 URL、过期深链）渲染「这条动态不存在了」，
+  绝不白屏（moment-detail-e2e.spec.ts 转红）。
+- **就地操作**：赞/取消、评论（含回复某人）、删自己的评论、转发、删自己的帖
+  （删完返回上一页）；评论输入复用 feed 的内联 composer，评论全量展开。
+- 路由台账：golden `moment-detail`（pendingCast，PNG 由 CI 铸）+ smoke 用种子
+  `mo_seed_lin`；截图接进 pages.spec.ts。

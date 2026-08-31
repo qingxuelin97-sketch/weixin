@@ -125,6 +125,13 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/rp/:rpId': { golden: 'rp-detail', smoke: { path: '/rp/rp_smoke_missing' } },
   '/transfer/:convId': { golden: 'transfer-send', smoke: { path: '/transfer/conv_lin' } },
   '/wallet': { golden: 'wallet', smoke: { path: '/wallet' } },
+  // 朋友圈单条详情 (M-J12). Smoke boots on a seeded post; the missing-id empty
+  // state is separately exercised by moment-detail-e2e.spec.ts.
+  '/moments/:momentId': {
+    golden: 'moment-detail',
+    pendingCast: true,
+    smoke: { path: '/moments/mo_seed_lin' },
+  },
 };
 
 /** All concrete URLs the smoke spec must walk, in ledger order. */
