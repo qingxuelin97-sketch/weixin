@@ -15,6 +15,8 @@ const PLUS_ITEMS = [
   { key: 'location', label: '位置', color: 'var(--color-brand)' },
   { key: 'redpacket', label: '红包', color: 'var(--color-rp-envelope)' },
   { key: 'transfer', label: '转账', color: 'var(--wx-gold)' },
+  // 群收款/AA (M-J8) — greyed outside group chats, like transfer inside them.
+  { key: 'groupbill', label: '群收款', color: 'var(--color-brand)' },
   { key: 'voiceinput', label: '语音输入', color: 'var(--color-link)' },
   { key: 'fav', label: '收藏', color: 'var(--color-brand)' },
 ];

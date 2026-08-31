@@ -28,7 +28,7 @@ import { useComposerPanel } from './useComposerPanel';
 import { storyRunning } from '../../ai/story-service';
 import type { StorySaveRow } from '../../ai/story-gm';
 import { useAppStore } from '../../store/appStore';
-import { showPrompt } from '../../components/dialog';
+import { showPrompt, showConfirm } from '../../components/dialog';
 import { regenerateLastTurn } from '../../ai/engine';
 import { useGuard } from '../../app/useGuard';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
@@ -37,6 +37,9 @@ import { sendUserMessage, replyToLatest, effectiveTier } from '../../ai/engine';
 import { maybeScheduleMemExtract } from '../../ai/memory-service';
 import { sendGroupMessage, replyToLatestInGroup } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
+import { payBill } from '../../ai/bill-service';
+import { BillSheet } from './BillSheet';
+import { fenToYuan } from '../../lib/money';
 import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
 import { renderMessageBody } from '../../ai/render-msg';
@@ -827,6 +830,42 @@ export function ChatPage() {
     setViewerIndex(imageIndexByMsgId.get(msg.id) ?? 0);
   };
 
+  /** 发起群收款 sheet (M-J8) — opened from the + panel in group chats. */
+  const [billSheetOpen, setBillSheetOpen] = useState(false);
+
+  /**
+   * 群收款卡片 tap (M-J8): if the USER owes an unpaid share, confirm and pay —
+   * wallet debit + settlement through the same `payBill` the queue uses.
+   * Already-paid (or not a participant) → the card is informational.
+   */
+  const onBillTap = (msg: MessageVM) => {
+    const billId = msg.meta?.billId as string | undefined;
+    if (!billId) return;
+    const parts = Array.isArray(msg.meta?.parts)
+      ? (msg.meta!.parts as Array<{ id?: string; oweFen?: number }>)
+      : [];
+    const mine = parts.find((p) => p.id === 'self');
+    const paidIds = Array.isArray(msg.meta?.paidIds) ? (msg.meta!.paidIds as string[]) : [];
+    if (!mine || typeof mine.oweFen !== 'number' || paidIds.includes('self')) return;
+    const initiator = contactById(msg.senderId);
+    void showConfirm({
+      title: '确认支付',
+      body: `向${initiator?.remark ?? initiator?.name ?? '发起人'}支付 ${fenToYuan(mine.oweFen)} 元（${(msg.meta?.title as string) || '群收款'}）？`,
+      confirmText: '支付',
+      cancelText: '取消',
+    }).then((ok) => {
+      if (!ok) return;
+      void payBill(billId, convId, 'self', {
+        appendMessage,
+        updateMessage,
+        now: () => Date.now(),
+      }).catch((e) => {
+        logError('bill.pay', e);
+        showToast('支付失败，请重试');
+      });
+    });
+  };
+
   /** Red packet → open/detail; a pending transfer from the peer → accept it. */
   const onMoneyTap = (msg: MessageVM) => {
     if (msg.type === 'rp') {
@@ -1092,6 +1131,7 @@ export function ChatPage() {
                   isSelf={row.msg.senderId === 'self'}
                   showNickname={isGroup}
                   onMoneyTap={onMoneyTap}
+                  onBillTap={onBillTap}
                   onImageTap={onImageTap}
                   onMergedTap={(m) => navigate(`/merged/${convId}/${m.id}`)}
                   onQuoteTap={onQuoteTap}
@@ -1324,11 +1364,16 @@ export function ChatPage() {
         <ComposerPanels
           mode={composer.mode}
           height={composer.panelHeight}
-          // WeChat has no group transfer either — greyed, not hidden.
-          disabledKeys={isGroup ? ['transfer'] : []}
+          // WeChat has no group transfer either — greyed, not hidden. 群收款
+          // is the mirror image (M-J8): a bill needs a room to split across.
+          disabledKeys={isGroup ? ['transfer'] : ['groupbill']}
           onAction={(key) => {
             if (key === 'redpacket') navigate(`/rp/send/${convId}`);
             else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
+            else if (key === 'groupbill' && isGroup) {
+              composer.closeAll();
+              setBillSheetOpen(true);
+            }
             else if (key === 'call' && conv.type === 'single') navigate(`/call/${convId}`);
             else if (key === 'album') albumInputRef.current?.click();
             else if (key === 'location') {
@@ -1368,6 +1413,9 @@ export function ChatPage() {
       </div>
       {viewerIndex != null && imageRefs.length > 0 && (
         <ImageViewer refs={imageRefs} index={viewerIndex} onClose={() => setViewerIndex(null)} />
+      )}
+      {isGroup && (
+        <BillSheet convId={convId} open={billSheetOpen} onClose={() => setBillSheetOpen(false)} />
       )}
     </div>
   );

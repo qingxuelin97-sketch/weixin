@@ -282,6 +282,134 @@ export function planGift(ctx: GiftContext): GiftPlan | null {
   return null;
 }
 
+/* --------------------- 收钱侧动机 (M-J8) --------------------- */
+
+/**
+ * How much money she is comfortable ACCEPTING from you, in fen.
+ *
+ * Mirrors the sending side's affinity floors: money flowing in embarrasses a
+ * distant friend exactly the way it flatters a close one. Scales with
+ * closeness, and a persona at ease with money moving (high generosity) is at
+ * ease in both directions. Integer fen out (铁律 3).
+ */
+export function acceptThresholdFen(affinity: number, generosity: number): number {
+  const a = Math.min(Math.max(affinity, 0), 100);
+  const base = 3_000 + a * 400; // affinity 20 → ¥110, 50 → ¥230, 80 → ¥350
+  return Math.round(base * (0.75 + generosity * 0.5));
+}
+
+/** She won't take money while genuinely upset with you (recent conflict pulse). */
+export const REFUSE_VALENCE = -0.35;
+/** …but a joke amount (< ¥1) is beneath refusing even mid-sulk. */
+const MOOD_REFUSE_FLOOR_FEN = 100;
+
+export type ReceptionPlan =
+  | { action: 'accept' }
+  | {
+      action: 'refuse';
+      reason: 'too_much' | 'upset';
+      /** Her one line of explanation — a template, deliberately zero LLM. */
+      line: string;
+      /** Seeded pause before the money actually goes back (transfer_return). */
+      returnDelayMs: number;
+    };
+
+const REFUSE_LINES: Record<'too_much' | 'upset', string[]> = {
+  too_much: ['这也太多了，我不能收', '太多了太多了，快收回去', '这个真不能要，我退给你了'],
+  upset: ['先不收你的钱', '别用转账把这事糊弄过去', '钱退回去了，先把话说清楚'],
+};
+
+/**
+ * Would she take this transfer? (M-J8 — the accept path finally has a
+ * receiving-side motive; before this, any amount from anyone auto-settled in
+ * 4 seconds, which is a payment API, not a person.)
+ *
+ * Pure and seeded off the transfer id: replay-identical, and re-running the
+ * queue row cannot flip a refusal into an acceptance.
+ */
+export function planTransferReception(ctx: {
+  persona: PersonaVM;
+  amountFen: number;
+  /** Effective closeness 0..100. */
+  affinity: number;
+  /** Current affect valence −1..1 (negative = she's upset with you). */
+  valence: number;
+  /** Seed — the transfer id. */
+  transferId: string;
+}): ReceptionPlan {
+  const { persona, amountFen, affinity, valence, transferId } = ctx;
+  const rng = seededRng(`recv:${transferId}`);
+  const upset = valence <= REFUSE_VALENCE && amountFen >= MOOD_REFUSE_FLOOR_FEN;
+  const tooMuch = amountFen > acceptThresholdFen(affinity, generosityOf(persona));
+  if (!upset && !tooMuch) return { action: 'accept' };
+  const reason = upset ? 'upset' : 'too_much';
+  return {
+    action: 'refuse',
+    reason,
+    line: pick(REFUSE_LINES[reason], rng),
+    // She types the line first, then sends it back — 20–60s, like a person
+    // deciding. Well inside the 24h floor row this pulls forward.
+    returnDelayMs: Math.round((20 + rng() * 40) * 1_000),
+  };
+}
+
+/* --------------------- 群收款/AA (M-J8) --------------------- */
+
+/** How long an AI participant waits before paying their share, or null = 装死. */
+export function planBillPayment(
+  billId: string,
+  contactId: string,
+  persona: Pick<PersonaVM, 'generosity'> | undefined,
+): { delayMs: number } | null {
+  const rng = seededRng(`billpay:${billId}:${contactId}`);
+  const generosity = persona ? generosityOf(persona) : 0.35;
+  // 装死概率随大方程度下降：铁公鸡 (0.05) ≈ 44%，均值 (0.35) ≈ 29%，
+  // 大方 (0.8) ≈ 7%。真实群里总有一两个人当没看见——那正是 AA 的戏剧性。
+  const deadbeatOdds = Math.max(0, 0.46 - generosity * 0.48);
+  if (rng() < deadbeatOdds) return null;
+  // 付款窗口 2–40 分钟，大方的人手快：窗口按 (1.3 − generosity) 收缩。
+  const spreadMin = 2 + rng() * 38 * Math.min(1.3 - generosity, 1.25);
+  return { delayMs: Math.round(spreadMin * 60_000) };
+}
+
+/** AA 用途 + 人均档位（分）。写死的中国式小额：奶茶/外卖量级，不是份子钱。 */
+const BILL_MENU: Array<{ title: string; perFen: number }> = [
+  { title: '奶茶拼单', perFen: 1_500 },
+  { title: '外卖AA', perFen: 2_200 },
+  { title: '昨晚的饭钱', perFen: 6_800 },
+  { title: '剧本杀AA', perFen: 9_800 },
+];
+
+/**
+ * Would one of the group's AIs start an AA bill this week? (M-J8 — the other
+ * half of「用户也能付 AI 发起的收款」: something has to actually initiate one.)
+ *
+ * Weekly seeded dice per group, one initiator, small fixed menu — the same
+ * shape as `planGroupGift`, and just as eager to say no.
+ */
+export function planGroupBill(ctx: {
+  now: number;
+  convId: string;
+  members: Array<{ contactId: string; persona: PersonaVM }>;
+  lastMsgAt?: number;
+}): { initiatorId: string; title: string; perFen: number; fireAt: number } | null {
+  // Needs a live room and at least two OTHER heads to split with (the user
+  // plus one more AI) — an AA between two people is just a transfer.
+  if (ctx.members.length < 2) return null;
+  if (ctx.lastMsgAt == null || ctx.now - ctx.lastMsgAt > GIFT_LIVENESS_MS) return null;
+  const week = Math.floor(ctx.now / (7 * DAY));
+  const rng = seededRng(`groupbill:${ctx.convId}:${week}`);
+  if (rng() > 0.28) return null; // most weeks nobody collects anything
+  const initiator = ctx.members[Math.floor(rng() * ctx.members.length)];
+  const item = BILL_MENU[Math.floor(rng() * BILL_MENU.length)];
+  return {
+    initiatorId: initiator.contactId,
+    title: item.title,
+    perFen: item.perFen,
+    fireAt: Math.round(ctx.now + (30 + rng() * 300) * MIN),
+  };
+}
+
 /**
  * The group version: a festival packet, from one member, for everyone.
  *

@@ -110,6 +110,10 @@ function harness(over: Partial<HandlerDeps> = {}): Harness {
     claimRedPacket: async (rpId, contactId) => void calls.push(`claim:${rpId}:${contactId}`),
     acceptTransfer: async (id) => void calls.push(`accept:${id}`),
     returnTransfer: async (id, _h, at) => void calls.push(`return:${id}:${at ?? '-'}`),
+    returnRedPacket: async (id, _h, at) => void calls.push(`rpreturn:${id}:${at ?? '-'}`),
+    payBill: async (billId, convId, contactId, at) =>
+      void calls.push(`billpay:${billId}:${convId}:${contactId}:${at ?? '-'}`),
+    runBill: async (p) => void calls.push(`bill:${p.convId}:${p.contactId}:${p.perFen}:${p.title}`),
     sendProactiveMessage: async (convId, peer, _p, _t, _h, at, opts) =>
       void calls.push(`proactive:${convId}:${peer.id}:${at ?? '-'}:${opts?.nudge ? 'nudge' : 'plain'}`),
     sendGroupProactiveMessage: async (c, speaker, members) =>

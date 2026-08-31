@@ -97,8 +97,14 @@ export function RedPacketOpenPage() {
     };
   }, [rpId, navigate]);
 
+  // 专属红包 (M-J8): not yours → you can look, not touch. Enforced again by
+  // the pure claim rule (claimShare) so this gate is presentation, not the
+  // security boundary — a forged URL still cannot take the share.
+  const notMine = rp?.mode === 'exclusive' && rp.exclusiveId !== 'self';
+  const expired = rp?.status === 'expired';
+
   const open = async () => {
-    if (!rp || stage !== 'idle' || emptied) return;
+    if (!rp || stage !== 'idle' || emptied || notMine || expired) return;
     setStage('opening');
     setError('');
     try {
@@ -152,7 +158,16 @@ export function RedPacketOpenPage() {
             </div>
           </div>
           <div className="rp-open__greeting">{rp.greeting}</div>
-          {emptied ? (
+          {notMine ? (
+            <div className="rp-open__expired">
+              这是{(() => {
+                const who = rp.exclusiveId ? contactById(rp.exclusiveId) : undefined;
+                return who ? ` ${who.remark ?? who.name} ` : '别人';
+              })()}的专属红包
+            </div>
+          ) : expired ? (
+            <div className="rp-open__expired">红包已过期</div>
+          ) : emptied ? (
             <div className="rp-open__expired">手慢了，红包派完了</div>
           ) : stage === 'revealed' && wonFen != null ? (
             <RevealedAmount fen={wonFen} />

@@ -198,6 +198,8 @@ export const ACTION_LLM_BOUND: Record<ScheduledActionKind, boolean> = {
   auto_backup: false,
   sticker_reply: false,
   transfer_return: false,
+  rp_return: false, // pure bookkeeping: status flip + ledger row + template line
+  bill_pay: false, // amount/roster fixed at creation; delivery only
 };
 
 /**

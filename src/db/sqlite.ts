@@ -427,7 +427,27 @@ export class SqliteRepo implements Repo {
   async putTransfer(t: TransferVM) {
     await this.kvPut('transfers', t);
   }
-  async getWalletTxs() {
+  async getWalletTxs(opts: { limit?: number; before?: number } = {}) {
+    // Paged form (M-J8): newest `limit` rows below `before`, returned ascending
+    // — the same contract the IDB driver serves off its byCreatedAt index. The
+    // SQL mirrors getMoments; both drivers must agree or a migrated phone gets
+    // a different bill page than the web build (sqlite-repo parity suite).
+    if (opts.limit != null) {
+      // `key DESC` tiebreak = IDB's within-key order walked 'prev' (primary key
+      // descending among equal createdAt), so same-millisecond rows page alike.
+      const res =
+        opts.before == null
+          ? await this.db.query(
+              `SELECT data FROM wallet_tx ORDER BY json_extract(data,'$.createdAt') DESC, key DESC LIMIT ?`,
+              [opts.limit],
+            )
+          : await this.db.query(
+              `SELECT data FROM wallet_tx WHERE json_extract(data,'$.createdAt') < ? ORDER BY json_extract(data,'$.createdAt') DESC, key DESC LIMIT ?`,
+              [opts.before, opts.limit],
+            );
+      const rows = (res.values ?? []).map((r) => JSON.parse(String(r.data)) as WalletTxVM);
+      return rows.reverse();
+    }
     const all = await this.kvAll<WalletTxVM>('wallet_tx');
     return all.sort((a, b) => a.createdAt - b.createdAt);
   }

@@ -124,6 +124,36 @@ describe('kv parity', () => {
   });
 });
 
+describe('wallet ledger: cursor pagination parity (M-J8)', () => {
+  it('pages by createdAt identically, including the before cursor and ties', async () => {
+    await both(async (r) => {
+      for (let i = 0; i < 23; i++) {
+        await r.putWalletTx({
+          id: `t${String(i).padStart(2, '0')}`,
+          kind: 'adjust',
+          amountFen: 1,
+          title: `x${i}`,
+          balanceAfterFen: i + 1,
+          // Two rows share one millisecond on purpose — the tie must page the
+          // same way on both drivers (IDB walks primary keys desc inside a
+          // key; the SQL mirrors it with `, key DESC`).
+          createdAt: T0 + (i === 12 ? 11 : i) * 1000,
+        });
+      }
+    });
+    const all = await agree((r) => r.getWalletTxs());
+    expect(all).toHaveLength(23);
+    const page1 = await agree((r) => r.getWalletTxs({ limit: 10 }));
+    expect(page1).toHaveLength(10);
+    expect(page1[0].createdAt).toBeLessThanOrEqual(page1.at(-1)!.createdAt);
+    const page2 = await agree((r) => r.getWalletTxs({ limit: 10, before: page1[0].createdAt }));
+    const page3 = await agree((r) => r.getWalletTxs({ limit: 10, before: page2[0].createdAt }));
+    // The three pages tile the whole ledger, no dupes, no holes — an
+    // off-by-one or inclusive-bound drift in either driver turns this red.
+    expect([...page3, ...page2, ...page1].map((t) => t.id)).toEqual(all.map((t) => t.id));
+  });
+});
+
 describe('messages: rowid 序==时间序 and the beforeId cursor', () => {
   it('assigns ascending ids and pages identically through the whole history', async () => {
     await both(async (r) => {

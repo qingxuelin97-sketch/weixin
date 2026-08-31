@@ -37,6 +37,12 @@ const READ_PATTERNS = [
 type Entry = { via: 'filters' | 'helper' | 'not-ui'; helper?: string; why: string };
 
 const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
+  'ai/bill-service.ts': {
+    via: 'not-ui',
+    why:
+      'J8 群收款编排，不渲染任何 UI；startAiBill 显式拒绝 isHidden 与非 group 会话' +
+      '（隐藏 DM 都是 single 型，双保险），账单卡片只会落进可见群聊。',
+  },
   'ai/handlers.ts': {
     via: 'not-ui',
     why:
@@ -106,7 +112,15 @@ const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
     why:
       '可见面，但不渲染任何会话派生文本：conv 只用来定 isGroup（表单形态）和' +
       'memberIds（领包人集合）；入口是可见聊天的组合器面板。伪造 URL 只会把钱发进' +
-      '看不见的会话，不读出内容。',
+      '看不见的会话，不读出内容。J8 的专属红包领取人选择器只在 type===group 时渲染，' +
+      '而隐藏行都是 single 型——成员名到不了屏幕。',
+  },
+  'features/chat/BillSheet.tsx': {
+    via: 'not-ui',
+    why:
+      'J8 发起群收款面板：conv 只用来定 type===group 与 memberIds（平摊人集合），' +
+      '不渲染标题/内容；只能从可见群聊的组合器面板打开，且隐藏行都是 single 型，' +
+      '成员名列表在 group 之外根本不渲染（同 RedPacketSendPage 的论证）。',
   },
   'features/money/TransferSendPage.tsx': {
     via: 'not-ui',

@@ -19,7 +19,13 @@ import {
   actionExists,
 } from '../ai/scheduler';
 import { installCostGate, uninstallCostGate, schedulerBudgetGate } from '../ai/cost-gate';
-import { claimRedPacket, acceptTransfer, returnTransfer } from '../ai/money-service';
+import {
+  claimRedPacket,
+  receiveTransfer,
+  returnTransfer,
+  returnRedPacket,
+} from '../ai/money-service';
+import { payBill, startAiBill, considerGroupBill } from '../ai/bill-service';
 import {
   runGift,
   considerGift,
@@ -62,6 +68,8 @@ import {
   handleRpGrab,
   handleTransferAccept,
   handleTransferReturn,
+  handleRpReturn,
+  handleBillPay,
   handleStickerReply,
   handleRecall,
   handleGroupMsg,
@@ -146,8 +154,29 @@ export function useSchedulerRuntime(enabled: boolean): void {
           ),
 
       claimRedPacket: (rpId, contactId, name, h) => claimRedPacket(rpId, contactId, name, h),
-      acceptTransfer: (transferId, h) => acceptTransfer(transferId, h),
+      // 收钱侧动机 (M-J8): the QUEUE's accept goes through receiveTransfer, so
+      // she can refuse a too-big or badly-timed transfer. The user's own tap
+      // (ChatPage.onMoneyTap) still calls acceptTransfer unconditionally.
+      acceptTransfer: (transferId, h) =>
+        receiveTransfer(transferId, h, {
+          personaFor: (id) => useAppStore.getState().personaFor(id),
+          affinityOf: async (id) => {
+            const edge = await getEdge('self', id, Date.now());
+            const persona = useAppStore.getState().personaFor(id);
+            return effectiveAffinity(edge, persona?.affinityInit ?? 20);
+          },
+          valenceOf: async (id) => (await affectFor(id, Date.now())).affect.valence,
+        }),
       returnTransfer: (transferId, h, at) => returnTransfer(transferId, h, at),
+      returnRedPacket: (rpId, h, at) => returnRedPacket(rpId, h, at),
+      payBill: (billId, convId, contactId, at) => payBill(billId, convId, contactId, hooks, at),
+      runBill: (p) =>
+        startAiBill(p, {
+          conversationById: (id) => useAppStore.getState().conversationById(id),
+          contactById: (id) => useAppStore.getState().contactById(id),
+          personaFor: (id) => useAppStore.getState().personaFor(id),
+          hooks,
+        }),
       sendProactiveMessage,
       sendGroupProactiveMessage,
       runMemExtract,
@@ -238,6 +267,10 @@ export function useSchedulerRuntime(enabled: boolean): void {
     registerHandler('rp_grab', (p) => handleRpGrab(deps, p));
     registerHandler('transfer_accept', (p) => handleTransferAccept(deps, p));
     registerHandler('transfer_return', (p) => handleTransferReturn(deps, p));
+    // 红包 24h 过期退还 (M-J8): queued at send, inert once the packet settled.
+    registerHandler('rp_return', (p) => handleRpReturn(deps, p));
+    // 群收款 (M-J8): one AI settles their AA share, seeded at bill creation.
+    registerHandler('bill_pay', (p) => handleBillPay(deps, p));
     // 斗图 (M-I18): the seeded comeback, delivered off the queue rather than a
     // bare setTimeout — leaving the chat mid-window used to eat the reply.
     registerHandler('sticker_reply', (p) => handleStickerReply(deps, p));
@@ -766,6 +799,13 @@ async function runForegroundPass(): Promise<void> {
       await considerGroupGift({ conv, members, now, facts: [] });
     } catch (e) {
       logError('gift.plan.group', e);
+    }
+    // …and, on the same weekly dice discipline, whether one of them starts an
+    // AA bill (M-J8). Separate try: a bill failure must not block the gift.
+    try {
+      await considerGroupBill({ conv, members, now });
+    } catch (e) {
+      logError('bill.plan.group', e);
     }
   }
 

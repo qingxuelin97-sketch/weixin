@@ -1084,3 +1084,83 @@
     animation: none !important;
   }
 }
+
+/* ---- 群收款卡片 (M-J8)：白卡，同名片/链接一族 ---- */
+.bill-card {
+  background: var(--color-bubble-other);
+  color: var(--color-bubble-other-text);
+  width: 232px;
+  padding: 0;
+  overflow: hidden;
+}
+.bill-card::before {
+  border-left-color: var(--color-bubble-other);
+  border-right-color: var(--color-bubble-other);
+}
+.bill-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px 8px;
+}
+.bill-card__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-money-bubble);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-small-gray);
+  font-weight: var(--fw-medium);
+  flex: none;
+}
+.bill-card__lines {
+  flex: 1;
+  min-width: 0;
+}
+.bill-card__title {
+  font-size: var(--fs-cell-title);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bill-card__per {
+  margin-top: 2px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-secondary);
+}
+.bill-card__progress {
+  padding: 0 12px 6px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bill-card__mine {
+  color: var(--color-money-bubble);
+  font-weight: var(--fw-medium);
+}
+.bill-card__mine--done {
+  color: var(--color-text-placeholder);
+  font-weight: normal;
+}
+.bill-card__roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 0 12px 8px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-placeholder);
+}
+.bill-card__part--paid {
+  color: var(--color-brand);
+}
+.bill-card__footer {
+  padding: 5px 12px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-placeholder);
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
