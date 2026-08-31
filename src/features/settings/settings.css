@@ -366,3 +366,42 @@ label.settings__row {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- 用量明细 (M-I11) ---- */
+.usage-bar {
+  flex: 1;
+  height: 6px;
+  margin: 0 12px;
+  border-radius: 3px;
+  background: var(--color-cell-bg-pressed);
+  overflow: hidden;
+}
+.usage-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-brand);
+}
+.usage-detail__label {
+  padding-left: 16px;
+  color: var(--color-text-secondary);
+}
+
+/* ---- 提示词工作台 (M-I11) ---- */
+.prompt-lab__detail {
+  background: var(--color-page-bg);
+  padding: 4px 0;
+}
+.prompt-lab__text {
+  margin: 0;
+  padding: 10px 16px;
+  font-size: var(--fs-timestamp);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-bottom: var(--hairline-width) solid var(--color-hairline);
+}
+.prompt-lab__over {
+  color: var(--color-badge);
+}

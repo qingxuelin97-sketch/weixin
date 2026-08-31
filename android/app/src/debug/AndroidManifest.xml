@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only manifest overlay: the CI self-test receiver must be reachable
+     from `adb shell am broadcast`, hence exported. It is merged ONLY into debug
+     builds; release APKs contain neither this entry nor the class (the class
+     lives in src/debug/java/). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".aiwx.SelfTestReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.personal.weixinai.selftest.NOTIFY" />
+                <action android:name="com.personal.weixinai.selftest.REPLY" />
+                <action android:name="com.personal.weixinai.selftest.CALL" />
+                <action android:name="com.personal.weixinai.selftest.BUBBLE" />
+                <action android:name="com.personal.weixinai.selftest.WIDGET" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

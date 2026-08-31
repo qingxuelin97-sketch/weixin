@@ -1,6 +1,8 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { IconChats, IconContacts, IconDiscover, IconMe } from '../components/icons';
+import { Badge } from '../components/Badge';
 import { useAppStore } from '../store/appStore';
+import { totalUnread as totalUnreadOf } from '../lib/unread';
 
 const TABS = [
   { path: '/chats', label: '微信', Icon: IconChats },
@@ -13,9 +15,9 @@ const TABS = [
 export function TabScaffold() {
   const location = useLocation();
   const navigate = useNavigate();
-  const totalUnread = useAppStore((s) =>
-    s.conversations.reduce((n, c) => n + (c.isMuted || c.isHidden ? 0 : c.unreadCount), 0),
-  );
+  // Muted and HIDDEN threads are excluded — see lib/unread.ts for why the rule
+  // lives in one place now.
+  const totalUnread = useAppStore((s) => totalUnreadOf(s.conversations));
 
   return (
     <>
@@ -32,9 +34,19 @@ export function TabScaffold() {
               aria-selected={active}
               onClick={() => navigate(path)}
             >
-              <Icon active={active} />
+              {/* Keyed on `active` so the nod REPLAYS on each switch: a class
+                  that is merely present animates once, on mount, and then
+                  never again (M-H3). */}
+              <span
+                key={active ? 'on' : 'off'}
+                className={`tabbar__icon${active ? ' tab-bounce' : ''}`}
+              >
+                <Icon active={active} />
+              </span>
               {showBadge && (
-                <span className="tabbar__badge">{totalUnread > 99 ? '99+' : totalUnread}</span>
+                // One badge component, and the roll lives inside it (M-I0 ×
+                // M-I8): no `key` remount trick, no per-site `badge-roll`.
+                <Badge className="tabbar__badge" count={totalUnread} />
               )}
               <span className="tabbar__label">{label}</span>
             </button>

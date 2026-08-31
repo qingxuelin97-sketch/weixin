@@ -52,12 +52,13 @@ jobs:
       - name: Build web bundle
         run: pnpm build
 
-      # android/ is gitignored (it is a generated artifact), so it is created
-      # fresh here on every run.
-      - name: Generate the native project
-        run: |
-          npx cap add android
-          npx cap sync android
+      # android/ is COMMITTED since M-I10 (it carries hand-written Kotlin:
+      # bubble overlay, RemoteInput reply, call notification, widget).
+      # `cap add` here would overwrite it with the bare template and silently
+      # ship an APK with none of that — only sync, never add.
+      # docs/android-regen.md explains how to regenerate on a Capacitor upgrade.
+      - name: Sync web assets into the committed native project
+        run: npx cap sync android
 
       # versionCode must increase monotonically for an in-place upgrade to be
       # accepted by Android; run_number is the only always-increasing value here.

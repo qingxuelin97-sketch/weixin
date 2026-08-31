@@ -1,0 +1,215 @@
+/**
+ * The one overlay layer (M-I0).
+ *
+ * Before this file the app had eight bespoke `position: fixed` overlays, each
+ * with a z-index picked independently (30/50/60/70/80/90/100/1000). This file
+ * owns the shared scrim + the WeChat dialog / action-sheet skins; the z order
+ * comes from the token scale in tokens.css so a new overlay picks a NAMED
+ * layer instead of inventing a number.
+ */
+
+.ovl {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: flex;
+  background: var(--color-overlay);
+  animation: ovl-fade 160ms var(--ease-standard);
+}
+.ovl--center {
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+}
+.ovl--bottom {
+  align-items: flex-end;
+}
+@keyframes ovl-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- WeChat centered dialog: white card, hairline-split buttons. ---- */
+.dlg {
+  width: 100%;
+  max-width: 300px;
+  border-radius: 8px;
+  background: var(--color-cell-bg);
+  overflow: hidden;
+  animation: dlg-pop 180ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes dlg-pop {
+  from {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.dlg__title {
+  padding: 24px 24px 8px;
+  text-align: center;
+  font-size: var(--fs-cell-title);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+}
+.dlg__body {
+  padding: 0 24px 8px;
+  text-align: center;
+  font-size: var(--fs-cell-sub);
+  line-height: var(--lh-body);
+  color: var(--color-text-secondary);
+  white-space: pre-line;
+}
+.dlg__input {
+  display: block;
+  width: calc(100% - 48px);
+  margin: 8px 24px 16px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--color-page-bg);
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.dlg__buttons {
+  display: flex;
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  margin-top: 8px;
+}
+.dlg__btn {
+  flex: 1;
+  padding: 13px 0;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.dlg__btn + .dlg__btn {
+  border-left: var(--hairline-width) solid var(--color-hairline);
+}
+.dlg__btn--primary {
+  color: var(--color-link);
+  font-weight: var(--fw-medium);
+}
+.dlg__btn--danger {
+  color: var(--color-badge);
+}
+.dlg__btn:disabled {
+  opacity: 0.4;
+}
+.dlg__btn:active {
+  background: var(--color-cell-bg-pressed);
+}
+
+/* ---- Generic feature sheet: titled bottom container, body scrolls. ----
+   Sits BELOW the dialog layer so a confirm opened from inside a sheet
+   (删除 → 确认) renders on top of it, not underneath. */
+.ovl--sheet {
+  z-index: var(--z-sheet);
+}
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--color-cell-bg);
+  border-radius: 12px 12px 0 0;
+  padding-bottom: var(--safe-bottom);
+  overflow: hidden;
+  animation: asheet-rise 220ms var(--ease-standard);
+  /* M-I8: the panel owns the vertical drag, so Android must not hand it to its
+     own scroll before a pointermove is ever delivered. */
+  touch-action: none;
+}
+/* Drag handle (M-I8). Small, centered, and the only advertisement that the
+   sheet can be pushed back down — the gesture is invisible without it. */
+.sheet__grabber {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 2px;
+  border-radius: 2px;
+  background: var(--color-hairline);
+}
+/* The body scrolls normally: the drag hook stands down whenever this is
+   scrolled away from its top. */
+.sheet__body {
+  touch-action: pan-y;
+}
+.sheet__title {
+  flex: none;
+  padding: 14px 0 8px;
+  text-align: center;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+}
+.sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ---- WeChat action sheet: bottom list, fat gap, cancel below. ---- */
+.asheet {
+  width: 100%;
+  background: var(--color-page-bg);
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+  padding-bottom: var(--safe-bottom);
+  animation: asheet-rise 220ms var(--ease-standard);
+  /* M-I8: the panel owns the vertical drag, so Android must not hand it to its
+     own scroll before a pointermove is ever delivered. */
+  touch-action: none;
+}
+@keyframes asheet-rise {
+  from {
+    transform: translateY(40%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.asheet__title {
+  padding: 14px 24px;
+  text-align: center;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  background: var(--color-cell-bg);
+  border-bottom: var(--hairline-width) solid var(--color-hairline);
+}
+.asheet__item {
+  display: block;
+  width: 100%;
+  padding: 15px 0;
+  text-align: center;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  background: var(--color-cell-bg);
+}
+.asheet__item + .asheet__item {
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.asheet__item--danger {
+  color: var(--color-badge);
+}
+.asheet__item:disabled {
+  opacity: 0.4;
+}
+.asheet__item:active {
+  background: var(--color-cell-bg-pressed);
+}
+.asheet__gap {
+  height: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ovl,
+  .dlg,
+  .sheet,
+  .asheet {
+    animation: none !important;
+  }
+}

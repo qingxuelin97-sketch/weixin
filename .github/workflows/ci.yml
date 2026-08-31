@@ -4,6 +4,9 @@ on:
   push:
     branches: ['**']
   pull_request:
+  # Manual entry point for `regen-goldens` (M-I11). Baselines are minted by CI,
+  # never by a dev container — see that job for why.
+  workflow_dispatch:
 
 jobs:
   check:
@@ -22,15 +25,34 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      # Build in CI too (M-I18). Until now only the screenshot job built, so a
+      # broken production build could reach the branch while `check` stayed
+      # green — and nothing measured startup weight at all.
+      - run: pnpm build
+      - run: pnpm check:size
 
   screenshot:
-    name: golden screenshots (non-blocking until goldens regenerated in CI)
+    name: golden screenshots
     runs-on: ubuntu-latest
-    # Goldens are committed from a dev container; CI CJK font may differ, so this
-    # is advisory until the baselines are regenerated inside this exact runner
-    # (run `pnpm test:screenshot:update` here and commit). Until then it never
-    # blocks a merge — its value is the uploaded diff report.
-    continue-on-error: true
+    # Skipped whenever this run exists to REGENERATE baselines — checking them
+    # first would only report the diff regen is about to erase. Two ways in:
+    # a manual dispatch, or a commit whose message carries [regen-goldens].
+    if: >-
+      github.event_name != 'workflow_dispatch' &&
+      !contains(github.event.head_commit.message, '[regen-goldens]')
+    # BLOCKING since M-I11.
+    #
+    # The baselines are minted BY THIS JOB (see the `regen-goldens` job below),
+    # never by a dev container. Two things differ between the two environments
+    # and both move glyph pixels: the CJK font package, and the Chromium build —
+    # playwright.config.ts points local runs at whatever PLAYWRIGHT_BROWSERS_PATH
+    # provides, while this job installs Playwright's own pinned build. Matching
+    # the font alone still left 30/52 shots red, which is what proved the browser
+    # is the other half of it.
+    #
+    # So: to update goldens after an intentional UI change, run the
+    # `regen-goldens` job (workflow_dispatch) on your branch and let it commit
+    # the PNGs back. Do not commit locally-generated baselines.
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -45,9 +67,71 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:screenshot
+      # `test-results/` holds the actual/diff PNGs — the only way to SEE why a
+      # shot moved. The html report is emitted alongside the github reporter
+      # (playwright.config.ts) precisely so this upload is not empty, which it
+      # silently was until M-I11.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 7
+
+  regen-goldens:
+    name: regenerate goldens (manual)
+    # Two entry points, both explicit:
+    #   - workflow_dispatch (the original), and
+    #   - a push whose HEAD commit message contains [regen-goldens].
+    #
+    # The marker exists because dispatch needs a token permission this repo's
+    # automation does not always hold (M-I18: `actions: write` came back 403
+    # mid-round, leaving a stale baseline with no way to remint it). A marker
+    # in a commit message needs nothing but the push that is happening anyway.
+    #
+    # It cannot loop, though not for the reason first written here: GitHub fires
+    # NO workflow at all for a push made with GITHUB_TOKEN, so this job's own
+    # commit triggers nothing — not this job, and not the screenshot gate either.
+    # (The marker-free commit message is a second belt, not the load-bearing one.)
+    # The consequence to remember: baselines committed here are NEVER re-checked
+    # by the gate; their only verification is the two-pass self-check below. To
+    # have the gate actually run against them, push one more commit on top — an
+    # ordinary push does trigger workflows.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[regen-goldens]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:screenshot:update
+      # Twice: a baseline that is not reproducible in its OWN environment is a
+      # flake generator, and committing it would hand the gate a shot that goes
+      # red at random. The second pass must be clean against what pass one wrote.
+      - run: pnpm test:screenshot
+      - name: commit refreshed baselines
+        run: |
+          git config user.name 'qingxuelin97-sketch'
+          git config user.email 'mesakurax@gmail.com'
+          git add tests/screenshot
+          if git diff --cached --quiet; then
+            echo 'goldens already current — nothing to commit'
+          else
+            git commit -m 'chore(ci): 在 CI 环境重生成 golden 基线'
+            git push origin HEAD:${{ github.ref_name }}
+          fi

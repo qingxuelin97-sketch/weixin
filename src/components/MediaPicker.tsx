@@ -4,6 +4,7 @@
  * importing/deleting lives in 设置 → 素材库.
  */
 import { listRegisteredMedia } from '../data/media-registry';
+import { useDismissable } from '../app/useDismissable';
 import './media-picker.css';
 
 interface MediaPickerProps {
@@ -18,6 +19,8 @@ interface MediaPickerProps {
 
 export function MediaPicker({ kind, title, onPick, onClose, allowClear }: MediaPickerProps) {
   const items = listRegisteredMedia(kind);
+  // Mounted = open (callers render it conditionally), so back closes the picker.
+  useDismissable(true, onClose);
   return (
     <div className="media-picker" onClick={onClose}>
       <div className="media-picker__panel" onClick={(e) => e.stopPropagation()}>

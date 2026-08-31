@@ -71,6 +71,33 @@ export function selectFactsForInjection(
   });
 }
 
+/** How the rolling summary introduces itself, per surface. */
+const SUMMARY_PREFIX = {
+  single: '上次你们聊到：',
+  group: '上次群里聊到：',
+} as const;
+
+/**
+ * Put the conversation's rolling summary (M-D2, `conv_summaries`) in front of
+ * the retrieved facts.
+ *
+ * Shared by both engines since M-I18, and that is the point. The writer side
+ * has always covered groups — `putConvSummary` never cared what kind of
+ * conversation it was handed — but only the 1:1 engine ever READ one back. So
+ * a group's summary was generated, backed up and cascade-deleted while never
+ * once reaching a prompt: leave a room for a day and she picked the thread
+ * back up in your DM while having no idea what the group had been about.
+ * One function means the two surfaces cannot drift apart again.
+ */
+export function withConvSummary(
+  topK: string[],
+  summary: string | undefined,
+  surface: 'single' | 'group' = 'single',
+): string[] {
+  const s = summary?.trim();
+  return s ? [`${SUMMARY_PREFIX[surface]}${s}`, ...topK] : topK;
+}
+
 /** Mark injected facts as referenced; first use flips pending → confirmed. */
 export async function touchFacts(subjectId: string, factIds: string[], now: number): Promise<void> {
   if (factIds.length === 0) return;
@@ -147,8 +174,14 @@ export async function extractMemory(
    * here: this transcript is verbatim chat content, so declaring 'off' for a
    * full-tier conversation routes explicit text to a domestic endpoint
    * (constitution rule #6). Callers derive it via lib/nsfw-tier.
+   *
+   * No default (M-I18). It used to be `= 'off'`, three lines under the word
+   * REQUIRED — so a caller that simply forgot the argument declared explicit
+   * material safe for a mainland endpoint, silently, at runtime. Rule 6 is
+   * meant to be a code-level constraint; a required parameter makes the
+   * compiler the one enforcing it.
    */
-  tier: NsfwTier = 'off',
+  tier: NsfwTier,
 ): Promise<ExtractResult> {
   if (messages.length === 0) return { facts: [] };
   // Projected, so a fact like "他转了我 52 块请我喝奶茶" is extractable at all —

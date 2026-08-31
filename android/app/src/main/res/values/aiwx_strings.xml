@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AIWX (M-I10) strings, kept out of the template strings.xml so a Capacitor
+     regen diff stays clean (docs/android-regen.md). -->
+<resources>
+    <string name="aiwx_widget_label">微信 · 未读与最新消息</string>
+    <string name="aiwx_widget_description">未读数与最近一条消息，点按直达会话</string>
+</resources>

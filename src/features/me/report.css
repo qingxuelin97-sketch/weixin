@@ -1,0 +1,311 @@
+/* 聊天年度报告 (M-I14) — full-screen scroll story, WeChat annual-report vibe.
+   Colors reference tokens only; all motion is CSS (transitions/keyframes). */
+
+.report {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-shell);
+  background: linear-gradient(160deg, var(--color-report-bg-a), var(--color-report-bg-b));
+  color: var(--color-report-text);
+  font-family: var(--font-sans);
+}
+
+.report__close {
+  position: absolute;
+  top: calc(var(--safe-top) + 10px);
+  right: 14px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-on-color-fill);
+  color: var(--color-report-text);
+  font-size: 15px;
+  line-height: 32px;
+  text-align: center;
+  padding: 0;
+}
+
+.report__loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-report-dim);
+}
+
+.report__scroll {
+  height: 100%;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  overscroll-behavior: contain;
+}
+
+/* ---- one snap page ---- */
+
+.report__sec {
+  min-height: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 28px;
+  box-sizing: border-box;
+}
+
+.report__sec-inner {
+  width: 100%;
+  max-width: 340px;
+  opacity: 0;
+  transform: translateY(26px);
+  transition:
+    opacity 700ms var(--ease-standard),
+    transform 700ms var(--ease-standard);
+}
+
+.report__sec--in .report__sec-inner {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---- cover / ending ---- */
+
+.report__year {
+  font-size: 64px;
+  font-weight: var(--fw-medium);
+  color: var(--color-report-accent);
+  letter-spacing: 2px;
+}
+
+.report__title {
+  margin-top: 8px;
+  font-size: 28px;
+  font-weight: var(--fw-medium);
+}
+
+.report__sub {
+  margin-top: 10px;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-report-dim);
+}
+
+.report__hint {
+  margin-top: 56px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-report-dim);
+  animation: report-bob 1.6s ease-in-out infinite;
+}
+
+@keyframes report-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(6px);
+  }
+}
+
+.report__foot {
+  margin-top: 64px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-report-dim);
+}
+
+/* ---- shared text pieces ---- */
+
+.report__lead {
+  font-size: var(--fs-cell-title);
+  color: var(--color-report-dim);
+}
+
+.report__big {
+  margin-top: 14px;
+  font-size: 56px;
+  font-weight: var(--fw-medium);
+  color: var(--color-report-accent);
+  line-height: 1.1;
+}
+
+.report__unit {
+  font-size: var(--fs-cell-title);
+  color: var(--color-report-dim);
+  margin-left: 8px;
+}
+
+.report__line {
+  margin-top: 14px;
+  font-size: var(--fs-cell-sub);
+  line-height: 1.7;
+  color: var(--color-report-text);
+}
+
+.report__line em {
+  font-style: normal;
+  color: var(--color-report-accent);
+}
+
+.report__hero-name {
+  margin-top: 12px;
+  font-size: 34px;
+  font-weight: var(--fw-medium);
+  color: var(--color-report-accent);
+  word-break: break-all;
+}
+
+/* ---- talker bars ---- */
+
+.report__bars {
+  margin-top: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.report__bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.report__bar-label {
+  flex: none;
+  width: 72px;
+  font-size: var(--fs-small-gray);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.report__bar-track {
+  flex: 1;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--color-on-color-divider);
+  overflow: hidden;
+}
+
+.report__bar-fill {
+  height: 100%;
+  border-radius: 5px;
+  background: var(--color-report-bar);
+  transition: width 900ms var(--ease-standard) 200ms;
+}
+
+.report__bar-count {
+  flex: none;
+  min-width: 34px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-report-dim);
+}
+
+/* ---- hour histogram ---- */
+
+.report__hours {
+  margin-top: 26px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 96px;
+}
+
+.report__hour-col {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.report__hour-bar {
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--color-on-color-fill);
+  transition: height 800ms var(--ease-standard) 150ms;
+}
+
+.report__hour-bar--peak {
+  background: var(--color-report-accent);
+}
+
+.report__hour-tick {
+  position: absolute;
+  bottom: -18px;
+  left: 0;
+  font-size: 10px;
+  color: var(--color-report-dim);
+}
+
+/* ---- money ---- */
+
+.report__money {
+  margin-top: 26px;
+  display: flex;
+  align-items: center;
+  background: var(--color-report-card);
+  border-radius: 12px;
+  padding: 20px 12px;
+}
+
+.report__money-cell {
+  flex: 1;
+  text-align: center;
+}
+
+.report__money-num {
+  font-size: 24px;
+  font-weight: var(--fw-medium);
+  color: var(--color-report-accent);
+}
+
+.report__money-label {
+  margin-top: 6px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-report-dim);
+}
+
+.report__money-divider {
+  flex: none;
+  width: 1px;
+  height: 40px;
+  background: var(--color-report-hairline);
+}
+
+/* ---- word cloud ---- */
+
+.report__words {
+  margin-top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px 16px;
+}
+
+.report__word {
+  color: var(--color-report-text);
+  opacity: 0.9;
+}
+
+.report__word:first-child {
+  color: var(--color-report-accent);
+}
+
+.report__ending .report__sec-inner {
+  text-align: center;
+}
+
+.report__cover .report__sec-inner {
+  text-align: center;
+}
+
+/* Accessibility (M-I8): the cover's floating bob is an infinite loop, which is
+   the single worst thing to leave running for someone who asked for less
+   motion. Everything else in this file is static. */
+@media (prefers-reduced-motion: reduce) {
+  .report__hint {
+    animation: none !important;
+  }
+}

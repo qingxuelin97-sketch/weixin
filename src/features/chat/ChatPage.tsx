@@ -1,35 +1,71 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   IconBack,
   IconMore,
   IconVoiceCircle,
-  IconMicSmall,
   IconEmoji,
   IconPlus,
 } from '../../components/icons';
+import { VoiceInputButton } from './VoiceInput';
 import { Avatar } from '../../components/Avatar';
+import { Badge } from '../../components/Badge';
 import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
-import { registerMedia } from '../../data/media-registry';
+import { Sheet } from '../../components/Sheet';
+import { LongPressMenu, type LongPressMenuItem } from '../../components/LongPressMenu';
+import { useDismissable } from '../../app/useDismissable';
+import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
+import { useMedia } from '../../components/useMedia';
+import { recordUserSticker, agentStickerPool } from '../../ai/sticker-taste';
+import { battleReply, stickerStreak } from '../../ai/sticker-battle';
+import { totalUnread as totalUnreadOf } from '../../lib/unread';
+import { enqueue } from '../../ai/scheduler';
+import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
+import { logError } from '../../lib/errlog';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
+import { storyRunning } from '../../ai/story-service';
+import type { StorySaveRow } from '../../ai/story-gm';
 import { useAppStore } from '../../store/appStore';
+import { showPrompt } from '../../components/dialog';
 import { regenerateLastTurn } from '../../ai/engine';
 import { useGuard } from '../../app/useGuard';
 import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
 import { hasUsableProvider } from '../../llm/service';
-import { sendUserMessage } from '../../ai/engine';
+import { sendUserMessage, replyToLatest, effectiveTier } from '../../ai/engine';
 import { maybeScheduleMemExtract } from '../../ai/memory-service';
-import { sendGroupMessage } from '../../ai/group-engine';
+import { sendGroupMessage, replyToLatestInGroup } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
 import type { GroupMember } from '../../ai/director';
 import { repo } from '../../db/repo';
+import { renderMessageBody } from '../../ai/render-msg';
+import { suggestGroupHref } from '../../ai/agent-invite';
 import { canRecall } from '../../lib/recall';
+import { gameSeed, rollDice, rollRps, type GameKind } from '../../lib/game';
 import type { MessageVM, NsfwTierVM } from '../../data/types';
+import { typingRhythm } from '../../lib/typing-rhythm';
 import './chat.css';
 import '../settings/settings.css';
 import { useNow } from '../../lib/useNow';
+
+/**
+ * Message types the 收藏 menu item is offered for — exactly the ones
+ * `FavoriteBody` (features/favorites/FavoritesPage.tsx) knows how to draw.
+ * A guard test keeps the two in step; see tests/unit/i18-contacts-gaps.test.ts.
+ */
+const FAVORITABLE: readonly MessageVM['type'][] = [
+  'text',
+  'sticker',
+  'image',
+  'voice',
+  'location',
+  'contact_card',
+  'file',
+  'link',
+  'merged',
+  'game',
+];
 
 export function ChatPage() {
   const guard = useGuard();
@@ -47,10 +83,64 @@ export function ChatPage() {
   const patchConversation = useAppStore((s) => s.patchConversation);
   const showToast = useAppStore((s) => s.showToast);
   const isTyping = useAppStore((s) => Boolean(s.typing[convId]));
+
+  // 输入抖动 (M-I16 在线感): while she is generating, the indicator breathes —
+  // 「输入中…停顿…又输入」 on a seeded rhythm (typingRhythm, 铁律 4) instead of
+  // burning solid for the whole round trip. The stepper is a UI timer
+  // (presentation only, frozen clocks in screenshots never fire it); every
+  // duration comes from the seeded pure function.
+  const [typingPaused, setTypingPaused] = useState(false);
+  useEffect(() => {
+    if (!isTyping) {
+      setTypingPaused(false);
+      return;
+    }
+    const lastId = useAppStore.getState().messagesFor(convId).at(-1)?.id ?? 0;
+    const beats = typingRhythm(`${convId}:${lastId}`);
+    let i = 0;
+    let t: ReturnType<typeof setTimeout>;
+    const step = () => {
+      const b = beats[i % beats.length];
+      i++;
+      setTypingPaused(!b.on);
+      t = setTimeout(step, b.ms);
+    };
+    step();
+    return () => clearTimeout(t);
+  }, [isTyping, convId]);
+  const typingShown = isTyping && !typingPaused;
+
+  // 已读回执 (M-I16, opt-in): WeChat has none, so this ships OFF and lives
+  // behind the `readReceipts` settings KV. Purely a projection of data the
+  // read-delay mechanism already produces: your last message counts as read
+  // once she has replied after it — or is typing right now (the engine's
+  // readDelay elapsed, i.e. she "saw" it).
+  const [readReceipts, setReadReceipts] = useState(false);
+  useEffect(() => {
+    void repo
+      .getSetting<boolean>('readReceipts')
+      .then((v) => setReadReceipts(Boolean(v)))
+      .catch(() => {});
+  }, []);
+  const readMarkId = useMemo(() => {
+    if (!readReceipts) return null;
+    let lastSelf: MessageVM | undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].senderId === 'self') {
+        lastSelf = messages[i];
+        break;
+      }
+    }
+    if (!lastSelf || lastSelf.status === 'failed') return null;
+    const read =
+      isTyping ||
+      messages.some(
+        (m) => m.senderId !== 'self' && m.type !== 'system' && m.createdAt >= lastSelf!.createdAt,
+      );
+    return read ? lastSelf.id : null;
+  }, [messages, readReceipts, isTyping]);
   // Being *in* this conversation zeroes its badge, so no per-conv exception here.
-  const totalUnread = useAppStore((s) =>
-    s.conversations.reduce((n, c) => n + (c.isMuted || c.isHidden ? 0 : c.unreadCount), 0),
-  );
+  const totalUnread = useAppStore((s) => totalUnreadOf(s.conversations));
   const composer = useComposerPanel();
   const [draft, setDraft] = useState('');
   const draftRef = useRef(draft);
@@ -85,10 +175,90 @@ export function ChatPage() {
     };
   }, [convId]);
 
+  // Tier of THIS conversation, for the microphone (M-I18). Derived exactly
+  // like the send path does it (global setting × this persona's permit), so
+  // 铁律 6 covers speech going OUT the same way it covers prompts.
+  const [micTier, setMicTier] = useState<'off' | 'ambiguous' | 'full'>('off');
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+      const c = useAppStore.getState().conversationById(convId);
+      const permit = c?.type === 'single' && c.peerId
+        ? (useAppStore.getState().personaFor(c.peerId)?.nsfwPermit ?? false)
+        : false;
+      if (alive) setMicTier(effectiveTier(globalTier, permit));
+    })().catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [convId, hydrated]);
+
   /** Long-press context menu: which message, anchored where. */
   const [menu, setMenu] = useState<{ msg: MessageVM; x: number; y: number } | null>(null);
   const [quote, setQuote] = useState<{ msgId: number; text: string } | null>(null);
   const [forwarding, setForwarding] = useState<MessageVM | null>(null);
+  // 多选 + 合并转发 (M-I6): selection is a message-id set; the bottom action
+  // bar replaces the composer while active, and forwarding N messages builds
+  // ONE 'merged' card whose meta carries the copied lines.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  /** 群 @ 选择器 (M-I6): open after the user types '@'. */
+  const [atPicker, setAtPicker] = useState(false);
+  // 群昵称 (M-I6): per-room aliases from chat info; bubbles show the alias by
+  // overlaying it as `remark` on the sender the row renders with.
+  const [groupNicks, setGroupNicks] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (conv?.type !== 'group') return;
+    void repo
+      .getSetting<Record<string, string>>(`groupNick:${convId}`)
+      .then((n) => setGroupNicks(n ?? {}))
+      .catch(() => {});
+  }, [convId, conv?.type]);
+  const senderFor = (senderId: string) => {
+    const c = contactById(senderId);
+    const nick = groupNicks[senderId];
+    return c && nick ? { ...c, remark: nick } : c;
+  };
+  const [mergedForward, setMergedForward] = useState<{
+    title: string;
+    items: Array<{ name: string; body: string; at: number }>;
+  } | null>(null);
+  const toggleSelect = (id: number) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const exitSelect = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+  useDismissable(selecting, exitSelect);
+  const beginMergedForward = () => {
+    const nameFor = (senderId: string) =>
+      senderId === 'self'
+        ? '我'
+        : (contactById(senderId)?.remark ?? contactById(senderId)?.name ?? senderId);
+    const items = messages
+      .filter((m) => selected.has(m.id) && !m.isRecalled)
+      .sort((a, b) => a.id - b.id)
+      .map((m) => ({
+        name: nameFor(m.senderId),
+        body: renderMessageBody(m, { maxChars: 120 }),
+        at: m.createdAt,
+      }));
+    if (items.length === 0) {
+      showToast('先选几条消息');
+      return;
+    }
+    setMergedForward({
+      title:
+        conv?.type === 'group' ? `群聊「${conv.title}」的聊天记录` : `与${conv?.title}的聊天记录`,
+      items,
+    });
+  };
   const allConversations = useAppStore((s) => s.conversations);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
   const albumInputRef = useRef<HTMLInputElement>(null);
@@ -109,13 +279,42 @@ export function ChatPage() {
       }
     };
   }, [convId]);
-  useEffect(() => {
-    if (!menu) return;
-    // Any further interaction dismisses the menu, WeChat-style.
-    const close = () => setMenu(null);
-    document.addEventListener('pointerdown', close, { capture: true });
-    return () => document.removeEventListener('pointerdown', close, { capture: true });
-  }, [menu]);
+  // The message menu's scrim, dismiss-stack registration and "any further
+  // interaction closes it" behaviour all moved into <LongPressMenu/> (I18) —
+  // where the chat list gets exactly the same three, instead of its own.
+  useDismissable(composer.mode === 'emoji' || composer.mode === 'plus', composer.closeAll);
+
+  /**
+   * Re-send a message whose delivery failed.
+   *
+   * Reuses the existing row (`updateMessage`) instead of appending a new one:
+   * a fresh append would take a new autoincrement id and land the retry AFTER
+   * everything that arrived meanwhile, breaking "rowid order == time order"
+   * for the reader. The generation path is the normal one, so its in-flight
+   * table still guards against two replies racing if you tap twice.
+   */
+  const retrySend = async (msg: MessageVM) => {
+    const c = useAppStore.getState().conversationById(convId);
+    if (!c || msg.status !== 'failed') return;
+    await updateMessage({ ...msg, status: 'sent' });
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+    try {
+      if (c.type === 'group') {
+        const members: GroupMember[] = (c.memberIds ?? []).map((id) => {
+          const ct = contactById(id);
+          return { contactId: id, name: ct?.remark ?? ct?.name ?? id, persona: personaFor(id) };
+        });
+        await replyToLatestInGroup(c, members, globalTier, hooks, contactById);
+        return;
+      }
+      const peer = c.peerId ? contactById(c.peerId) : undefined;
+      const persona = c.peerId ? personaFor(c.peerId) : undefined;
+      if (peer && persona) await replyToLatest(convId, peer, persona, globalTier, hooks);
+    } catch (e) {
+      logError('chat.retry', e);
+    }
+  };
 
   const recallOwn = async (msg: MessageVM) => {
     setMenu(null);
@@ -161,11 +360,165 @@ export function ChatPage() {
   // Interleave time bars (WeChat shows a centered time when the gap > 5 min).
   const rows = useMemo(() => withTimeBars(messages), [messages]);
 
-  // Keep the view pinned to the newest message as bubbles arrive.
+  // Photo messages resolve through the lazy media registry (M-G1): ask for the
+  // blobs this transcript actually shows, and re-render when they land.
+  // Custom stickers (M-I15) are `idb:` refs too, so they prime the same way.
+  useMedia(
+    useMemo(
+      () =>
+        messages
+          .filter(
+            (m) =>
+              m.type === 'image' ||
+              (m.type === 'sticker' && m.content?.startsWith('idb:')),
+          )
+          .map((m) => m.content),
+      [messages],
+    ),
+  );
+
+  // 我的表情 (M-I15): the composer strip's custom stickers. Primed only while
+  // the emoji panel is open — the strip is the one place they all draw at once.
+  const customStickers = listRegisteredMedia('sticker');
+  useMedia(
+    useMemo(
+      () => (composer.mode === 'emoji' ? customStickers.map((s) => `idb:${s.id}`) : []),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [composer.mode, customStickers.length],
+    ),
+  );
+
+  // Keep the view pinned to the newest message as bubbles arrive — but not
+  // when the growth came from loading OLDER messages, which prepends.
+  const pinToBottom = useRef(true);
+  const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (!pinToBottom.current) {
+      pinToBottom.current = true;
+      return;
+    }
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [rows.length, isTyping, composer.bottomInset]);
+
+  /**
+   * Re-anchor when the CONTENT grows without the message count changing.
+   *
+   * The effect above fires on `rows.length`, which misses everything that
+   * changes height after the fact: a photo finishing its lazy load, an emoji
+   * falling back to a font that arrives late, a bubble rewrapping. Each of
+   * those pushes the newest message below the fold and leaves it there — the
+   * view was anchored to a height that no longer exists.
+   *
+   * Only re-anchors when the reader is already ~at the bottom, so it can never
+   * yank someone who has scrolled up to read history.
+   */
+  useEffect(() => {
+    const el = scrollRef.current;
+    const inner = listRef.current;
+    if (!el || !inner || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [convId]);
+
+  // Older history, on demand (M-G2). Hydration holds a flat 200 per
+  // conversation and everything before that was unreachable — in the database,
+  // invisible to both scrolling and search.
+  const loadOlderMessages = useAppStore((s) => s.loadOlderMessages);
+  const openConversation = useAppStore((s) => s.openConversation);
+
+  // Threads are fetched on open, not at startup (M-G2). `threadReady` is a
+  // real readiness signal rather than test scaffolding: the page now paints
+  // before its messages exist, so anything that needs to observe the settled
+  // thread — the golden screenshots, and a future scroll-restore — has to be
+  // able to tell "still loading" from "loaded and empty".
+  const threadReady = useAppStore((s) => s.hasThread(convId));
+  useEffect(() => {
+    void openConversation(convId).catch((e) => logError('chat.open', e));
+  }, [convId, openConversation]);
+  const [atTop, setAtTop] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadOlder = async () => {
+    const el = scrollRef.current;
+    if (!el || loadingOlder || atTop) return;
+    setLoadingOlder(true);
+    // Anchor on the distance from the BOTTOM: prepending changes scrollHeight,
+    // and restoring scrollTop directly would jump the reader to a random spot.
+    const fromBottom = el.scrollHeight - el.scrollTop;
+    pinToBottom.current = false;
+    try {
+      const n = await loadOlderMessages(convId);
+      if (n === 0) setAtTop(true);
+      requestAnimationFrame(() => {
+        const cur = scrollRef.current;
+        if (cur) cur.scrollTop = cur.scrollHeight - fromBottom;
+      });
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  // 搜索命中锚定 (M-I6): `?at=<msgId>` — a search hit lands here, pages history
+  // in until the target row exists, scrolls it to center and flashes it once.
+  // Keyed so re-renders don't re-run the jump, but a NEW hit in the same
+  // conversation does.
+  const [searchParams] = useSearchParams();
+  const atParam = searchParams.get('at');
+  const [flashId, setFlashId] = useState<number | null>(null);
+  const anchoredKey = useRef<string | null>(null);
+  useEffect(() => {
+    const at = atParam ? Number(atParam) : NaN;
+    if (!Number.isFinite(at) || !threadReady) return;
+    const key = `${convId}:${at}`;
+    if (anchoredKey.current === key) return;
+    anchoredKey.current = key;
+    let alive = true;
+    void (async () => {
+      // Page older history in until the target is present. Two stop rules
+      // besides success: the top of history, and an oldest-loaded row already
+      // older than the target — that means the message was deleted, and paging
+      // further would walk the whole thread for nothing.
+      for (let guard = 0; guard < 40; guard++) {
+        const list = useAppStore.getState().messagesFor(convId);
+        if (list.some((m) => m.id === at)) break;
+        if (list.length && list[0].id <= at) return;
+        pinToBottom.current = false;
+        const n = await loadOlderMessages(convId, 200);
+        if (!alive || n === 0) return;
+      }
+      if (!alive) return;
+      pinToBottom.current = false;
+      requestAnimationFrame(() => {
+        const el = scrollRef.current?.querySelector(`[data-msg-id="${at}"]`);
+        if (el) {
+          (el as HTMLElement).scrollIntoView({ block: 'center' });
+          setFlashId(at);
+        }
+      });
+    })().catch((e) => logError('chat.anchor', e));
+    return () => {
+      alive = false;
+    };
+  }, [convId, atParam, threadReady, loadOlderMessages]);
+
+  // Is a story playing here? Re-checked as the transcript grows, which is also
+  // when a run ends or pauses. Never throws into the page: an unreadable save
+  // row means "no banner", not a blank chat.
+  const [story, setStory] = useState<StorySaveRow | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    void storyRunning(convId)
+      .then((s) => {
+        if (alive) setStory(s);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [convId, rows.length]);
 
   const send = async () => {
     const text = draft.trim();
@@ -174,13 +527,21 @@ export function ChatPage() {
     const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
     const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
 
+    // Built BEFORE the group branch. It used to live after it, so replying with
+    // a quote in a group silently dropped the quote AND never ran
+    // `setQuote(null)` — the quote chip then stayed wedged in the composer for
+    // the rest of the session. The quote menu item has no `isGroup` guard, so
+    // this was a fully reachable path, just a broken one.
+    const quoteMeta = quote ? { quote: quote.text } : undefined;
+    setQuote(null);
+
     // Group: the director stages a cast; single: one persona replies.
     if (conv.type === 'group') {
       const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
         const c = contactById(id);
         return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
       });
-      await sendGroupMessage(conv, text, members, globalTier, hooks, contactById);
+      await sendGroupMessage(conv, text, members, globalTier, hooks, contactById, quoteMeta);
       return;
     }
 
@@ -201,9 +562,175 @@ export function ChatPage() {
       return;
     }
 
-    const quoteMeta = quote ? { quote: quote.text } : undefined;
-    setQuote(null);
     await sendUserMessage(convId, text, peer, persona, globalTier, hooks, quoteMeta);
+  };
+
+  /**
+   * Ask the AI side to react to whatever is now newest in the thread —
+   * shared by every "user sent something that isn't text" path (photos,
+   * games, locations). One round for the whole batch.
+   */
+  const askReply = async () => {
+    const c = useAppStore.getState().conversationById(convId);
+    if (!c) return;
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+    if (c.type === 'group') {
+      const members: GroupMember[] = (c.memberIds ?? []).map((id) => {
+        const ct = contactById(id);
+        return { contactId: id, name: ct?.remark ?? ct?.name ?? id, persona: personaFor(id) };
+      });
+      await replyToLatestInGroup(c, members, globalTier, hooks, contactById);
+      return;
+    }
+    const peer = c.peerId ? contactById(c.peerId) : undefined;
+    const persona = c.peerId ? personaFor(c.peerId) : undefined;
+    if (peer && persona) await replyToLatest(convId, peer, persona, globalTier, hooks);
+  };
+
+  /**
+   * 表情游戏 (M-I13): send a dice / 猜拳 throw. The result is rolled ONCE,
+   * seeded from (convId, createdAt) — rule #4 — and stored in meta, so the
+   * face on screen, the projection the model reads, and any future replay
+   * all agree. She then gets a normal turn to react to it (接梗).
+   */
+  const sendGame = async (kind: GameKind) => {
+    if (!conv) return;
+    composer.closeAll();
+    const at = Date.now();
+    const result =
+      kind === 'dice' ? rollDice(gameSeed(convId, at, 'self')) : rollRps(gameSeed(convId, at, 'self'));
+    await appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'game',
+      content: '',
+      meta: { game: kind, result },
+      status: 'sent',
+      createdAt: at,
+    });
+    await askReply();
+  };
+
+  /** 位置 (M-I13): the + panel's map card — a place name is all it takes. */
+  const sendLocation = async (raw: string) => {
+    if (!conv) return;
+    const [name, address] = raw.split(/\||｜/).map((s) => s.trim());
+    await appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'location',
+      content: name.slice(0, 40),
+      meta: { name: name.slice(0, 40), ...(address ? { address: address.slice(0, 80) } : {}) },
+      status: 'sent',
+      createdAt: Date.now(),
+    });
+    await askReply();
+  };
+
+  /**
+   * 收藏 (M-I13): snapshot a message into the favorites store. A snapshot —
+   * not a reference — so the favorite survives the message (or the whole
+   * thread) being deleted, exactly like WeChat. Idempotent by id.
+   */
+  const favoriteMsg = async (m: MessageVM) => {
+    setMenu(null);
+    const senderName =
+      m.senderId === 'self'
+        ? '我'
+        : (senderFor(m.senderId)?.remark ?? contactById(m.senderId)?.name ?? '');
+    try {
+      await repo.putFavorite({
+        id: `fav_${m.convId}_${m.id}`,
+        msgId: m.id,
+        convId: m.convId,
+        senderId: m.senderId,
+        senderName,
+        convTitle: conv?.title ?? '',
+        type: m.type,
+        content: m.content,
+        ...(m.meta ? { meta: { ...m.meta } } : {}),
+        createdAt: m.createdAt,
+        favedAt: Date.now(),
+      });
+      showToast('已收藏');
+    } catch (e) {
+      logError('chat.favorite', e);
+      showToast('收藏失败');
+    }
+  };
+
+  /**
+   * 发表情 (M-I15): a custom sticker from「我的表情」sends immediately as a
+   * sticker message. Then the 斗图 gate rolls — seeded on the persisted row id
+   * (constitution #4) — and on a hit she answers with a sticker of her own,
+   * zero LLM cost, after a human "finding the right one" delay. A miss falls
+   * through to the ordinary reply path, so a sticker still gets answered in
+   * words. Her sticker choice prefers ones she has "collected" from you
+   * (sticker-taste), which is what closes the loop of the whole feature.
+   */
+  const sendSticker = async (ref: string) => {
+    if (!conv) return;
+    const saved = await appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'sticker',
+      content: ref,
+      status: 'sent',
+      createdAt: Date.now(),
+    });
+    // Taste ledger: only SENT stickers are collectible. Fire-and-forget.
+    void recordUserSticker(ref).catch(() => {});
+
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+
+    if (conv.type === 'single' && conv.peerId) {
+      const peer = contactById(conv.peerId);
+      const persona = personaFor(conv.peerId);
+      if (!peer || !persona) return;
+      const tail = useAppStore.getState().messagesFor(convId);
+      const streak = stickerStreak(tail.map((m) => m.type));
+      const pool = await agentStickerPool(conv.peerId).catch(() => [] as string[]);
+      // 表情使用率 (M-I18) rides in from the persona: 高冷的人设 barely joins a
+      // sticker war, 话痨爱斗图的 almost always does.
+      const reply = battleReply(
+        { seed: `${convId}:${saved.id}`, streak, rate: persona.stickerRate },
+        pool,
+        ref,
+      );
+      if (reply) {
+        // A wordless round: the sticker IS the reply. Deliberately NOT routed
+        // through the engine — no prompt, no tokens, no typing indicator; just
+        // the beat of someone scrolling for the right card.
+        //
+        // The BEAT rides scheduled_actions (铁律 5), not a setTimeout. This
+        // produces a real message, so a bare timer was a second time-evolution
+        // path with the usual consequence: back out of the chat inside those
+        // 0.8–2.5s and the reply evaporated, while `stickerStreak` had already
+        // counted the round. The decision above is seeded and complete, so the
+        // queued row carries the finished move and can land whenever the queue
+        // next drains. `sticker_reply` is a FAST_KIND — the beat is the point.
+        const fireAt = Date.now() + reply.delayMs;
+        await enqueue({
+          kind: 'sticker_reply',
+          fireAt,
+          payload: { convId, contactId: peer.id, content: reply.content, at: fireAt },
+          now: Date.now(),
+          id: `stkbattle_${convId}_${saved.id}`,
+        });
+        return;
+      }
+      await replyToLatest(convId, peer, persona, globalTier, hooks);
+      return;
+    }
+    if (conv.type === 'group') {
+      const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
+        const c = contactById(id);
+        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
+      });
+      await replyToLatestInGroup(conv, members, globalTier, hooks, contactById);
+    }
   };
 
   /**
@@ -231,9 +758,34 @@ export function ChatPage() {
         senderId: 'self',
         type: 'image',
         content: `idb:${item.id}`,
+        // The library tags travel with the message so the projection layer has
+        // SOMETHING to say about the photo even when vision is off or the
+        // model cannot see. `meta.tags` had a rendering branch since M-E1 and
+        // no writer at all, which is why every picture read as "[发了一张图片]".
+        meta: { tags: item.tags },
         status: 'sent',
         createdAt: Date.now(),
       });
+    }
+
+    // …and then actually ask for a reply. Until M-H0 this function stopped at
+    // the line above, so **sending a photo never started a generation** — she
+    // simply never answered a picture. One reply for the whole batch, after
+    // every file is persisted, so sending three photos is one turn not three.
+    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
+    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
+    if (conv.type === 'group') {
+      const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
+        const c = contactById(id);
+        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
+      });
+      await replyToLatestInGroup(conv, members, globalTier, hooks, contactById);
+      return;
+    }
+    const peer = conv.peerId ? contactById(conv.peerId) : undefined;
+    const persona = conv.peerId ? personaFor(conv.peerId) : undefined;
+    if (peer && persona) {
+      await replyToLatest(convId, peer, persona, globalTier, hooks);
     }
   };
 
@@ -255,7 +807,11 @@ export function ChatPage() {
     return { imageRefs: refs, imageIndexByMsgId: byId };
   }, [rows]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  const onImageTap = (msg: MessageVM) => {
+  const onImageTap = (msg: MessageVM, el: HTMLElement | null) => {
+    // Hand the tapped bubble's rect to the viewer so the photo grows out of it
+    // (M-I8, lib/flip.ts). Captured here, at the tap, because the thread keeps
+    // scrolling between this and the viewer's first layout.
+    captureFlipSource(FLIP_KEYS.imageViewer, el);
     setViewerIndex(imageIndexByMsgId.get(msg.id) ?? 0);
   };
 
@@ -279,7 +835,22 @@ export function ChatPage() {
     }
   };
 
-  if (!conv) {
+  // A hidden conversation renders EXACTLY like a missing one (M-I18).
+  //
+  // Hidden AI↔AI DMs were filtered everywhere they could be listed — the chat
+  // list, search, favorites, notifications, the widget — but never at the one
+  // surface that renders a thread from a raw id in the URL. `/chat/dm_a_b` is
+  // reachable: the deep-link allowlist passes `^/chat/[^/]+$` by design (it is
+  // a pure parser with no store access), so any app on the device firing
+  // `aiwx://chat/dm_ai_ada_ai_lin` — or the user simply typing the hash route —
+  // used to render the entire private thread between two agents.
+  //
+  // Guarding HERE and not in the parser is deliberate: this is the choke point
+  // every entry path funnels through (deep link, widget tap, notification tap,
+  // manual URL, an anchored search jump), so one check covers all of them.
+  // Saying "会话不存在" rather than "不可查看" matters too — acknowledging that
+  // the thread exists is itself the tell.
+  if (!conv || conv.isHidden) {
     return (
       <div className="chat-page">
         <div className="chat-page__missing">会话不存在</div>
@@ -290,19 +861,98 @@ export function ChatPage() {
   const isGroup = conv.type === 'group';
   const peerContact = conv.peerId ? contactById(conv.peerId) : undefined;
 
+  /**
+   * The long-press capsule's contents for one message.
+   *
+   * A list rather than conditional JSX since I18: the menu itself is now
+   * <LongPressMenu/> (shared with the chat list), so what stays here is only
+   * WHICH actions this message affords — which is the part that is genuinely
+   * message-specific. Closing is the menu's job; these handlers no longer have
+   * to remember to do it.
+   */
+  const msgMenuItems = (m: MessageVM): LongPressMenuItem[] => {
+    const items: LongPressMenuItem[] = [];
+    const isText = m.type === 'text' && Boolean(m.content);
+    if (isText) items.push({ label: '复制', onSelect: () => copyText(m) });
+    if (canRecall(m, Date.now())) items.push({ label: '撤回', onSelect: () => void recallOwn(m) });
+    if (isText && !m.isRecalled) {
+      items.push({
+        label: '引用',
+        onSelect: () => {
+          const who =
+            m.senderId === 'self'
+              ? '我'
+              : (contactById(m.senderId)?.remark ?? contactById(m.senderId)?.name ?? '');
+          setQuote({ msgId: m.id, text: `${who}: ${(m.content ?? '').slice(0, 40)}` });
+        },
+      });
+    }
+    // Only on the AI's own last turn: regenerating anything else would rewrite
+    // history rather than correct the newest line.
+    if (
+      m.senderId !== 'self' &&
+      !isGroup &&
+      !m.isRecalled &&
+      messages.at(-1)?.senderId === m.senderId
+    ) {
+      items.push({
+        label: '重新生成',
+        onSelect: () => guard('chat.regenerate', () => regenerate()),
+      });
+      items.push({
+        label: '让她重说',
+        onSelect: () => {
+          void showPrompt({
+            title: '让她重说',
+            placeholder: '例：别这么客套 / 短一点',
+          }).then((steer) => {
+            if (steer?.trim()) guard('chat.steer', () => regenerate(steer.trim()));
+          });
+        },
+      });
+    }
+    if (
+      ['text', 'image', 'sticker', 'location', 'file', 'link', 'contact_card'].includes(m.type) &&
+      !m.isRecalled
+    ) {
+      items.push({ label: '转发', onSelect: () => setForwarding(m) });
+    }
+    // 收藏 is offered for everything the FAVORITES PAGE can actually render.
+    // Real WeChat does not offer it on a red packet, a transfer or a call
+    // record either — they are ledger events, not content — so the narrower
+    // gate is also the more faithful one. Without it, favouriting a 红包 filed
+    // a row whose only renderer is the `default` branch, and the favorites
+    // page printed the internal enum: 「[rp]」 (M-I18). The long-press menu was
+    // deliberately widened in I18 to open for every type; the second renderer
+    // never grew to match, and nothing connected the two.
+    if (FAVORITABLE.includes(m.type) && !m.isRecalled) {
+      items.push({ label: '收藏', onSelect: () => void favoriteMsg(m) });
+    }
+    items.push({
+      label: '多选',
+      onSelect: () => {
+        setSelecting(true);
+        setSelected(new Set([m.id]));
+      },
+    });
+    items.push({
+      label: '删除',
+      onSelect: () => void deleteMessage(convId, m.id).catch(() => showToast('删除失败')),
+    });
+    return items;
+  };
+
   return (
     <div className="chat-page" onClick={() => composer.mode !== 'none' && composer.closeAll()}>
       <header className="navbar chat-nav">
         <div className="navbar__left">
           <button className="navbar__btn chat-nav__back" aria-label="返回" onClick={() => navigate(-1)}>
             <IconBack />
-            {totalUnread > 0 && (
-              <span className="chat-nav__unread">{totalUnread > 99 ? '99+' : totalUnread}</span>
-            )}
+            <Badge className="chat-nav__unread" count={totalUnread} />
           </button>
         </div>
         <div className="navbar__title chat-nav__title">
-          {isTyping ? '对方正在输入…' : conv.title}
+          {typingShown ? '对方正在输入…' : conv.title}
         </div>
         <div className="navbar__right">
           <button className="navbar__btn" aria-label="更多" onClick={() => navigate(`/chat/${convId}/info`)}>
@@ -333,40 +983,135 @@ export function ChatPage() {
         </div>
       )}
 
+      {/* A story playing in this conversation (M-G0). `storyRunning` shipped in
+          M-E5 describing itself as "used to gate the UI" and had zero callers,
+          so the only sign a story was running was grey narration in the
+          transcript — and a story that STOPPED looked exactly like one that had
+          simply gone quiet. */}
+      {story && (
+        <div className="group-announce hairline-bottom" onClick={(e) => e.stopPropagation()}>
+          <span className="group-announce__icon" aria-hidden>
+            {story.stalledAt ? '⏸' : '🎬'}
+          </span>
+          <span className="group-announce__text">
+            {story.stalledAt ? '剧情已暂停——多次生成失败，去剧情页可以继续' : '剧情进行中'}
+          </span>
+          <button
+            className="group-announce__action"
+            // Straight to THIS run's dashboard (M-I7) — the banner's job is
+            // "something is happening here", and the run page is where 继续/
+            // 回滚/存档 all live now, not the library list.
+            onClick={() => navigate(`/story/run/${story.id}`)}
+          >
+            {story.stalledAt ? '去处理' : '查看'}
+          </button>
+        </div>
+      )}
+
       <div
         ref={scrollRef}
+        data-thread-ready={threadReady ? '1' : '0'}
+        onScroll={(e) => {
+          if (e.currentTarget.scrollTop <= 8) void loadOlder();
+        }}
         className="chat-page__scroll"
         style={{ paddingBottom: composer.bottomInset }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="chat-page__messages">
+        <div className="chat-page__messages" ref={listRef}>
+          {/* Top-of-history affordance. Silent when there is nothing more:
+              WeChat shows no marker at the start of a thread either. */}
+          {loadingOlder && <div className="chat-page__older">正在加载更早的消息…</div>}
           {rows.map((row) =>
             row.kind === 'time' ? (
               <div className="msg-time" key={`t${row.ts}`}>
                 {chatTimestamp(row.ts, NOW)}
               </div>
             ) : (
-              <MessageBubble
+              <div
                 key={row.msg.id}
-                msg={row.msg}
-                sender={contactById(row.msg.senderId)}
-                isSelf={row.msg.senderId === 'self'}
-                showNickname={isGroup}
-                onMoneyTap={onMoneyTap}
-                onImageTap={onImageTap}
-                onLongPress={(m, x, y) => {
-                  // Only open when there is at least one action — an empty
-                  // capsule reads as breakage.
-                  const hasCopy = m.type === 'text' && Boolean(m.content);
-                  const canRegen =
-                    m.senderId !== 'self' && !isGroup && messages.at(-1)?.id === m.id;
-                  if (hasCopy || canRecall(m, Date.now()) || canRegen) setMenu({ msg: m, x, y });
-                }}
-                onReEdit={(m) => setDraft(m.content ?? '')}
-              />
+                data-msg-id={row.msg.id}
+                className={
+                  [selecting && 'msg-selectable', flashId === row.msg.id && 'msg-anchor-flash']
+                    .filter(Boolean)
+                    .join(' ') || undefined
+                }
+                onAnimationEnd={
+                  flashId === row.msg.id
+                    ? // Child animations (bubble entrances) bubble up too — only
+                      // the flash itself may clear the flag.
+                      (e) => e.animationName === 'msg-anchor-flash' && setFlashId(null)
+                    : undefined
+                }
+                onClickCapture={
+                  selecting
+                    ? (e) => {
+                        // Selection swallows every inner tap — a checkbox mode
+                        // that still opens red packets is a trap.
+                        e.stopPropagation();
+                        if (row.msg.type !== 'system' && !row.msg.isRecalled)
+                          toggleSelect(row.msg.id);
+                      }
+                    : undefined
+                }
+              >
+                {selecting && row.msg.type !== 'system' && !row.msg.isRecalled && (
+                  <span
+                    className={`msg-select-dot${selected.has(row.msg.id) ? ' msg-select-dot--on' : ''}`}
+                    aria-hidden
+                  />
+                )}
+                <MessageBubble
+                  msg={row.msg}
+                  sender={senderFor(row.msg.senderId)}
+                  isSelf={row.msg.senderId === 'self'}
+                  showNickname={isGroup}
+                  onMoneyTap={onMoneyTap}
+                  onImageTap={onImageTap}
+                  onMergedTap={(m) => navigate(`/merged/${convId}/${m.id}`)}
+                  onContactTap={(m) => {
+                    const cid = m.meta?.contactId as string | undefined;
+                    if (cid && contactById(cid)) navigate(`/contact/${cid}`);
+                    else showToast('该联系人已不存在');
+                  }}
+                  nameOf={(cid) => {
+                    const c = contactById(cid);
+                    return c ? (c.remark ?? c.name) : undefined;
+                  }}
+                  // 拉群提议 (M-I3): hand the roster to 发起群聊 pre-ticked. The
+                  // AI proposes; the group is only born when the USER taps 完成
+                  // on that screen — so this navigates, it never creates a room.
+                  onSuggestGroupTap={(_m, memberIds) => {
+                    const alive = memberIds.filter((id) => contactById(id));
+                    if (alive.length < 2) {
+                      showToast('提议里的好友已不存在');
+                      return;
+                    }
+                    navigate(suggestGroupHref(alive));
+                  }}
+                  onLongPress={(m, x, y) => {
+                    if (selecting) return;
+                    // Openable on anything that is still a message (M-I18).
+                    //
+                    // This gate predates I6/I13 and still asked the I5-era
+                    // question: is there COPY, RECALL or REGENERATE to offer?
+                    // Meanwhile the menu grew 收藏 / 转发 / 多选, which apply to
+                    // every type — so long-pressing a photo, a voice clip, a
+                    // location, a link or a card did nothing at all, and so did
+                    // long-pressing your own message three minutes after
+                    // sending it. "Press and nothing happens" reads as a broken
+                    // gesture, not a missing feature; it is also why six of the
+                    // favorites page's eight type filters could never fill up.
+                    if (m.type !== 'system' && !m.isRecalled) setMenu({ msg: m, x, y });
+                  }}
+                  onReEdit={(m) => setDraft(m.content ?? '')}
+                  onRetry={(m) => guard('chat.retry', () => retrySend(m))}
+                  readMark={!isGroup && row.msg.id === readMarkId}
+                />
+              </div>
             ),
           )}
-          {isTyping && !isGroup && (
+          {typingShown && !isGroup && (
             <div className="msg-row msg--enter" aria-label="对方正在输入">
               <div className="msg-row__avatar">
                 <Avatar
@@ -391,117 +1136,111 @@ export function ChatPage() {
       </div>
 
       {menu && (
-        <div
-          className="msg-menu"
-          role="menu"
-          style={{
-            left: Math.min(menu.x, window.innerWidth - 130),
-            top: Math.max(menu.y - 48, 52),
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {menu.msg.type === 'text' && menu.msg.content && (
-            <button role="menuitem" onClick={() => copyText(menu.msg)}>
-              复制
-            </button>
-          )}
-          {canRecall(menu.msg, Date.now()) && (
-            <button role="menuitem" onClick={() => void recallOwn(menu.msg)}>
-              撤回
-            </button>
-          )}
-          {menu.msg.type === 'text' && menu.msg.content && !menu.msg.isRecalled && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                const who = menu.msg.senderId === 'self' ? '我' : (contactById(menu.msg.senderId)?.remark ?? contactById(menu.msg.senderId)?.name ?? '');
-                setQuote({ msgId: menu.msg.id, text: `${who}: ${(menu.msg.content ?? '').slice(0, 40)}` });
-                setMenu(null);
-              }}
-            >
-              引用
-            </button>
-          )}
-          {/* Only on the AI's own last turn: regenerating anything else would
-              rewrite history rather than correct the newest line. */}
-          {menu.msg.senderId !== 'self' &&
-            !isGroup &&
-            !menu.msg.isRecalled &&
-            messages.at(-1)?.senderId === menu.msg.senderId && (
-              <>
-                <button role="menuitem" onClick={() => guard('chat.regenerate', () => regenerate())}>
-                  重新生成
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    const steer = window.prompt('想让她怎么改？（例：别这么客套 / 短一点）');
-                    setMenu(null);
-                    if (steer?.trim()) guard('chat.steer', () => regenerate(steer.trim()));
-                  }}
-                >
-                  让她重说
-                </button>
-              </>
-            )}
-          {['text', 'image', 'sticker'].includes(menu.msg.type) && !menu.msg.isRecalled && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                setForwarding(menu.msg);
-                setMenu(null);
-              }}
-            >
-              转发
-            </button>
-          )}
-          <button
-            role="menuitem"
-            onClick={() => {
-              const m = menu.msg;
-              setMenu(null);
-              void deleteMessage(convId, m.id).catch(() => showToast('删除失败'));
-            }}
-          >
-            删除
-          </button>
-        </div>
+        <LongPressMenu
+          at={{ x: menu.x, y: menu.y }}
+          label="消息操作"
+          onClose={() => setMenu(null)}
+          items={msgMenuItems(menu.msg)}
+        />
       )}
 
-      {forwarding && (
-        <div className="forward-mask" onClick={() => setForwarding(null)}>
-          <div className="forward-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="forward-panel__title">发送给</div>
-            {allConversations
-              .filter((c) => !c.isHidden && c.id !== convId)
-              .map((c) => (
-                <div
-                  key={c.id}
-                  className="settings__row settings__row--divided"
-                  onClick={() => {
-                    const m = forwarding;
-                    setForwarding(null);
+      {atPicker && conv.type === 'group' && (
+        <Sheet open onClose={() => setAtPicker(false)} title="提醒谁看">
+          {(conv.memberIds ?? [])
+            .map((id) => contactById(id))
+            .filter((c): c is NonNullable<typeof c> => Boolean(c))
+            .map((c) => (
+              <div
+                key={c.id}
+                className="settings__row settings__row--divided"
+                onClick={() => {
+                  const name = c.remark ?? c.name;
+                  // The '@' that summoned the picker is already in the draft.
+                  setDraft((d) => `${d}${name} `);
+                  setAtPicker(false);
+                  composer.inputRef.current?.focus();
+                }}
+              >
+                <span className="settings__label">{c.remark ?? c.name}</span>
+              </div>
+            ))}
+        </Sheet>
+      )}
+
+      {(forwarding || mergedForward) && (
+        <Sheet
+          open
+          onClose={() => {
+            setForwarding(null);
+            setMergedForward(null);
+          }}
+          title="发送给"
+        >
+          {allConversations
+            .filter((c) => !c.isHidden && c.id !== convId)
+            .map((c) => (
+              <div
+                key={c.id}
+                className="settings__row settings__row--divided"
+                onClick={() => {
+                  const m = forwarding;
+                  const merged = mergedForward;
+                  setForwarding(null);
+                  setMergedForward(null);
+                  if (merged) {
                     void appendMessage({
                       convId: c.id,
                       senderId: 'self',
-                      type: m.type,
-                      content: m.content,
-                      ...(m.meta ? { meta: { ...m.meta } } : {}),
+                      type: 'merged',
+                      content: merged.title,
+                      meta: { title: merged.title, items: merged.items },
                       status: 'sent',
                       createdAt: Date.now(),
-                    }).then(() => showToast(`已转发给 ${c.title}`));
-                  }}
-                >
-                  <span className="settings__label">{c.title}</span>
-                </div>
-              ))}
-          </div>
+                    }).then(() => {
+                      showToast(`已转发给 ${c.title}`);
+                      exitSelect();
+                    });
+                    return;
+                  }
+                  if (!m) return;
+                  void appendMessage({
+                    convId: c.id,
+                    senderId: 'self',
+                    type: m.type,
+                    content: m.content,
+                    ...(m.meta ? { meta: { ...m.meta } } : {}),
+                    status: 'sent',
+                    createdAt: Date.now(),
+                  }).then(() => showToast(`已转发给 ${c.title}`));
+                }}
+              >
+                <span className="settings__label">{c.title}</span>
+              </div>
+            ))}
+        </Sheet>
+      )}
+
+      {selecting && (
+        <div className="select-bar" onClick={(e) => e.stopPropagation()}>
+          <button
+            className="select-bar__action"
+            disabled={selected.size === 0}
+            onClick={beginMergedForward}
+          >
+            合并转发（{selected.size}）
+          </button>
+          <button className="select-bar__cancel" onClick={exitSelect}>
+            取消
+          </button>
         </div>
       )}
 
       <div
         className="composer"
-        style={{ paddingBottom: composer.mode === 'none' ? 'var(--safe-bottom)' : 0 }}
+        style={{
+          paddingBottom: composer.mode === 'none' ? 'var(--safe-bottom)' : 0,
+          ...(selecting ? { display: 'none' } : {}),
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {quote && (
@@ -522,7 +1261,16 @@ export function ChatPage() {
               className="composer__input"
               rows={1}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                // 群 @ 选择器 (M-I6): typing '@' in a group summons the member
+                // picker. Inserted as `@名字 ` — exactly what the director's
+                // findMentions matches, so a mention is a REAL summons.
+                if (isGroup && next.length > draft.length && next.endsWith('@')) {
+                  setAtPicker(true);
+                }
+                setDraft(next);
+              }}
               onFocus={composer.openKeyboard}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -532,15 +1280,13 @@ export function ChatPage() {
               }}
               placeholder=""
             />
-            <button className="composer__mic" aria-label="语音输入" onClick={() => showToast('语音输入暂未开放')}>
-              <IconMicSmall />
-            </button>
+            <VoiceInputButton tier={micTier} onText={(t) => setDraft((d) => (d ? d + t : t))} />
           </div>
           <button className="composer__icon" aria-label="表情" onClick={composer.toggleEmoji}>
             <IconEmoji />
           </button>
           {draft.trim() ? (
-            <button className="composer__send" onClick={() => void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`))}>
+            <button className="composer__send btn-morph-in" onClick={() => void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`))}>
               发送
             </button>
           ) : (
@@ -559,10 +1305,28 @@ export function ChatPage() {
             else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
             else if (key === 'call' && conv.type === 'single') navigate(`/call/${convId}`);
             else if (key === 'album') albumInputRef.current?.click();
+            else if (key === 'location') {
+              composer.closeAll();
+              void showPrompt({
+                title: '发送位置',
+                placeholder: '地名，如：星巴克(中山公园店)',
+              }).then((name) => {
+                if (name?.trim())
+                  void sendLocation(name.trim()).catch((err) => logError('chat.location', err));
+              });
+            } else if (key === 'fav') navigate('/favorites');
             else showToast('暂未开放');
           }}
           onEmoji={(e) => setDraft((d) => d + e)}
           onEmojiDelete={() => setDraft((d) => Array.from(d).slice(0, -1).join(''))}
+          onGame={(kind) => void sendGame(kind).catch((err) => logError('chat.game', err))}
+          stickers={customStickers}
+          onSticker={(ref) =>
+            void sendSticker(ref).catch((err) =>
+              showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+            )
+          }
+          onManageStickers={() => navigate('/settings/media')}
         />
         <input
           ref={albumInputRef}

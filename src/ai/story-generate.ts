@@ -1,22 +1,22 @@
 /**
  * "Write me a story about…" → a playable script (M-E5).
  *
- * The three-step chain from specs/story-gm.md: outline → structured JSON →
- * local validation with bounded self-repair. The third step is the one that
- * matters. A model asked for a story graph reliably produces JSON that reads
- * beautifully and does not run: an entry pointing at a node it renamed, edges
- * to beats it decided against, an ending nothing reaches. None of that is
- * visible until the user is three scenes in and the story quietly stops.
+ * The three-step chain from specs/story-gm.md — outline → structured JSON →
+ * local validation with bounded self-repair — now lives in `generate-chain`
+ * (M-H2), because M-H2 adds two more consumers (AI-written persona cards and
+ * AI-written群聊) and three copies of a self-repair loop is three places for
+ * the repair budget, the JSON extraction and the failure reporting to drift.
  *
- * So generation is not "ask and store". It is ask, CHECK, and hand the model
- * back its own specific failures — at most twice, because a model that cannot
- * produce a valid graph in three attempts will not produce one in ten, and the
- * honest outcome then is a clear error rather than a broken script.
+ * What stays here is what is specific to a SCRIPT: the two prompts, and the
+ * fact that a generated script gets a fresh unique id regardless of what the
+ * model named it — two scripts both calling themselves "story_1" would
+ * overwrite each other in a store keyed by id.
  */
 import type { LlmRouter, NsfwTier } from '../llm/router';
 import { validateScript, type Script, type ValidationIssue } from './story-script';
+import { runChain, extractJson, repairPrompt, MAX_REPAIRS } from './generate-chain';
 
-export const MAX_REPAIRS = 2;
+export { extractJson, repairPrompt, MAX_REPAIRS };
 
 const OUTLINE_SYSTEM = `你是编剧。根据用户的一句话需求，写一个**两三个角色**的短篇互动剧本大纲。
 要求：
@@ -73,39 +73,6 @@ export interface GenerateResult {
   error?: string;
 }
 
-/** Strip fences and any prose the model wrapped its JSON in. */
-export function extractJson(text: string): unknown {
-  const body = text
-    .replace(/^\s*```(?:json)?\s*/i, '')
-    .replace(/\s*```\s*$/i, '')
-    .trim();
-  try {
-    return JSON.parse(body);
-  } catch {
-    // Second chance: the outermost balanced braces. Models like to add a
-    // sentence of introduction no matter how firmly they are told not to.
-    const start = body.indexOf('{');
-    const end = body.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(body.slice(start, end + 1));
-    } catch {
-      return null;
-    }
-  }
-}
-
-/** Turn validation issues into a repair instruction the model can act on. */
-export function repairPrompt(issues: ValidationIssue[]): string {
-  const lines = issues.slice(0, 8).map((i) => `- ${i.message}`);
-  return [
-    '上面这份 JSON 没有通过本地校验，问题如下：',
-    ...lines,
-    '',
-    '请只修这些问题，保持其余内容不变，重新输出完整 JSON。不要解释。',
-  ].join('\n');
-}
-
 /**
  * Generate a script from one line of user intent.
  *
@@ -119,67 +86,29 @@ export async function generateScript(
   deps: GenerateDeps,
   now: number,
 ): Promise<GenerateResult> {
-  const attempts: ValidationIssue[][] = [];
-
-  let outline: string;
-  try {
-    outline = await deps.complete(
-      [
-        { role: 'system', content: OUTLINE_SYSTEM },
-        { role: 'user', content: premise.slice(0, 300) },
-      ],
-      { maxTokens: 900 },
-    );
-  } catch (e) {
-    return { ok: false, attempts, error: `写大纲失败：${errText(e)}` };
-  }
-  if (!outline.trim()) return { ok: false, attempts, error: '模型没有返回大纲' };
-
-  const history: Array<{ role: 'system' | 'user'; content: string }> = [
-    { role: 'system', content: JSON_SYSTEM },
-    { role: 'user', content: outline },
-  ];
-
-  for (let attempt = 0; attempt <= MAX_REPAIRS; attempt++) {
-    let raw: string;
-    try {
-      raw = await deps.complete(history, { json: true, maxTokens: 3000 });
-    } catch (e) {
-      return { ok: false, attempts, error: `生成剧本失败：${errText(e)}` };
-    }
-
-    const parsed = extractJson(raw);
-    if (parsed === null) {
-      const issue: ValidationIssue = { code: 'schema', message: '返回的不是合法 JSON' };
-      attempts.push([issue]);
-      history.push({ role: 'user', content: repairPrompt([issue]) });
-      continue;
-    }
-
-    // Give the script a stable, unique id regardless of what the model chose:
-    // two generated scripts both calling themselves "story_1" would overwrite
-    // each other in a store keyed by id.
-    const withId =
-      typeof parsed === 'object' && parsed !== null
-        ? { ...(parsed as Record<string, unknown>), scriptId: `gen_${now}` }
-        : parsed;
-
-    const result = validateScript(withId);
-    if (result.ok && result.script) return { ok: true, script: result.script, attempts };
-
-    attempts.push(result.issues);
-    history.push({ role: 'user', content: raw.slice(0, 6000) });
-    history.push({ role: 'user', content: repairPrompt(result.issues) });
-  }
-
+  const out = await runChain<Script>(
+    premise,
+    {
+      label: '剧本',
+      outlineSystem: OUTLINE_SYSTEM,
+      jsonSystem: JSON_SYSTEM,
+      // A stable, unique id regardless of what the model chose.
+      prepare: (parsed) =>
+        typeof parsed === 'object' && parsed !== null
+          ? { ...(parsed as Record<string, unknown>), scriptId: `gen_${now}` }
+          : parsed,
+      validate: (raw) => {
+        const r = validateScript(raw);
+        return { ok: r.ok, value: r.script, issues: r.issues };
+      },
+    },
+    deps,
+  );
   return {
-    ok: false,
-    attempts,
-    // Named plainly: a story that cannot run is not a story, and pretending
-    // otherwise strands the user mid-play instead of here.
-    error: `模型连续 ${MAX_REPAIRS + 1} 次没能生成可运行的剧本。最后一次的问题：${
-      attempts.at(-1)?.map((i) => i.message).join('；') ?? '未知'
-    }`,
+    ok: out.ok,
+    script: out.value,
+    attempts: out.attempts as ValidationIssue[][],
+    error: out.error,
   };
 }
 
@@ -204,8 +133,4 @@ export function routerDeps(router: LlmRouter, tier: NsfwTier, convKey: string): 
         )
       ).text,
   };
-}
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }

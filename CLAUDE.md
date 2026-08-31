@@ -25,6 +25,9 @@
    只能经由 `scheduled_actions` 表 + `simulate()` 纯函数。禁止出现第二套时间推进代码。
 6. **NSFW 全开档上下文禁止流向国内官方端点**（DeepSeek/MiniMax）——只能走宽松通道
    Provider。这是代码层硬约束，不是 prompt 层建议。详见 `specs/nsfw.md`。
+7. **提交署名只用仓库主人身份**（`qingxuelin97-sketch <mesakurax@gmail.com>`，本地
+   git config 已固定）。提交信息**禁止**出现 `Co-Authored-By: Claude*`、`Claude-Session:`
+   等任何 AI 署名尾注——用户已明确要求 Claude 永久移出贡献者列表，此要求覆盖默认行为。
 
 ## 1. 目录与模块边界
 
@@ -46,6 +49,9 @@ src/
   lib/          通用纯函数：money(钱+种子随机) / wallet(红包/账本规则) / time(时间戳)
                 / sound(提示音) / voice(TTS 缓存+播放) / keystore(密钥加密存储)
                 / notify(预调度通知+内容分级) / backup(.aiwx 导出恢复) / search(全局搜索)
+  native/       原生桥 JS 侧（M-I10）：bridge(AiwxNative 插件包装，超时真拒绝)
+                / deep-link(aiwx:// allowlist) / reply-drain(通知回复队列→正常发送路径)
+                / background-notify(后台消息→通知/气泡/来电) / widget-sync / battery
   data/         UI 视图模型类型 + 种子数据（占位色豁免颜色检查）
   store/        zustand 状态（由 Repo 水合 + 写穿，选择器签名稳定）
   components/   通用 UI：Avatar / NavBar / SubNav / icons(手写 SVG，零 PNG)
@@ -53,8 +59,10 @@ src/
   app/          导航骨架 TabScaffold + ErrorBoundary
 ```
 
-**依赖方向**：`features → components/store/lib/ai/llm/data`，`ai → llm/lib`，
-`llm → lib`。禁止反向依赖（如 lib 不得 import features）。
+**依赖方向**：`features → components/store/lib/ai/llm/native/data`，`native → store/ai/llm/lib/db/data`，
+`ai → llm/lib`，`llm → lib`。禁止反向依赖（如 lib 不得 import features）。
+`android/` 自 M-I10 起入库（手写 Kotlin 原生层）；CI 只 `cap sync` 不 `cap add`，
+再生成策略见 `docs/android-regen.md`。
 
 ## 2. 关键接口契约（改动需同步 specs 并慎重）
 
@@ -69,8 +77,25 @@ src/
   记忆 → 场景。改顺序=改行为，需评审。
 - **`scheduledActions` 表**：见铁律 5。新增时间驱动行为 = 在 `SCHEDULED_ACTION_KINDS`
   （`src/db/schema.ts`，**唯一那份列表**，`ActionKind` 由它派生）加一项 + `registerHandler`，
-  **不要**新建计时器。目前 7 种在用：heartbeat / rp_grab / transfer_accept / moment_post /
-  moment_like / moment_comment / group_msg（recall、story_tick 已预留）。
+  **不要**新建计时器。M-I 轮结束时共 **21 种**：heartbeat / rp_grab / transfer_accept /
+  moment_post / moment_like / moment_comment / group_msg / agent_dm / recall /
+  mem_extract / story_tick / ai_money / ai_call / joint_plan / agent_forward /
+  group_event / agent_invite / moment_repost / auto_backup / sticker_reply /
+  transfer_return。自续链的那几种用
+  `registerChainedHandler`（先续链后干活，失败只暂停不终结），并且必须进 wiring 测试的
+  SELF_CHAINING 清单。
+- **一次性动作问「有没有过」，自续链问「是不是干完了」**（M-I18）：`enqueue` 按 id upsert，
+  所以 nudge 那类「一辈子只发一次」的必须 `actionExists(id)`（任何状态都算数）。但自续链
+  用同一个判据就会把**取消**当成终结——`auto_backup` 的 `setAutoBackupFreq` 先取消再重排，
+  同周期算出来的 id 正是刚取消的那个，于是在设置页把「每天」再点一次就让自动备份永久静默
+  停止。自续链的守卫用 `actionStatus(id) === 'done'`。
+- **`SETTINGS_KEY_CASCADE` 台账**（`src/db/repo.ts`，M-I18）：settings 是个 KV 大杂烩，
+  里面既有全局配置也有 per-contact / per-conv / per-pair 的状态。**每个键（或冒号前缀）
+  必须登记** scope 与「删联系人时怎么办」，`deleteContactCascade` **读这份台账**行事——
+  所以「登记一个前缀」本身就是修复。源码扫描守卫会断言扫到的键集合与台账相等，
+  新增键不表态即转红（此前 `agent_state:` / `goal_told:` / `giftAt:` 就是这样漏掉的）。
+  值是 id 键控 map 的行（`rel_edges` / `groupNick:`）走**逐条手术**，不能删整行——
+  那一行里还有活人的数据。
 - **前台生命周期**（`src/app/useForegroundLifecycle.ts`）：回前台 = 回填 → 撤销并重排通知。
   没有它，`runBackfill` 只在冷启动跑一次——而手机上「切后台→回前台」才是常态。
 - **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
@@ -129,6 +154,29 @@ src/
 - **CryptoKey 经 JSON 序列化变 `{}`**：备份导出 settings 全表就会把主密钥导成空壳，
   恢复写回后 keystore 永久损坏。设备本地密钥行要行级排除（导出滤掉、恢复保本机），
   读取时用 `instanceof CryptoKey` 校验而不是 truthiness——空壳是 truthy 的。
+- **golden 只能由 CI 生成，本地重基线一律作废**：截图 job 自 M-I11 起**阻塞**。本容器与 CI
+  有**两处**渲染差异，任一处都会移动字形像素：① CJK 字体（本容器默认没有，装
+  `fonts-noto-cjk` 可对齐）；② **Chromium 构建**——`playwright.config.ts` 本地走
+  `PLAYWRIGHT_BROWSERS_PATH` 提供的那个 build，CI 走 `playwright install` 钉住的另一个
+  build，两者抗锯齿不同。实测：只对齐字体后仍有 **30/52 张红**。所以 UI 有意变更后不要
+  在本地 `test:screenshot:update` 提交，改为让 CI 生成并回推基线。**`regen-goldens`**
+  有两个入口：
+  ① 手动 workflow_dispatch；
+  ② **在这次 push 的 tip 提交信息里写 `[regen-goldens]`**（M-I18 加的，因为 dispatch 需要
+  `actions: write`，而自动化并不总是持有——那一轮它中途变成 403，基线过期却无法重铸）。
+  ②**只看 tip**：条件读的是 `github.event.head_commit.message`，标记在中间那个提交上不算数
+  （我自己先踩了一次：标记提交后面又叠了两个，regen 直接 skip）。
+  它会连跑两次自检，不可复现的基线不许进仓。**回推的那次提交不会触发任何工作流**——
+  GitHub 对 `GITHUB_TOKEN` 发起的 push 一律不派发（这才是不成环的真原因；「回推的提交
+  不带标记」只是第二道保险）。所以刚铸的基线**没有被截图门禁复核过**，唯一的验证就是上面
+  那两遍自检；想让门禁真的跑一遍，在它上面再推一个普通提交即可（我先把这段写反了，
+  以为回推那次会走门禁复核）。本地 `pnpm test:screenshot` 只当快速冒烟，不是门禁。
+- **动画留下的残余 transform 会劫持 `position: fixed`**：`animation-fill-mode: both` 会把
+  终帧永久保留，哪怕终帧是 `translateY(0)`——计算值 `matrix(1,0,0,1,0,0)` 仍然让该元素成为
+  fixed 子孙的**包含块**。M-I8 的 `.stagger-in` 因此让每张错峰进场过的朋友圈卡片变成"视口"，
+  从卡片里打开的全屏图片查看器渲染成卡内 390×276 小窗。现象离病因极远（去查了查看器的 CSS、
+  z-index、portal，全都是对的）。规则：淡入类用 `backwards`；WAAPI（`springTo` 默认
+  `fill: both`）收尾先把值落成 inline style 再 `cancel()`。详见 `specs/motion.md`。
 - **不要为"截图稳定"冻结业务时钟**：组件里硬编码 NOW 常量意味着真机上所有相对时间戳
   永远错（diffDays 为负渲染成「星期六」）。确定性归测试侧：Playwright
   `page.clock.setFixedTime(种子纪元)`，业务代码用真实时钟（`useNow()` 分钟级 tick）。
@@ -136,14 +184,24 @@ src/
 ## 4. 每个 feature 一份 spec
 
 改动某 feature 前，读 `specs/<feature>.md`（验收清单 + 设计要点 + 已知坑）。新增 feature
-先写 spec 再写码。现有：design-tokens / data-schema / llm-provider / composer / nsfw /
-chat-engine / group-director / money / moments / backfill / build-distribution /
-story-gm（V3 预埋设计）。
+先写 spec 再写码。**这份索引就是清单本身**——`ls specs/` 与它对不上，说明有人写了 spec
+没登记（或写了模块没写 spec），两种都要补齐。现有 27 份：
+
+| 域 | spec |
+|---|---|
+| 地基 | design-tokens · data-schema · components · motion |
+| 模型接入 | llm-provider · streaming（Web-only SSE 渐进渲染）· nsfw（铁律 6）· asr |
+| 会话 | chat-engine · composer · group-director · msg-types · search |
+| 智能体 | agents · relationship · worldbook · goals-status · year-report · backfill |
+| 功能面 | money · moments · call |
+| 剧情 | story-gm（V3） |
+| 工程 | observability · backup（.aiwx 导出恢复，M-I18 起自成一块）· build-distribution · native-android（M-I10 重原生） |
 
 ## 5. 工程护栏
 
-- 每次提交前跑：`pnpm typecheck && pnpm lint && pnpm test`（纯函数单测，零真 API，
-  LLM 用录制 fixture）。UI 改动跑 `pnpm test:screenshot`（golden 回归）。
+- 每次提交前跑：`pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm check:size`
+  （纯函数单测，零真 API，LLM 用录制 fixture）。UI 有意变更后**在 CI 上**跑 `regen-goldens`
+  重基线——本地生成的基线与 CI 的 Chromium 构建不一致，提交即让阻塞门禁全红。
 - 截图 golden 是 **AI 自检的前置滤网**；最终 1:1 判定权归**用户真机截图叠图**。
 - CI 绿灯即打 tag（回滚锚点）。CI 与 App 必须同 CJK 字体，否则像素对不上。
 
@@ -154,7 +212,8 @@ story-gm（V3 预埋设计）。
 | `pnpm dev` | Vite 开发服务器（热重载） |
 | `pnpm build` | 类型检查 + 生产构建到 dist/ |
 | `pnpm test` | vitest 纯函数单测 |
-| `pnpm test:screenshot` | Playwright golden 截图回归 |
-| `pnpm test:screenshot:update` | 更新截图基线（UI 有意变更后） |
+| `pnpm test:screenshot` | Playwright golden 截图回归（**本地必然有差异**，见陷阱：基线由 CI 生成；本地只当冒烟） |
+| `pnpm test:screenshot:update` | 只在本地实验时用；**产出不许提交**，重基线走 CI 的 `regen-goldens`（dispatch 或提交信息带 `[regen-goldens]`） |
+| `pnpm check:size` | 启动包 gzip 体积棘轮（CI 同步执行） |
 | `pnpm lint` | eslint + 硬编码颜色检查 |
 | `pnpm cap:sync` | 同步 Web 产物到原生工程 |

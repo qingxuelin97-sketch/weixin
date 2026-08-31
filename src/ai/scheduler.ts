@@ -7,7 +7,7 @@
  * anywhere in the app: one queue means offline backfill (M4) is the same code
  * path as live execution, just with a wider time window.
  */
-import { idbGet, idbGetAll, idbPut, idbDelete, idbRangeByIndex } from '../db/idb';
+import { idbGet, idbGetAllByIndex, idbPut, idbDelete, idbRangeByIndex } from '../db/idb';
 import type { ScheduledActionKind } from '../db/schema';
 
 /**
@@ -79,10 +79,15 @@ export const ACTION_RETENTION_MS = 14 * 24 * 3_600_000;
  */
 export async function gcActions(now: number): Promise<number> {
   const cutoff = now - ACTION_RETENTION_MS;
-  const all = await idbGetAll<ScheduledAction>('scheduled_actions');
+  // Only settled rows are collectable, and `byStatus` can name them directly
+  // — this used to `getAll()` a store that grows for the life of the install
+  // and then discard the pending majority in JS.
+  const settled = [
+    ...(await idbGetAllByIndex<ScheduledAction>('scheduled_actions', 'byStatus', 'done')),
+    ...(await idbGetAllByIndex<ScheduledAction>('scheduled_actions', 'byStatus', 'cancelled')),
+  ];
   let n = 0;
-  for (const a of all) {
-    if (a.status === 'pending') continue;
+  for (const a of settled) {
     // `fireAt` can be far in the past for backfilled rows; createdAt is when
     // this device actually learned about it, which is the honest age.
     if (Math.max(a.createdAt, a.fireAt) > cutoff) continue;
@@ -90,6 +95,29 @@ export async function gcActions(now: number): Promise<number> {
     n++;
   }
   return n;
+}
+
+/**
+ * Every action still waiting to run.
+ *
+ * The one place that reads the pending set, so the `byStatus` index (declared
+ * in v1, unread until M-G1) is honoured everywhere. Four separate helpers used
+ * to `getAll()` the whole store and filter in JS; on a return to the
+ * foreground the app ran two of them PER CONVERSATION, so a 23-conversation
+ * install did 46 full-table scans plus a JSON.parse per row per scan, every
+ * time you switched back to the app.
+ */
+export async function pendingActions(): Promise<ScheduledAction[]> {
+  return idbGetAllByIndex<ScheduledAction>('scheduled_actions', 'byStatus', 'pending');
+}
+
+/** Parse a pending row's payload; `null` when it is corrupt. */
+export function payloadOf(a: ScheduledAction): Record<string, unknown> | null {
+  try {
+    return JSON.parse(a.payloadJson) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 export async function markDone(a: ScheduledAction): Promise<void> {
@@ -105,10 +133,45 @@ export async function actionExists(id: string): Promise<boolean> {
   return (await idbGet<ScheduledAction>('scheduled_actions', id)) != null;
 }
 
+/**
+ * The status of a row by id, or `null` when no such row was ever queued.
+ *
+ * `actionExists` answers "was this id ever used", which is the RIGHT question
+ * for a once-ever action (a nudge must not fire twice, whatever happened to the
+ * first row). It is the WRONG question for a self-chaining action: a `cancelled`
+ * row also "exists", so a guard written on existence turns a cancellation into a
+ * permanent stop. That is exactly how auto-backup died — `setAutoBackupFreq`
+ * cancels the pending row and immediately re-schedules, and within the same
+ * period the successor's deterministic id is the id it just cancelled, so the
+ * guard skipped it and the chain never restarted (tapping 每天 twice was enough).
+ * Chain guards must ask about the STATE, not the existence.
+ */
+export async function actionStatus(id: string): Promise<ScheduledAction['status'] | null> {
+  return (await idbGet<ScheduledAction>('scheduled_actions', id))?.status ?? null;
+}
+
 /** Is ANY action of this kind still pending? Used for roster-wide schedules (agent DMs). */
 export async function hasPendingOfKind(kind: ActionKind): Promise<boolean> {
-  const all = await idbGetAll<ScheduledAction>('scheduled_actions');
-  return all.some((a) => a.status === 'pending' && a.kind === kind);
+  return (await pendingActions()).some((a) => a.kind === kind);
+}
+
+/**
+ * The same question against an already-loaded pending set.
+ *
+ * Callers that ask about many contacts in a row (the foreground pass asks
+ * twice per conversation) load the set once and use these instead of paying
+ * for a query each time.
+ */
+export function isPendingForIn(
+  pending: readonly ScheduledAction[],
+  kind: ActionKind,
+  contactId: string,
+): boolean {
+  return pending.some((a) => {
+    if (a.kind !== kind) return false;
+    const p = payloadOf(a);
+    return p != null && p.contactId === contactId && p.nudge !== true;
+  });
 }
 
 /**
@@ -122,16 +185,7 @@ export async function hasPendingOfKind(kind: ActionKind): Promise<boolean> {
  * count either: a pending nudge must not suppress the standing heartbeat chain.
  */
 export async function hasPendingFor(kind: ActionKind, contactId: string): Promise<boolean> {
-  const all = await idbGetAll<ScheduledAction>('scheduled_actions');
-  return all.some((a) => {
-    if (a.status !== 'pending' || a.kind !== kind) return false;
-    try {
-      const p = JSON.parse(a.payloadJson) as Record<string, unknown>;
-      return p.contactId === contactId && p.nudge !== true;
-    } catch {
-      return false;
-    }
-  });
+  return isPendingForIn(await pendingActions(), kind, contactId);
 }
 
 /**
@@ -147,16 +201,10 @@ export async function hasPendingFor(kind: ActionKind, contactId: string): Promis
 export async function cancelPendingWhere(
   match: (payload: Record<string, unknown>, action: ScheduledAction) => boolean,
 ): Promise<number> {
-  const all = await idbGetAll<ScheduledAction>('scheduled_actions');
   let n = 0;
-  for (const a of all) {
-    if (a.status !== 'pending') continue;
-    let payload: Record<string, unknown>;
-    try {
-      payload = JSON.parse(a.payloadJson) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
+  for (const a of await pendingActions()) {
+    const payload = payloadOf(a);
+    if (payload == null) continue;
     if (!match(payload, a)) continue;
     await idbPut('scheduled_actions', { ...a, status: 'cancelled' });
     n++;
@@ -236,7 +284,14 @@ let running = false;
  * drain before any LLM-bound kind: a backfill batch of 8 slow generations in
  * front would otherwise stall a grab by minutes.
  */
-const FAST_KINDS: ReadonlySet<ActionKind> = new Set(['rp_grab', 'transfer_accept']);
+const FAST_KINDS: ReadonlySet<ActionKind> = new Set([
+  'rp_grab',
+  'transfer_accept',
+  // 斗图 (M-I18): a sticker comeback is a 0.8–2.5s beat in a live exchange. It
+  // costs no LLM call, so letting it queue behind a backfill batch would turn
+  // the one instant reaction in the app into a two-minute delayed punchline.
+  'sticker_reply',
+]);
 
 /**
  * Execute every past-due action once. Re-entrant-safe: a slow handler can't cause

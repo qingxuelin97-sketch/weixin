@@ -11,6 +11,7 @@ import {
   LlmError,
 } from './types';
 import { httpJson } from './http';
+import { attachImages, modelSupportsVision } from './vision';
 import { parseBubbles } from './bubbles';
 import { recordLlmExchange } from '../lib/llm-recorder';
 
@@ -87,9 +88,18 @@ export class OpenAiCompatibleProvider implements ChatProvider {
    * and sends a plain trailing assistant message, which every provider accepts.
    */
   protected buildBody(opts: GenerateOptions): Record<string, unknown> {
+    const plain = opts.messages.map((m) => ({ role: m.role, content: m.content }));
+    // Images ride the SAME message list under the SAME route (constitution
+    // rule #6 covers photographs too), and are dropped silently when the model
+    // cannot see — a text-only model handed image parts returns a hard 400 on
+    // every turn, which would read as "she stopped replying".
+    const withImages =
+      opts.images?.length && modelSupportsVision(opts.model)
+        ? attachImages(plain, opts.images)
+        : plain;
     const body: Record<string, unknown> = {
       model: opts.model,
-      messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: withImages,
       temperature: opts.temperature ?? 0.8,
     };
     if (opts.maxTokens) body.max_tokens = opts.maxTokens;
@@ -216,6 +226,180 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     const result = await this.complete({ ...opts, json: opts.json ?? false });
     const bubbles = parseBubbles(result.text);
     for (const b of bubbles) yield b;
+  }
+
+  /**
+   * Web-only true SSE (M-I5): can this provider stream RIGHT NOW?
+   *
+   * Native says no: CapacitorHttp buffers whole responses and cannot be read
+   * incrementally (and, per CLAUDE.md, cannot even be aborted from JS) — on a
+   * device the one-shot path IS the correct transport. Browsers stream.
+   */
+  canStream(): boolean {
+    const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    if (cap?.isNativePlatform?.()) return false;
+    return typeof fetch === 'function' && typeof ReadableStream === 'function';
+  }
+
+  /**
+   * Progressive bubble generation over SSE.
+   *
+   * Yields per COMPLETE bubble (an NDJSON line), never per token: every
+   * downstream consumer — the anti-AI scrub, typing pacing, voice prefetch —
+   * reasons about whole bubbles, and half a sentence on screen is worse than
+   * a short wait. Reasoning models' <think> spans are dropped in-stream.
+   *
+   * A failure BEFORE the first yield throws its own kind, and the router falls
+   * back to the one-shot ladder. A break AFTER output is reported as
+   * `LlmError('truncated')`: the bubbles already yielded stand (what is on
+   * screen cannot be recalled) but the turn did NOT finish, and the caller has
+   * to know the difference — swallowing it is exactly how a reply ends in
+   * mid-air with no explanation, which is what M-I5 shipped and users saw.
+   * Abnormal `finish_reason`s (length / content_filter) count as the same thing.
+   */
+  async *generateStream(opts: GenerateOptions): AsyncIterable<Bubble> {
+    const key = await this.cfg.getKey();
+    if (!key) throw new LlmError('auth', `no API key for provider ${this.id}`, 401, this.id);
+    const body = { ...this.buildBody(opts), stream: true };
+    const res = await fetch(this.endpoint(this.cfg.baseUrl, opts), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        ...this.cfg.extraHeaders,
+      },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
+    if (!res.ok || !res.body) {
+      throw this.httpStatusToError(res.status, `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuf = '';
+    let acc = '';
+    let inThink = false;
+    let emitted = 0;
+    const t0 = Date.now();
+    let fullText = '';
+    /** Last `finish_reason` the stream declared; anything but 'stop' cut it short. */
+    let finishReason: string | null = null;
+    /** Set when the stream broke after output — thrown once the reader is closed. */
+    let truncation: unknown = null;
+
+    /** Consume completed lines in `acc`, yielding whole bubbles. */
+    const drainLines = function* (self: OpenAiCompatibleProvider): Generator<Bubble> {
+      let nl: number;
+      while ((nl = acc.indexOf('\n')) >= 0) {
+        const line = acc.slice(0, nl).trim();
+        acc = acc.slice(nl + 1);
+        if (!line) continue;
+        for (const b of parseBubbles(line)) yield b;
+      }
+      void self;
+    };
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = sseBuf.indexOf('\n')) >= 0) {
+          const frame = sseBuf.slice(0, idx).trim();
+          sseBuf = sseBuf.slice(idx + 1);
+          if (!frame.startsWith('data:')) continue;
+          const payload = frame.slice(5).trim();
+          if (payload === '[DONE]') continue;
+          let delta = '';
+          try {
+            const j = JSON.parse(payload) as {
+              choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>;
+            };
+            delta = j.choices?.[0]?.delta?.content ?? '';
+            // Read BEFORE the empty-delta skip: the frame that carries the
+            // finish reason usually carries no content at all, so skipping
+            // first is how "被截断" became indistinguishable from "说完了".
+            finishReason = j.choices?.[0]?.finish_reason ?? finishReason;
+          } catch {
+            continue; // partial frame or keepalive — never fatal
+          }
+          if (!delta) continue;
+          // Reasoning spans stream inline on some models; drop them whole.
+          let rest = delta;
+          while (rest) {
+            if (inThink) {
+              const end = rest.indexOf('</think>');
+              if (end < 0) {
+                rest = '';
+              } else {
+                rest = rest.slice(end + 8);
+                inThink = false;
+              }
+            } else {
+              const start = rest.indexOf('<think>');
+              if (start < 0) {
+                acc += rest;
+                fullText += rest;
+                rest = '';
+              } else {
+                acc += rest.slice(0, start);
+                fullText += rest.slice(0, start);
+                rest = rest.slice(start + 7);
+                inThink = true;
+              }
+            }
+          }
+          for (const b of drainLines(this)) {
+            emitted++;
+            yield b;
+          }
+        }
+      }
+      // Flush whatever the final line held.
+      if (acc.trim()) {
+        for (const b of parseBubbles(acc.trim())) {
+          emitted++;
+          yield b;
+        }
+      }
+      recordLlmExchange({
+        providerId: this.id,
+        providerKind: this.kind,
+        model: opts.model,
+        latencyMs: Date.now() - t0,
+        request: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+        text: fullText,
+        finishReason: finishReason ?? 'stream',
+      });
+      // Cut short by the model's own accounting (max_tokens hit, output audit):
+      // the bubbles that landed are real, the turn is not finished.
+      if (emitted > 0 && finishReason && finishReason !== 'stop') {
+        truncation = new LlmError(
+          'truncated',
+          `stream finish_reason=${finishReason}`,
+          undefined,
+          this.id,
+        );
+      }
+    } catch (e) {
+      if (emitted === 0) throw e; // router falls back to the one-shot ladder
+      // The USER interrupting is not the model being cut off: a new send aborts
+      // this turn on purpose, and reporting that as truncation would make her
+      // tack "先不说了" onto a reply the user already walked away from.
+      if (opts.signal?.aborted) return;
+      // Mid-stream break AFTER output: the shown bubbles stand, but the caller
+      // is told the turn was cut off so it can close it in character.
+      truncation = new LlmError('truncated', `stream broke: ${String(e)}`, undefined, this.id, e);
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        /* already closed */
+      }
+    }
+    if (truncation) throw truncation;
   }
 
   /**

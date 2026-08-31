@@ -11,11 +11,14 @@
 const DB_NAME = 'weixin-ai';
 // v2 adds the money stores; v3 adds the TTS audio cache; v4 adds Moments;
 // v5 adds the runtime media library; v6 adds the story-mode tables and the
-// scheduled_actions byFireAt index (the queue is scanned every second).
-// Bump this on EVERY new store or onupgradeneeded never runs (see CLAUDE.md §3.5).
+// scheduled_actions byFireAt index (the queue is scanned every second);
+// v7 adds the moments byCreatedAt index.
+// Bump this on EVERY new store OR NEW INDEX — `onupgradeneeded` is the only
+// place either can come into being, and it only runs when the version rises.
 // Exported for tests/unit/idb-migration.test.ts, whose ledger machine-enforces
-// that rule — register new stores there when bumping.
-export const DB_VERSION = 6;
+// that rule — register new stores AND new indexes there when bumping.
+// v9 adds favorites (收藏, M-I13).
+export const DB_VERSION = 9;
 
 export interface StoreDef {
   name: string;
@@ -57,7 +60,10 @@ export const STORES: StoreDef[] = [
   // Content-addressed TTS audio cache (key = hash of voice+text+params).
   { name: 'tts_cache', keyPath: 'key' },
   // --- moments (v4) ---
-  { name: 'moments', keyPath: 'id' },
+  // `byCreatedAt` (v7): the feed is newest-first and paged, and without an
+  // index every open of Moments read the whole store and sorted in JS —
+  // `limit` was applied only after all of it had been deserialized.
+  { name: 'moments', keyPath: 'id', indexes: [{ name: 'byCreatedAt', keyPath: 'createdAt' }] },
   // SQLite models likes as a composite PK (momentId, contactId). IndexedDB keyPaths
   // are single-valued, so the id is the synthetic join `${momentId}:${contactId}` —
   // that keeps "one like per person per moment" enforced by the store itself.
@@ -78,6 +84,16 @@ export const STORES: StoreDef[] = [
   // without its own migration.
   { name: 'story_scripts', keyPath: 'id' },
   { name: 'story_saves', keyPath: 'id', indexes: [{ name: 'byScript', keyPath: 'scriptId' }] },
+  // --- worldbook (v8, M-I4) ---
+  // User-authored lore entries, matched by keyword into the prompt's memory
+  // layer. Separate from memory_facts on purpose: facts are extracted and
+  // forgotten, entries are authored and eternal until edited.
+  { name: 'worldbook', keyPath: 'id' },
+  // --- favorites (v9, M-I13) ---
+  // Snapshots of favorited messages. Keyed `fav_${convId}_${msgId}` so
+  // favoriting the same message twice is a natural upsert. Small store, read
+  // as a whole by the favorites page; no index needed at this scale.
+  { name: 'favorites', keyPath: 'id' },
 ];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -120,6 +136,16 @@ export function openDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+/**
+ * Test hook: drop the cached connection so a test can swap in a fresh
+ * IDBFactory (fake-indexeddb) and get a truly empty database — `clear()`
+ * alone keeps autoincrement generators, which breaks driver-parity tests.
+ */
+export function _closeDbForTests(): void {
+  void dbPromise?.then((db) => db.close()).catch(() => {});
+  dbPromise = null;
+}
+
 function tx(db: IDBDatabase, store: string, mode: IDBTransactionMode): IDBObjectStore {
   return db.transaction(store, mode).objectStore(store);
 }
@@ -156,6 +182,106 @@ export async function idbAdd<T>(store: string, value: T): Promise<IDBValidKey> {
 export async function idbDelete(store: string, key: IDBValidKey): Promise<void> {
   const db = await openDB();
   await wrap(tx(db, store, 'readwrite').delete(key));
+}
+
+/**
+ * Delete every row an index points at, in ONE transaction, via a cursor.
+ *
+ * The caller this exists for is `deleteConversation`: it used to pull the
+ * conversation's messages into memory and then `await idbDelete` each one —
+ * and `idbDelete` opens a fresh transaction per call. Deleting a thread with
+ * 50,000 messages therefore meant 50,000 serial transactions, which freezes
+ * the UI for minutes and leaves the thread half-deleted if anything fails
+ * partway. A cursor delete is one transaction, never materializes the rows,
+ * and is atomic: it either takes the whole thread or none of it.
+ */
+export async function idbDeleteByIndex(
+  store: string,
+  indexName: string,
+  value: IDBValidKey,
+): Promise<number> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(store, 'readwrite');
+    const req = t.objectStore(store).index(indexName).openCursor(IDBKeyRange.only(value));
+    let n = 0;
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return;
+      cursor.delete();
+      n++;
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+    t.oncomplete = () => resolve(n);
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  });
+}
+
+/**
+ * Newest-first page from an index, without reading the rest of the store.
+ *
+ * The Moments feed is the caller: it used to `getAll()` every post ever
+ * written, filter and sort in JS, and only then apply `limit` — so the cost of
+ * opening the feed grew forever while what it showed stayed the same size.
+ * Walking the index backwards from `before` reads exactly `limit` rows.
+ */
+export async function idbPageDesc<T>(
+  store: string,
+  indexName: string,
+  opts: { limit: number; before?: number } = { limit: 20 },
+): Promise<T[]> {
+  const db = await openDB();
+  const os = tx(db, store, 'readonly');
+  return new Promise((resolve, reject) => {
+    const range = opts.before == null ? null : IDBKeyRange.upperBound(opts.before, true);
+    const req = os.index(indexName).openCursor(range, 'prev');
+    const out: T[] = [];
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor || out.length >= opts.limit) return resolve(out);
+      out.push(cursor.value as T);
+      cursor.continue();
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Append many autoincrement rows in ONE transaction.
+ *
+ * Distinct from `idbBulkPut`: these rows have no key yet (messages are keyed by
+ * the autoincrement id that IS their chronological order), so they must be
+ * `add`ed rather than `put`. Sequential within the transaction, which is what
+ * keeps "rowid order == time order" true for seeded data.
+ */
+export async function idbBulkAdd<T>(store: string, values: T[]): Promise<void> {
+  if (values.length === 0) return;
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(store, 'readwrite');
+    const os = t.objectStore(store);
+    for (const v of values) os.add(v as unknown as Record<string, unknown>);
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  });
+}
+
+/** The FIRST row an index points at, in ascending key order. One cursor step. */
+export async function idbFirstByIndex<T>(
+  store: string,
+  indexName: string,
+  value: IDBValidKey,
+): Promise<T | undefined> {
+  const db = await openDB();
+  const os = tx(db, store, 'readonly');
+  return new Promise((resolve, reject) => {
+    const req = os.index(indexName).openCursor(IDBKeyRange.only(value), 'next');
+    req.onsuccess = () => resolve(req.result?.value as T | undefined);
+    req.onerror = () => reject(req.error);
+  });
 }
 
 export async function idbBulkPut<T>(store: string, values: T[]): Promise<void> {
@@ -255,14 +381,28 @@ export async function idbQueryByIndex<T extends { id: number }>(
   return new Promise((resolve, reject) => {
     // Descending order by primary key within the matched index value.
     const req = index.openCursor(IDBKeyRange.only(value), 'prev');
+    // `beforeId` used to be applied by walking from the newest row and
+    // discarding everything above the cursor one at a time, so page k cost
+    // k × limit wasted steps — loading a year of history got slower with every
+    // page. `continuePrimaryKey` jumps the cursor straight to the first row
+    // below `beforeId`, making every page cost the same as the first.
+    let jumped = opts.beforeId == null;
     req.onsuccess = () => {
       const cursor = req.result;
       if (!cursor || results.length >= limit) {
         resolve(results);
         return;
       }
-      const row = cursor.value as T;
-      if (opts.beforeId == null || row.id < opts.beforeId) results.push(row);
+      if (!jumped) {
+        jumped = true;
+        // Only jump when the cursor is not already past the boundary; calling
+        // continuePrimaryKey backwards from where we are would throw.
+        if ((cursor.primaryKey as number) >= (opts.beforeId as number)) {
+          cursor.continuePrimaryKey(value, (opts.beforeId as number) - 1);
+          return;
+        }
+      }
+      results.push(cursor.value as T);
       cursor.continue();
     };
     req.onerror = () => reject(req.error);

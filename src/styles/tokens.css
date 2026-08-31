@@ -109,14 +109,45 @@
   --color-rp-open-bg: var(--wx-rp-red-deep);
   --color-quote-block: var(--wx-quote-gray);
   --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-black-scrim: rgba(0, 0, 0, 0.18); /* dim behind an edge-swipe drag */
+  --color-swipe-neutral: #c7c7cc; /* swipe tray: neutral action */
+  --color-swipe-danger: var(--wx-red); /* swipe tray: destructive action */
+  --color-skeleton-a: #ececec; /* loading placeholder base */
+  --color-skeleton-b: #f5f5f5; /* loading placeholder highlight */
   --color-menu-bg: #4c4c4c; /* long-press dark menu */
   --color-toast-bg: rgba(0, 0, 0, 0.75); /* centered transient toast */
   --color-viewer-bg: #000; /* full-screen image viewer backdrop */
   --color-call-bg: #2b3038; /* full-screen call backdrop */
   --color-call-hangup: var(--wx-red);
+  --color-call-accept: var(--wx-green); /* answer an incoming call */
   --color-system-msg-bg: rgba(0, 0, 0, 0.06); /* pill behind centered system lines */
+  /* Hold-to-talk (按住说话) full-screen recorder overlay (M-I9) */
+  --color-voice-scrim: rgba(26, 26, 26, 0.88); /* dark backdrop while recording */
+  --color-voice-text: rgba(255, 255, 255, 0.85); /* hints on the dark backdrop */
+  --color-voice-cancel: #fa5151; /* slide-up-to-cancel blob (device red) */
   --color-on-color-divider: rgba(255, 255, 255, 0.2); /* hairline on a colored surface */
   --color-on-color-fill: rgba(255, 255, 255, 0.25); /* translucent chip on a colored surface */
+
+  /* Annual report (M-I14): deep-green night palette + gold accents, WeChat
+     年度报告 style. Raw values live ONLY here per constitution rule #1. */
+  --wx-report-deep: #10231a; /* backdrop base */
+  --wx-report-deep-2: #1c3a2a; /* backdrop gradient end */
+  --wx-report-card: #234534; /* stat card surface */
+  --wx-report-gold: #f7d774; /* headline numbers */
+  --wx-report-mint: #7fd6a4; /* secondary accent / bars */
+  --color-report-bg-a: var(--wx-report-deep);
+  --color-report-bg-b: var(--wx-report-deep-2);
+  --color-report-card: var(--wx-report-card);
+  --color-report-text: var(--wx-white);
+  --color-report-dim: rgba(255, 255, 255, 0.55);
+  --color-report-hairline: rgba(255, 255, 255, 0.14);
+  --color-report-accent: var(--wx-report-gold);
+  --color-report-bar: var(--wx-report-mint);
+
+  /* Status page (M-I14) meter colors */
+  --color-status-track: rgba(0, 0, 0, 0.07);
+  --color-status-pos: var(--wx-green);
+  --color-status-neg: var(--wx-rp-orange);
 
   /* Moments */
   --color-moments-bg: var(--wx-white);
@@ -159,6 +190,19 @@
   --gap-page: 16px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* ---- Overlay z scale (M-I0): pick a NAMED layer, never a number. ---- */
+  --z-shell: 10;
+  --z-msg-menu: 30; /* the shared long-press menu, in every list that has one */
+  --z-list-overlay: 50; /* chat-list ＋ dropdown */
+  --z-picker: 60; /* media picker */
+  --z-sheet: 70; /* generic bottom sheet (forward picker, member picker…) */
+  --z-viewer: 80; /* full-screen image viewer */
+  --z-voice-rec: 85; /* hold-to-talk recorder — above viewer, below an incoming call */
+  --z-call: 90;
+  --z-rp-open: 100;
+  --z-dialog: 120; /* modal/prompt/action-sheet — above every feature overlay */
+  --z-toast: 1000; /* always last: feedback must never be buried */
 
   /* ---- Motion ---- */
   --dur-fast: 120ms;

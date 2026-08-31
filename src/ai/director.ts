@@ -54,9 +54,16 @@ export interface PrefilterOptions {
   maxStreak?: number;
   /** How many recent messages to consider for streak/cooldown. */
   window?: number;
+  /**
+   * Added to the lone candidate's `proactivity` before the seeded roll — the
+   * bias toward answering at all. Kept an OPTION rather than a constant because
+   * "how alive is this room" is a per-group setting (`groupCfg:<convId>`), and
+   * a quiet room that still answers every single time is not quiet.
+   */
+  speakBias?: number;
 }
 
-const DEFAULTS = { cooldownMs: 45_000, maxStreak: 3, window: 12 };
+const DEFAULTS = { cooldownMs: 45_000, maxStreak: 3, window: 12, speakBias: 0.35 };
 
 /** Members explicitly @'d in a message body, matched by display name. */
 export function findMentions(text: string, members: GroupMember[]): GroupMember[] {
@@ -84,7 +91,7 @@ export function prefilter(
   seed: string,
   opts: PrefilterOptions = {},
 ): PrefilterResult {
-  const { cooldownMs, maxStreak, window } = { ...DEFAULTS, ...opts };
+  const { cooldownMs, maxStreak, window, speakBias } = { ...DEFAULTS, ...opts };
   const tail = recent.slice(-window);
   const lastMsg = recent[recent.length - 1];
 
@@ -124,23 +131,67 @@ export function prefilter(
     return { mode: 'silence', candidates, speakers: [], reason: 'no-eligible-members' };
   }
 
+  // Scale gate (M-H2): the director quotes one roster line per candidate, on
+  // EVERY group message. A twenty-person group would put twenty lines in front
+  // of every casting decision, on top of the group roster the actor prompt
+  // already carries. Six is enough for a real choice and bounded regardless of
+  // how big the room gets.
+  const shortlist = narrowCandidates(candidates, tail, seed);
+
   // 3) Exactly one plausible speaker → roll their proactivity; no director needed.
-  if (candidates.length === 1) {
-    const only = candidates[0];
+  if (shortlist.length === 1) {
+    const only = shortlist[0];
     const rng = seededRng(`${seed}:${only.contactId}`);
-    const speaks = rng() < (only.persona?.proactivity ?? 0.5) + 0.35; // biased toward replying
+    const speaks = rng() < (only.persona?.proactivity ?? 0.5) + speakBias; // biased toward replying
     return speaks
       ? {
           mode: 'direct',
-          candidates,
+          candidates: shortlist,
           speakers: [{ agentId: only.contactId, priority: 1, intent: 'reply', target: 'user' }],
           reason: 'single-candidate',
         }
-      : { mode: 'silence', candidates, speakers: [], reason: 'single-candidate-declined' };
+      : { mode: 'silence', candidates: shortlist, speakers: [], reason: 'single-candidate-declined' };
   }
 
   // 4) Genuinely ambiguous → let the director stage it.
-  return { mode: 'director', candidates, speakers: [], reason: 'ambiguous' };
+  return { mode: 'director', candidates: shortlist, speakers: [], reason: 'ambiguous' };
+}
+
+/** Hard ceiling on roster lines handed to the director, whatever the group size. */
+export const MAX_DIRECTOR_CANDIDATES = 6;
+
+/**
+ * Narrow a large room to the people plausibly about to speak.
+ *
+ * Order matters and is deliberate:
+ *   1. whoever has spoken recently — a conversation in progress has
+ *      participants, and dropping them mid-exchange is the one thing that
+ *      would read as broken;
+ *   2. then the most proactive of the rest, so quiet members are the ones cut;
+ *   3. seeded shuffle inside that tail, so the same three extroverts do not
+ *      own every turn in a twenty-person group.
+ */
+export function narrowCandidates(
+  candidates: GroupMember[],
+  tail: MessageVM[],
+  seed: string,
+  max = MAX_DIRECTOR_CANDIDATES,
+): GroupMember[] {
+  if (candidates.length <= max) return candidates;
+  const spokeAt = new Map<string, number>();
+  tail.forEach((m, i) => spokeAt.set(m.senderId, i));
+  const rng = seededRng(`narrow:${seed}`);
+  const scored = candidates.map((m) => ({
+    m,
+    // Recency dominates; proactivity breaks ties; the jitter keeps the tail
+    // from being a fixed pecking order.
+    score:
+      (spokeAt.has(m.contactId) ? 100 + (spokeAt.get(m.contactId) ?? 0) : 0) +
+      (m.persona?.proactivity ?? 0) * 10 +
+      rng() * 5,
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, max).map((x) => x.m);
 }
 
 /**
@@ -170,7 +221,15 @@ const SpeakerSchema = z.object({
     .enum(['reply', 'follow', 'disagree', 'newtopic', 'wrapup', 'sticker_only'])
     .optional(),
   target: z.string().optional(),
-  hint: z.string().optional(),
+  // The director's own prompt asks for "不超过 20 字"; the schema never
+  // enforced it, so a chatty model could hand an actor a paragraph that then
+  // rode into that actor's prompt on top of everything else. `.catch` trims
+  // rather than rejects — an over-long hint is still a usable hint, and
+  // failing the whole decision over it would silence the group.
+  hint: z
+    .string()
+    .transform((s) => (s.length > 24 ? s.slice(0, 24) : s))
+    .optional(),
 });
 
 const DecisionSchema = z.object({
@@ -191,6 +250,12 @@ const DIRECTOR_SYSTEM = `你是群聊导演，只负责调度，不写台词。
 - 最多选 2-3 人；与话题最相关的人优先。
 - 允许没人说话（冷场也是真实的）——这时 silence 为 true。
 - 刚连续发过言的人降权。
+- 同一个话题聊久了就该有人自然转开或收尾（intent=newtopic / wrapup），
+  但别每轮都换；刚聊完的话题短时间内不要绕回去。
+- 关系好的人容易附和（intent=follow），有过节的人才拉踩（intent=disagree）——
+  没有过节就别硬造对立，一群人整天抬杠比一群人整天附和更假。
+- 群里很久没人说话时，让一个想说的人直接起新话头，而不是接最后一条。
+- topicState 写「现在聊的是什么」，一句话，不要复述整段对话。
 - hint 是给演员的方向提示（不超过 20 字），绝不能是台词原文。
 只输出 JSON：
 {"silence":false,"topicState":"当前话题一句话",
@@ -205,6 +270,15 @@ export interface DirectorContext {
   prevTopic?: string;
   /** One line of social intel, e.g. "小雨和阿哲走得近" (derived from edges). */
   cliqueLine?: string;
+  /**
+   * Pacing block from `group-topic`: how long this subject has run, what was
+   * just finished, how long the room has been quiet. Pre-rendered rather than
+   * passed as fields, so the director stays ignorant of how pacing is computed
+   * and the whole policy stays in one pure, testable module.
+   */
+  pacing?: string;
+  /** How the candidates are feeling today — casting reads differently when someone is down. */
+  moodLine?: string;
   /**
    * Effective tier of the transcript being sent. The director quotes the last
    * 20 group messages verbatim, so declaring 'off' for a full-tier group routed
@@ -238,8 +312,11 @@ export async function callDirector(
       ? renderTranscript(tail, { nameOf: ctx.nameOf, maxChars: 120 })
       : redactForTier(tail, ctx.nameOf);
   const extras = [
-    ctx.prevTopic ? `【上次话题】${ctx.prevTopic}` : '',
+    // `pacing` already carries the current topic with its age; the bare
+    // `prevTopic` line is the fallback for callers that don't compute pacing.
+    ctx.pacing ? ctx.pacing : ctx.prevTopic ? `【上次话题】${ctx.prevTopic}` : '',
     ctx.cliqueLine ? `【关系】${ctx.cliqueLine}` : '',
+    ctx.moodLine ? `【状态】${ctx.moodLine}` : '',
   ]
     .filter(Boolean)
     .join('\n');

@@ -29,8 +29,40 @@ import type {
 import type { LlmRouter } from '../llm/router';
 import type { ScheduledAction } from './scheduler';
 import type { DmPlan } from './agent-dm';
+import type { GiftPayload } from './gift-service';
 import type { EngineHooks } from './engine';
 import type { GroupMember } from './director';
+import { getConvState, putConvState, refineConvState } from './conv-state';
+import { logError } from '../lib/errlog';
+import { maxTier } from '../lib/nsfw-tier';
+import { dmConvId, participantsOf } from './agent-dm';
+import { extractJson } from './generate-chain';
+import type { ScheduledActionKind } from '../db/schema';
+import {
+  maybeJointPlan,
+  jointMomentsSystem,
+  parseJointMoments,
+  jointStaggerMs,
+  JOINT_ACTIVITIES,
+  type JointKind,
+} from './social-plans';
+import { canForwardFrom, maybeForward, forwardLine } from './agent-forward';
+import { inviteLine, inviteCardGapMs } from './agent-invite';
+import { contactCardPayload } from './bubble-materialize';
+import {
+  nextPhase,
+  phaseDelayMs,
+  rsvpGapMs,
+  rsvpSystem,
+  parseRsvps,
+  aftermathSystem,
+  aftermathImageCount,
+  EVENT_ACTIVITIES,
+  RSVP_MAX,
+  type EventActivity,
+  type EventPhase,
+} from './group-events';
+import { pickImages } from '../data/moments-images';
 
 /**
  * Everything the handlers are allowed to touch. Narrow on purpose: adding a
@@ -63,6 +95,8 @@ export interface HandlerDeps {
   // --- domain services, injected so a handler test never reaches the network ---
   claimRedPacket: (rpId: string, contactId: string, name: string, hooks: EngineHooks) => Promise<unknown>;
   acceptTransfer: (transferId: string, hooks: EngineHooks) => Promise<unknown>;
+  /** 24h uncollected → the money goes back (M-I18). No-op if already settled. */
+  returnTransfer: (transferId: string, hooks: EngineHooks, at?: number) => Promise<unknown>;
   sendProactiveMessage: (
     convId: string,
     peer: ContactVM,
@@ -93,6 +127,30 @@ export interface HandlerDeps {
     authorName: string,
     at?: number,
   ) => Promise<void>;
+  /** A close friend reposts the user's post (M-I15). */
+  runMomentRepost: (
+    momentId: string,
+    reposter: ContactVM,
+    persona: PersonaVM,
+    at?: number,
+  ) => Promise<void>;
+  /** Deliver a planned red packet / transfer from an agent (M-H1). */
+  runGift: (p: GiftPayload) => Promise<void>;
+  /** Raise an incoming-call overlay. Returns false if it could not ring. */
+  ringUser: (convId: string, contactId: string, reason: string) => boolean;
+
+  // --- social fabric (M-I3) ---
+  /** Publish a moment directly (joint plans write both sides themselves). */
+  addMoment: (m: MomentVM) => Promise<void>;
+  /** Queue a scheduled action. Stable id = idempotent upsert (see scheduler). */
+  enqueue: (opts: {
+    kind: ScheduledActionKind;
+    fireAt: number;
+    payload: Record<string, unknown>;
+    id?: string;
+  }) => Promise<void>;
+  /** The contact's user-visible 1:1 thread, if any. Hidden DMs never match. */
+  visibleConvWithUser: (contactId: string) => ConversationVM | undefined;
 
   // --- chaining ---
   chainHeartbeat: (persona: PersonaVM, convId: string, lastMsgAt?: number) => Promise<void>;
@@ -131,6 +189,53 @@ export async function handleTransferAccept(
   if (transferId) await d.acceptTransfer(transferId, d.hooks);
 }
 
+/**
+ * 24h passed and nobody collected: the money goes home (M-I18).
+ *
+ * A no-op unless the transfer is still pending, so the row is safe to leave
+ * queued after an accept rather than paying a pending-set scan to cancel it.
+ */
+export async function handleTransferReturn(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const transferId = str(payload.transferId);
+  if (transferId) await d.returnTransfer(transferId, d.hooks, optNum(payload.at));
+}
+
+/* ----------------------------- 斗图 (M-I18) ----------------------------- */
+
+/**
+ * Her wordless sticker comeback.
+ *
+ * The decision (does she play, with which sticker, after how long) was already
+ * made and seeded when the user's sticker landed — this only delivers it. That
+ * split is why the delay could move onto the queue at all: nothing here needs
+ * an rng, a persona or a prompt, so a reply queued before the app was closed
+ * still lands correctly whenever the queue is next drained.
+ */
+export async function handleStickerReply(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const contactId = str(payload.contactId);
+  const content = str(payload.content);
+  if (!convId || !contactId || !content) return;
+  // The conversation may have been deleted inside the 0.8–2.5s window.
+  if (!d.conversationExists(convId)) return;
+  const at = optNum(payload.at) ?? d.now();
+  await d.hooks.appendMessage({
+    convId,
+    senderId: contactId,
+    type: 'sticker',
+    content,
+    status: 'sent',
+    createdAt: at,
+  });
+  d.playMessageSound(at);
+}
+
 /* ---------------------------- heartbeat ---------------------------- */
 
 /**
@@ -160,7 +265,11 @@ export async function chainHeartbeat(
 ): Promise<void> {
   const target = heartbeatTarget(d, payload);
   if (!target) return; // deleted conversation → chain ends here, deliberately
-  const lastMsgAt = d.messagesFor(target.convId).at(-1)?.createdAt;
+  // From the conversation ROW, not the message slice: threads are loaded on
+  // open now (M-G2), so a conversation the user has not visited this session
+  // holds no messages in the store — and reading `undefined` here would make
+  // every such agent behave as if you had never spoken.
+  const lastMsgAt = d.conversationById(target.convId)?.lastMsgAt;
   await d.chainHeartbeat(target.persona, target.convId, lastMsgAt);
 }
 
@@ -210,7 +319,11 @@ export async function handleRecall(d: HandlerDeps, payload: Record<string, unkno
   const msgId = Number(payload.msgId);
   const convId = str(payload.convId);
   if (!msgId || !convId) return;
-  const msg = d.messagesFor(convId).find((m) => m.id === msgId);
+  // Straight from storage for the same reason: the recall fires minutes after
+  // the message, by which time the user may never have opened that thread.
+  const msg =
+    d.messagesFor(convId).find((m) => m.id === msgId) ??
+    (await d.getMessages(convId, { limit: 50 })).find((m) => m.id === msgId);
   if (!msg || msg.isRecalled) return;
   await d.updateMessage({ ...msg, isRecalled: true });
 
@@ -276,14 +389,35 @@ export async function handleMemExtract(
   // half-deleted one would write facts citing messages that no longer exist.
   if (!d.conversationExists(convId)) return;
   await d.runMemExtract({ convId, contactId, uptoMsgId });
+
+  // Channel 2 of the conversation state (M-G0). `specs/agents.md` specified a
+  // dual channel — the per-turn regex fold plus a memory pass that corrects
+  // it — and only channel 1 was ever built. The regex pass cannot tell that a
+  // question was answered forty messages later, so its rows go stale and she
+  // keeps chasing things you already settled.
+  //
+  // Riding this job means it costs no extra tokens: the facts were distilled
+  // by the extraction that just ran. Never allowed to fail the handler —
+  // conversational state is a nicety, memory is the point.
+  try {
+    const [state, facts] = await Promise.all([getConvState(convId), d.getMemory(contactId)]);
+    await putConvState(convId, refineConvState(state, facts, d.now()));
+  } catch (e) {
+    logError('convState.refine', e);
+  }
 }
 
 /* ------------------------------ agent DM ------------------------------ */
 
 export function dmPlanFrom(payload: Record<string, unknown>, fallbackNow: number): DmPlan | null {
+  // `c` is the optional third participant (M-I3 bounded trio). A payload that
+  // names the same person twice, or one the plan already has, collapses back to
+  // a pair — `participantsOf` dedupes and caps at MAX_DM_PARTICIPANTS.
+  const third = str(payload.c);
   const plan: DmPlan = {
     a: str(payload.a),
     b: str(payload.b),
+    ...(third ? { c: third } : {}),
     groupId: str(payload.groupId),
     fireAt: optNum(payload.fireAt) ?? fallbackNow,
   };
@@ -302,7 +436,368 @@ export async function handleAgentDm(
 ): Promise<void> {
   const plan = dmPlanFrom(payload, d.now());
   if (!plan) return;
-  await d.runAgentDm(plan);
+  const ok = await d.runAgentDm(plan);
+  if (!ok) return;
+
+  // Social fabric (M-I3): a completed private exchange occasionally hatches
+  // visible consequences. Both decisions are pure and seeded off the DM's
+  // identity, and both enqueue with STABLE ids — replaying this handler
+  // (backfill, retry) upserts the same rows instead of multiplying them.
+  const now = d.now();
+  const dmId = dmConvId(...participantsOf(plan));
+  try {
+    const jp = maybeJointPlan(dmId, now);
+    if (jp) {
+      await d.enqueue({
+        kind: 'joint_plan',
+        fireAt: jp.fireAt,
+        payload: { a: plan.a, b: plan.b, kind: jp.kind, dmId, at: jp.fireAt },
+        id: `joint_${dmId}_${jp.fireAt}`,
+      });
+    }
+    // A forward quotes the user's own words into the group — allowed ONLY
+    // from a user-visible thread. The hidden DM that triggered this handler
+    // is never a quotable source; `maybeForward` re-checks that too.
+    const src = d.visibleConvWithUser(plan.a);
+    if (src) {
+      const lastUser = [...d.messagesFor(src.id)]
+        .reverse()
+        .find((m) => m.senderId === 'self' && m.type === 'text' && m.content && !m.isRecalled);
+      const fw = maybeForward(src, lastUser?.content, dmId, now);
+      if (fw) {
+        await d.enqueue({
+          kind: 'agent_forward',
+          fireAt: fw.fireAt,
+          payload: {
+            speakerId: plan.a,
+            sourceConvId: src.id,
+            groupId: plan.groupId,
+            quote: fw.quote,
+            at: fw.fireAt,
+          },
+          id: `fwd_${dmId}_${fw.fireAt}`,
+        });
+      }
+    }
+  } catch (e) {
+    logError('social.hatch', e); // the DM itself succeeded — never undo that
+  }
+}
+
+/* --------------------------- social fabric (M-I3) --------------------------- */
+
+/**
+ * A joint plan materializes: ONE LLM call writes BOTH members' moments about
+ * the same outing, staggered by a believable gap. Either contact having been
+ * deleted since the plan was hatched drops the whole thing silently.
+ */
+export async function handleJointPlan(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const a = str(payload.a);
+  const b = str(payload.b);
+  const kindRaw = str(payload.kind);
+  const dmId = str(payload.dmId);
+  if (!(kindRaw in JOINT_ACTIVITIES)) return;
+  const kind = kindRaw as JointKind;
+  const ca = d.contactById(a);
+  const cb = d.contactById(b);
+  const pa = d.personaFor(a);
+  const pb = d.personaFor(b);
+  if (!ca || !cb || !pa || !pb) return;
+  const at = optNum(payload.at) ?? d.now();
+
+  const router = await d.getRouter();
+  // Rule #6: the pair's real tier, derived — moments are user-visible surface.
+  const tier = maxTier(await d.getGlobalTier(), [pa, pb]);
+  const raw = await router.complete(
+    {
+      role: 'chat',
+      nsfwTier: tier,
+    },
+    {
+      messages: [
+        {
+          role: 'system',
+          content: jointMomentsSystem(
+            kind,
+            { name: ca.remark ?? ca.name, style: pa.speechStyle },
+            { name: cb.remark ?? cb.name, style: pb.speechStyle },
+          ),
+        },
+        { role: 'user', content: '写吧。' },
+      ],
+      json: true,
+      maxTokens: 300,
+    },
+    {},
+    `joint:${dmId}`,
+  );
+  const texts = parseJointMoments(extractJson(raw.text));
+  if (!texts) return;
+
+  await d.addMoment({
+    id: `m_joint_${dmId}_${at}_a`,
+    authorId: a,
+    text: texts.a,
+    imageRefs: [],
+    isNsfw: false,
+    createdAt: at,
+  });
+  await d.addMoment({
+    id: `m_joint_${dmId}_${at}_b`,
+    authorId: b,
+    text: texts.b,
+    imageRefs: [],
+    isNsfw: false,
+    createdAt: at + jointStaggerMs(dmId, at),
+  });
+}
+
+/**
+ * Chain the group event's next phase BEFORE this phase's work runs — a flaky
+ * propose call must not kill the whole arc (the story_tick lesson). A deleted
+ * room, or a terminal phase, simply stops chaining.
+ */
+export async function chainGroupEvent(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const eventId = str(payload.eventId);
+  const next = nextPhase(str(payload.phase));
+  if (!next || !eventId || !d.conversationExists(convId)) return;
+  const at = (optNum(payload.at) ?? d.now()) + phaseDelayMs(next, eventId);
+  await d.enqueue({
+    kind: 'group_event',
+    fireAt: at,
+    payload: { ...payload, phase: next, at },
+    id: `${eventId}_${next}`,
+  });
+}
+
+/**
+ * One phase of the聚会 arc fires. Every phase costs at most ONE LLM call
+ * (GROUP_EVENT_LLM_CALLS_PER_PHASE) — the RSVP round in particular is a
+ * single dispatch that writes every member's line.
+ */
+export async function handleGroupEvent(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const eventId = str(payload.eventId);
+  const initiator = str(payload.initiator);
+  const activityRaw = str(payload.activity);
+  const phase = str(payload.phase) as EventPhase;
+  if (!(activityRaw in EVENT_ACTIVITIES)) return;
+  const activity = activityRaw as EventActivity;
+  const conv = d.conversationById(convId);
+  if (!conv || conv.type !== 'group' || conv.isHidden) return;
+  const memberIds = (conv.memberIds ?? []).filter((id) => d.personaFor(id));
+  if (!memberIds.includes(initiator)) return; // initiator left the room
+  const at = optNum(payload.at) ?? d.now();
+  const nameOf = (id: string) => {
+    const c = d.contactById(id);
+    return c?.remark ?? c?.name ?? id;
+  };
+
+  if (phase === 'propose') {
+    const speaker = {
+      contactId: initiator,
+      name: nameOf(initiator),
+      persona: d.personaFor(initiator),
+    };
+    const tier = maxTier(
+      await d.getGlobalTier(),
+      memberIds.map((id) => d.personaFor(id)),
+    );
+    // Rides the ordinary group proactive machinery — one call, persona voice.
+    await d.sendGroupProactiveMessage(
+      conv,
+      speaker,
+      memberIds.map((id) => ({ contactId: id, name: nameOf(id), persona: d.personaFor(id) })),
+      tier,
+      d.hooks,
+      d.contactById,
+      at,
+      `你想${EVENT_ACTIVITIES[activity]}，现在在群里发起提议，问大家谁有空、定哪天`,
+    );
+    return;
+  }
+
+  if (phase === 'rsvp') {
+    const answering = memberIds.filter((id) => id !== initiator).slice(0, RSVP_MAX);
+    if (answering.length === 0) return;
+    const names = answering.map(nameOf);
+    const tier = maxTier(
+      await d.getGlobalTier(),
+      memberIds.map((id) => d.personaFor(id)),
+    );
+    const router = await d.getRouter();
+    const raw = await router.complete(
+      { role: 'chat', nsfwTier: tier },
+      {
+        messages: [
+          { role: 'system', content: rsvpSystem(activity, names) },
+          { role: 'user', content: '写吧。' },
+        ],
+        json: true,
+        maxTokens: 400,
+      },
+      {},
+      `gevt:${eventId}`,
+    );
+    const lines = parseRsvps(extractJson(raw.text), new Set(names));
+    if (!lines) return;
+    const idByName = new Map(answering.map((id) => [nameOf(id), id]));
+    let t = at;
+    for (let i = 0; i < lines.length; i++) {
+      const senderId = idByName.get(lines[i].name);
+      if (!senderId) continue;
+      t += rsvpGapMs(eventId, i);
+      await d.hooks.appendMessage({
+        convId,
+        senderId,
+        type: 'text',
+        content: lines[i].text,
+        status: 'sent',
+        createdAt: t,
+      });
+    }
+    return;
+  }
+
+  if (phase === 'aftermath') {
+    const router = await d.getRouter();
+    const pInit = d.personaFor(initiator);
+    const tier = maxTier(await d.getGlobalTier(), [pInit]);
+    const raw = await router.complete(
+      { role: 'chat', nsfwTier: tier },
+      {
+        messages: [
+          { role: 'system', content: aftermathSystem(activity, nameOf(initiator)) },
+          { role: 'user', content: '写吧。' },
+        ],
+        maxTokens: 150,
+      },
+      {},
+      `gevt:${eventId}:after`,
+    );
+    const text = raw.text.trim().slice(0, 80);
+    if (!text) return;
+    // 聚会事后照片 (M-I3): the same seeded `pickImages` path an ordinary post
+    // uses — persona `imageTags` respected, and an empty material pool simply
+    // yields no refs, which degrades the post to text instead of throwing.
+    // Writing `imageRefs: []` unconditionally was the one thing that made this
+    // post read as generated: nobody comes back from 火锅 with zero pictures.
+    await d.addMoment({
+      id: `m_${eventId}`,
+      authorId: initiator,
+      text,
+      imageRefs: pickImages(`gevt:${eventId}`, aftermathImageCount(eventId), pInit?.imageTags),
+      isNsfw: false,
+      createdAt: at,
+    });
+  }
+}
+
+/**
+ * A group proposal fires: she suggests the trio in her own 1:1, then hands you
+ * the two friends' 名片.
+ *
+ * The suggested roster rides in `meta.suggestGroup` — the chat UI turns that
+ * into a tappable 群聊邀请 card that opens 发起群聊 with those people ticked
+ * (`agent-invite.suggestGroupHref`). Creating the room is still the user's
+ * move, and ignoring the whole thing is a legal, cost-free outcome.
+ *
+ * The name cards are the introduction itself: "把 Ada 和陈叔拉一个群" means
+ * nothing if you cannot see who they are. They go through the same
+ * `contactCardPayload` the model's own 名片 bubbles use — one card shape.
+ */
+export async function handleAgentInvite(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const contactId = str(payload.contactId);
+  const f1 = str(payload.friend1);
+  const f2 = str(payload.friend2);
+  if (!contactId || !f1 || !f2) return;
+  // Everyone involved must still exist — deletion since planning drops it.
+  const her = d.contactById(contactId);
+  const friends = [d.contactById(f1), d.contactById(f2)];
+  if (!her || !friends.every(Boolean)) return;
+  const conv = d.visibleConvWithUser(contactId);
+  if (!conv) return;
+  const nameOf = (c: ContactVM) => c.remark ?? c.name;
+  const at = optNum(payload.at) ?? d.now();
+  const inviteId = `${contactId}:${at}`;
+
+  await d.hooks.appendMessage({
+    convId: conv.id,
+    senderId: contactId,
+    type: 'text',
+    content: inviteLine(nameOf(friends[0]!), nameOf(friends[1]!)),
+    status: 'sent',
+    createdAt: at,
+    meta: { suggestGroup: [contactId, f1, f2] },
+  });
+
+  // …and then their cards, a few seconds apart (seeded — replay-identical).
+  let t = at;
+  for (let i = 0; i < friends.length; i++) {
+    const f = friends[i]!;
+    t += inviteCardGapMs(inviteId, i);
+    const card = contactCardPayload({
+      contactId: f.id,
+      name: nameOf(f),
+      wxid: f.wxid,
+      avatarColor: f.avatarColor,
+      avatarText: f.avatarText,
+    });
+    await d.hooks.appendMessage({
+      convId: conv.id,
+      senderId: contactId,
+      type: card.type,
+      content: card.content,
+      status: 'sent',
+      createdAt: t,
+      meta: card.meta,
+    });
+  }
+}
+
+/**
+ * A planned forward fires. The hidden-source check runs AGAIN here — the
+ * plan-time check protects the queue, this one protects the screen, and the
+ * screen is the one that cannot be un-shown.
+ */
+export async function handleAgentForward(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const speakerId = str(payload.speakerId);
+  const sourceConvId = str(payload.sourceConvId);
+  const groupId = str(payload.groupId);
+  const quote = str(payload.quote);
+  if (!speakerId || !sourceConvId || !groupId || !quote.trim()) return;
+
+  const src = d.conversationById(sourceConvId);
+  if (!canForwardFrom(src)) return; // hidden content NEVER leaves verbatim
+
+  const group = d.conversationById(groupId);
+  if (!group || group.type !== 'group' || group.isHidden) return;
+  if (!(group.memberIds ?? []).includes(speakerId)) return; // left the room since
+
+  await d.hooks.appendMessage({
+    convId: groupId,
+    senderId: speakerId,
+    type: 'text',
+    content: forwardLine(quote),
+    status: 'sent',
+    createdAt: optNum(payload.at) ?? d.now(),
+  });
 }
 
 /* ------------------------------ moments ------------------------------ */
@@ -353,4 +848,83 @@ export async function handleMomentComment(
   const author = d.contactById(moment.authorId);
   const authorName = moment.authorId === 'self' ? '你' : (author?.remark ?? author?.name ?? '朋友');
   await d.runMomentComment(momentId, commenter, persona, authorName, optNum(payload.at));
+}
+
+/**
+ * A planned repost of the user's post fires (M-I15). Same staleness re-checks
+ * as every other reaction: the reposter may have been deleted since planning,
+ * and the source may be gone — `runMomentRepost` re-reads it from storage,
+ * which is also what keeps the quote's content feed-derived (leak rule).
+ */
+export async function handleMomentRepost(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const momentId = str(payload.momentId);
+  const contactId = str(payload.contactId);
+  if (!momentId || !contactId) return;
+  const reposter = d.contactById(contactId);
+  const persona = d.personaFor(contactId);
+  if (!reposter || !persona) return;
+  await d.runMomentRepost(momentId, reposter, persona, optNum(payload.at));
+}
+
+/* ------------------------------ calls ------------------------------ */
+
+/**
+ * She calls (M-H1).
+ *
+ * The row was queued minutes ago and a call is synchronous: if the user has
+ * meanwhile started typing in that very conversation, ringing them is the
+ * worst possible timing. Everything else is the same staleness re-check the
+ * money handler does — a call to a deleted contact must not reach the screen.
+ */
+export async function handleAiCall(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const contactId = str(payload.contactId);
+  if (!convId || !contactId) return;
+  if (!d.conversationExists(convId)) return;
+  if (!d.contactById(contactId) || !d.personaFor(contactId)) return;
+  d.ringUser(convId, contactId, str(payload.reason));
+}
+
+/* ------------------------------ money ------------------------------ */
+
+/**
+ * She sends money (M-H1).
+ *
+ * The row was queued days or hours ago, so everything it assumed has to be
+ * re-checked here — the contact may have been deleted, the conversation may be
+ * gone, and a payload that has lost its amount must not become a ¥0.00 packet.
+ * Money is the one place in this app where acting on a stale plan is worse than
+ * not acting at all.
+ */
+export async function handleAiMoney(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const contactId = str(payload.contactId);
+  if (!convId || !contactId) return;
+  if (!d.conversationExists(convId)) return;
+  if (!d.contactById(contactId) || !d.personaFor(contactId)) return;
+  const amountFen = optNum(payload.amountFen);
+  if (!amountFen || amountFen <= 0 || !Number.isInteger(amountFen)) return;
+
+  await d.runGift({
+    convId,
+    contactId,
+    kind: payload.kind === 'transfer' ? 'transfer' : 'rp',
+    reason: str(payload.reason),
+    amountFen,
+    note: str(payload.note),
+    line: str(payload.line),
+    count: optNum(payload.count),
+  });
+  // Same stamp rule as a heartbeat: a gift that lands while you are looking at
+  // the screen should ding.
+  d.playMessageSound(d.now());
 }

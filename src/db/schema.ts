@@ -51,6 +51,8 @@ export const personas = sqliteTable('personas', {
   momentsPerDay: real('moments_per_day').notNull().default(0.3),
   likeRate: real('like_rate').notNull().default(0.5),
   commentRate: real('comment_rate').notNull().default(0.25),
+  /** 0..1 — 表情使用率 (M-I18). Scales 斗图 urge + custom-sticker swap. */
+  stickerRate: real('sticker_rate').notNull().default(0.35),
   typingCpm: integer('typing_cpm').notNull().default(300), // chars/min for typing-delay sim
   grabSpeed: text('grab_speed', { enum: ['fast', 'mid', 'slow'] }).default('mid'), // red-packet grab
   modelChat: text('model_chat'), // null → global default
@@ -61,6 +63,8 @@ export const personas = sqliteTable('personas', {
   nsfwStyleSamplesJson: text('nsfw_style_samples_json'), // optional string[2]
   affinityInit: integer('affinity_init').notNull().default(20),
   affinityBaseline: integer('affinity_baseline').notNull().default(20),
+  /** 0..1 — how readily she sends a red packet / transfer of her own (M-H1). */
+  generosity: real('generosity').notNull().default(0.35),
   greeting: text('greeting'),
   storyRolesJson: text('story_roles_json'),
   extensionsJson: text('extensions_json'), // preserve unknown ST-V2 fields verbatim
@@ -128,7 +132,25 @@ export const messages = sqliteTable(
       .references(() => conversations.id, { onDelete: 'cascade' }),
     senderId: text('sender_id').notNull(), // contactId; 'self' for the user
     type: text('type', {
-      enum: ['text', 'image', 'voice', 'sticker', 'rp', 'transfer', 'call', 'system'],
+      // 'merged' (M-I6): a 合并转发 card — meta carries the copied lines.
+      // M-I13: 'location' | 'contact_card' | 'file' | 'link' cards (meta carries
+      // the card payload) and 'game' (dice / rock-paper-scissors, seeded result).
+      enum: [
+        'text',
+        'image',
+        'voice',
+        'sticker',
+        'rp',
+        'transfer',
+        'call',
+        'system',
+        'merged',
+        'location',
+        'contact_card',
+        'file',
+        'link',
+        'game',
+      ],
     }).notNull(),
     content: text('content'), // text body / caption / transcript
     metaJson: text('meta_json'), // type-specific: {w,h,thumbRef} | {duration,voiceId} | ...
@@ -171,6 +193,13 @@ export const moments = sqliteTable('moments', {
   text: text('text'),
   imageRefsJson: text('image_refs_json'),
   isNsfw: integer('is_nsfw', { mode: 'boolean' }).notNull().default(false),
+  /**
+   * 可见范围 (M-I18): `{ mode, ids }` — see MomentVisibility. NULL = 公开, which
+   * is what every row written before M-I18 and every AI-authored post carries.
+   * A JSON column rather than a join table on purpose: the audience is read on
+   * every feed row and only ever as a whole (data-schema.md「JSON 列演进」).
+   */
+  visibilityJson: text('visibility_json'),
   createdAt: integer('created_at').notNull(),
 });
 export const momentLikes = sqliteTable(
@@ -352,6 +381,36 @@ export const SCHEDULED_ACTION_KINDS = [
   'recall',
   'mem_extract',
   'story_tick',
+  /** She sends YOU money — red packet or transfer, planned by money-motive. */
+  'ai_money',
+  /** She calls YOU. The most intrusive thing this app can do; see call-motive. */
+  'ai_call',
+  /** Two AIs' DM hatched a plan that later materializes as paired moments (M-I3). */
+  'joint_plan',
+  /** An AI carries a line from a USER-VISIBLE conversation into a group (M-I3). */
+  'agent_forward',
+  /** 聚会 arc: propose → rsvp → aftermath, three chained phases (M-I3). */
+  'group_event',
+  /** An AI proposes forming a group with two mutual friends, in her 1:1 (M-I3). */
+  'agent_invite',
+  /** A close friend reposts one of the USER's moments, rarely (M-I15). */
+  'moment_repost',
+  /** Periodic .aiwx backup (M-I17). Self-chaining; frequency set on 备份页. */
+  'auto_backup',
+  /**
+   * 斗图 (M-I18): her wordless sticker comeback, 0.8–2.5s after yours.
+   *
+   * It used to be a bare `setTimeout` in ChatPage — a second time-evolution
+   * path producing a real message, which rule #5 forbids for the ordinary
+   * reason: leave the chat (or the app) inside that window and the reply was
+   * simply lost, with the streak state already advanced.
+   */
+  'sticker_reply',
+  /**
+   * 转账 24 小时未收款自动退还 (M-I18). Queued when the transfer is sent; a
+   * no-op if it was accepted in the meantime.
+   */
+  'transfer_return',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

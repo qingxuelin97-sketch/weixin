@@ -29,7 +29,7 @@ jobs:
   emulator:
     name: run APK on emulator
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40 # +5 for the M-I10 native-surface assertions
     steps:
       - uses: actions/checkout@v4
 
@@ -53,10 +53,10 @@ jobs:
       - name: Build web bundle
         run: pnpm build
 
-      - name: Generate the native project
-        run: |
-          npx cap add android
-          npx cap sync android
+      # android/ is committed since M-I10 (hand-written Kotlin inside);
+      # `cap add` would clobber it with the template — sync only.
+      - name: Sync into the committed native project
+        run: npx cap sync android
 
       - name: Build debug APK
         run: cd android && ./gradlew --no-daemon assembleDebug
@@ -102,6 +102,13 @@ jobs:
             # surface them in the job log either way.
             grep -aE 'FATAL EXCEPTION|AndroidRuntime.*FATAL|E Capacitor' logcat.txt | head -20 || true
 
+            # ---- M-I10 native surface assertions --------------------------
+            # In a FILE, not inline: this action runs `script:` one line per
+            # `sh -c`, so variables and functions do not survive between lines —
+            # the inline version died on `: > "$NA"` with an empty $NA and the
+            # assertions never ran once. See scripts/device-native-asserts.sh.
+            sh scripts/device-native-asserts.sh
+
       - name: Verdict
         run: |
           set -euo pipefail
@@ -126,9 +133,66 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "$JSON" | jq -r '.results | to_entries[] |
             "\(.key): fetch=\(.value.webFetch.status // .value.webFetch.error) bridge=\(.value.bridge.status // .value.bridge.error)"'
-          # The assertion: every endpoint reachable via at least one channel.
-          echo "$JSON" | jq -e '.allReachable == true' > /dev/null \
-            || { echo "::error::有端点两条通道都不通——这就是真机症状的复现点"; exit 1; }
+          # Tell "the runner has no DNS" apart from "the app's transport broke".
+          # Run #7 resolved every host (401/401/200); run #8, same code, resolved
+          # NONE of them — every bridge error was `Unable to resolve host`. That
+          # is the runner's resolver, and failing the job on it teaches everyone
+          # to ignore a red device-test, which is how M-I10's assertions went
+          # unread for eight runs.
+          #
+          # The gate keeps its teeth: only a bridge error that is a DNS-resolution
+          # failure ON EVERY endpoint counts as infra. One endpoint resolving is
+          # proof DNS works, so anything still failing is the app — and the
+          # regression this test exists for (the Capacitor plugin-proxy transport
+          # bug) never presents as a resolver failure.
+          DNS_DEAD=$(echo "$JSON" | jq -r '
+            [ .results[] | .bridge.error // "" ] as $e
+            | if ($e | length) > 0
+                 and ($e | all(test("Unable to resolve host|No address associated with hostname|UnknownHostException")))
+              then "yes" else "no" end')
+          if [ "$DNS_DEAD" = yes ]; then
+            echo "::warning::runner 无 DNS（每个端点的原生通道都是解析失败）——这是环境问题不是 App 问题，连通性判定跳过；原生面断言照常执行"
+            echo '- ⚠️ 本次 runner 无 DNS，连通性判定已跳过（原生面断言不受影响）' >> "$GITHUB_STEP_SUMMARY"
+          else
+            # The assertion: every endpoint reachable via at least one channel.
+            echo "$JSON" | jq -e '.allReachable == true' > /dev/null \
+              || { echo "::error::有端点两条通道都不通——这就是真机症状的复现点"; exit 1; }
+          fi
+
+      # M-I10: turn the emulator's native-surface checks into a verdict.
+      # WHAT THE EMULATOR CANNOT PROVE (real-device checklist, specs/native-android.md):
+      #  - the OEM overlay-permission FLOW (appops here ≠ MIUI/ColorOS consent UI)
+      #  - full-screen intent behaviour on a LOCKED screen with vendor lockscreens
+      #  - typing into the real RemoteInput keyboard (synthetic enqueue here)
+      #  - widget on an actual launcher (no launcher host in the headless image)
+      #  - vendor battery-whitelist deep links (emulator has no OEM security apps)
+      - name: Native surfaces verdict (M-I10)
+        # `always()` because this and the connectivity verdict are INDEPENDENT
+        # checks. Without it, one flaky-network run skips this step entirely and
+        # a real native-surface regression ships unnoticed — which is exactly
+        # what happened on run #8: all 11 assertions had passed, and the job
+        # still reported failure with this step greyed out.
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -s native-asserts.txt ]; then
+            echo "::error::原生断言没有产出结果文件——emulator script 可能在此前就失败了"
+            exit 1
+          fi
+          {
+            echo '### M-I10 原生面断言'
+            echo '```'
+            cat native-asserts.txt
+            echo '```'
+            echo '- WARN 项在无头模拟器上属预期（dumpsys 脱敏/无 launcher）；只有 FAIL 才红'
+            echo '- 真机才能验的项见 specs/native-android.md「真机验收清单」'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -q '^FAIL' native-asserts.txt; then
+            echo "::error::有原生断言失败："
+            grep '^FAIL' native-asserts.txt
+            exit 1
+          fi
+          echo "全部硬断言通过"
 
       - name: Upload device evidence
         if: always()
@@ -137,6 +201,11 @@ jobs:
           name: device-evidence-${{ github.run_number }}
           path: |
             logcat.txt
+            logcat-native.txt
+            notif-dump.txt
+            notif-dump2.txt
+            window-dump.txt
+            native-asserts.txt
             screen.png
             selftest-line.txt
           retention-days: 14

@@ -51,7 +51,7 @@
   padding-top: var(--safe-top);
   background: var(--color-nav-bg);
   position: relative;
-  z-index: 10;
+  z-index: var(--z-shell);
 }
 .navbar__title {
   position: absolute;
@@ -130,6 +130,13 @@
   position: relative;
   color: var(--color-tabbar-icon);
 }
+.tabbar__icon {
+  /* A box of its own, so the icon can be scaled without the inline layout
+     shifting the label by a baseline (M-H3). */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .tabbar__item--active {
   color: var(--color-tabbar-icon-active);
 }
@@ -150,4 +157,8 @@
   font-size: var(--fs-badge);
   line-height: 18px;
   text-align: center;
+  /* Clips <RollingNumber/>'s outgoing digit to the pill (M-I8). The badge owns
+     the clip because an inline-block that clips its own overflow changes its
+     baseline — see components/rolling-number.css. */
+  overflow: hidden;
 }

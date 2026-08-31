@@ -47,3 +47,42 @@ CI 构建，`src/assets/` 构建期槽位在设备上永远不可达。
 - 备份：blob 以 `blobB64` 进 `.aiwx`（JSON 会把 Blob 变 `{}`——与 CryptoKey 同类陷阱），
   恢复时还原；导出可选排除（备份页开关）。恢复后需重启让注册表重新 prime。
 - Repo 接口：`getMedia(kind?) / getMediaItem / putMedia / deleteMedia`。
+
+## SQLite 原生驱动 + 迁移（M-I17）
+
+**Repo 接口一字未改**——这正是它存在的意义。新增：
+
+- `src/db/sqlite.ts`：`SqliteRepo implements Repo`。布局 = 每个 store 一张
+  `(key TEXT PRIMARY KEY, data TEXT)` JSON 表（沿用「JSON 列演进」约定），
+  **唯 `messages` 保留 INTEGER AUTOINCREMENT 主键**——rowid 序==时间序、
+  `beforeId` 游标语义与 IDB 版逐字节等价（差分测试 tests/unit/sqlite-repo.test.ts）。
+  media blob 以 `blobB64` 进 TEXT 列，读时还原。索引查询走 `json_extract`
+  表达式索引。`SqlDb` 是 @capacitor-community/sqlite@^7 连接的最小切面，
+  测试注入内存模拟（tests/unit/fake-sqlite.ts，超出文法即抛错）。
+- `src/db/driver.ts`：驱动选择。**Web 永远 IDB**；原生且迁移标志
+  （IDB settings `sqliteMigratedAt`）已置位才换 SQLite。`repo` 变为委派代理
+  （`setRepoImpl`），调用方零改动。另暴露按 store 的 raw 分发
+  （`readStoreRows` 等）——备份必须经它读「活」的那份数据。
+- **store 的家**：Repo 服务的 17 个 store 迁移后归 SQLite；
+  `scheduled_actions`（scheduler 直读）、`tts_cache`（voice 直读）、
+  `story_*`（story-gm 直读）的活数据**始终在 IDB**；`__crypto_master`
+  行永远留在 IDB（keystore 直读，instanceof CryptoKey 校验）。
+- `src/db/migrate-to-sqlite.ts`：一次性**复制**（绝不删源）。分批、进度回调、
+  可中断续跑（per-store 完成 + messages id 水位）、行数校验通过才置标志；
+  失败/中断自动留在 IDB。CryptoKey 行与迁移自身的 bookkeeping 行行级排除。
+  回退 = 清标志（数据仍在 IDB 原处）。
+
+## 备份 `.aiwx` v3（M-I17 增量 / M-I18 正确性）
+
+**完整规格见 `specs/backup.md`**。与本文件的不变量相关的只有两条，改动时必须同时看：
+
+- **删除只能用墓碑表达**（`file.tombstones[store] = [主键…]`），恢复时先删后写。
+  删一行不会给幸存行重新编号，所以不变量 1（`rowid 序 == 时间序`）不受影响；
+  **禁止**用「压缩/重排 id 区间」表达删除——那会改 id，游标分页立刻错乱。
+  消息的墓碑必须还原成**数字**主键（删 `"7"` 是空操作，墓碑会静默失效）。
+- **可变表不能用水位判断**。messages 的 `meta`（转账收款状态）、`isRecalled`、
+  `status` 都是对旧行的**原地改写**，id 与 createdAt 都不变。判据是逐行内容哈希
+  （`RowDigest`，存本机 `backupRowDigest`，永不进包）；哈希对 key 排序后计算，
+  因为 SQLite 读回是 `{...JSON.parse(data), id}` 而 IDB 是存入顺序。
+- 设备本地行（`__crypto_master` / 货架 / 通知权限 / 引擎标志…）走
+  `src/lib/device-local.ts` 那**一份**清单：导出滤掉、恢复保本机，有守卫测试。

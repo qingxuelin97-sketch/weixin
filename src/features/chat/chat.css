@@ -58,6 +58,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The banner's trailing affordance (story mode). Link-blue and quiet: the
+   banner is a status line, not a call to action — except when a run stalled,
+   where this is the only way back to it. */
+.group-announce__action {
+  flex: none;
+  padding: 2px 4px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-link);
+  background: none;
+  border: none;
+}
+.group-announce__action:active {
+  opacity: 0.55;
+}
+
 .chat-page__missing {
   margin: auto;
   color: var(--color-text-secondary);
@@ -130,6 +145,13 @@
 .msg-row--self .msg-row__body {
   justify-content: flex-end;
 }
+/* 已读回执 (M-I16, opt-in): tiny gray mark under one's own newest read bubble. */
+.msg-read {
+  margin-top: 3px;
+  font-size: var(--fs-badge);
+  color: var(--color-text-timestamp);
+}
+
 /* Quoted-reply block below a bubble: gray rounded, "昵称：内容". */
 .msg-quote {
   margin-top: 5px;
@@ -439,6 +461,59 @@
   background: var(--color-panel-bg);
   overflow: hidden;
 }
+/* The emoji page scrolls once「我的表情」pushes past the locked panel height. */
+.composer-panel__scroll {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* 我的表情 (M-I15): custom sticker strip under the emoji grid. */
+.sticker-strip__label {
+  padding: 2px 12px 6px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-secondary);
+}
+.sticker-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+.sticker-strip__item {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-cell-bg-pressed);
+  cursor: pointer;
+}
+.sticker-strip__item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.sticker-strip__item:active {
+  filter: brightness(0.92);
+}
+.sticker-strip__add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  color: var(--color-text-secondary);
+  background: none;
+  border: 1px dashed var(--color-hairline);
+}
+/* Custom sticker message (idb: ref): a mid-size image, no bubble. */
+.msg-sticker-img {
+  width: 110px;
+  height: 110px;
+  object-fit: contain;
+  display: block;
+  border-radius: 6px;
+}
 .emoji-grid {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -508,27 +583,9 @@
   background: var(--color-cell-bg-pressed);
 }
 
-/* Long-press context menu — WeChat's dark capsule. */
-.msg-menu {
-  position: fixed;
-  z-index: 30;
-  display: flex;
-  border-radius: 6px;
-  background: var(--color-menu-bg);
-  overflow: hidden;
-  box-shadow: 0 4px 16px var(--color-overlay);
-}
-.msg-menu button {
-  padding: 9px 16px;
-  border: 0;
-  background: none;
-  font-size: 14px;
-  color: var(--color-text-on-brand);
-  cursor: pointer;
-}
-.msg-menu button + button {
-  border-left: 1px solid var(--color-on-color-divider);
-}
+/* The long-press capsule moved to the shared <LongPressMenu/> (.lp-menu,
+   src/components/long-press-menu.css) — this page's copy WAS the reference
+   skin, so nothing about it changed except where it lives. */
 
 /* 重新编辑 link on a recalled own text message. */
 .msg-system__reedit {
@@ -552,6 +609,23 @@
 .msg-image--ph {
   width: 150px;
   height: 110px;
+}
+/* Loading shimmer behind a real photo (M-I8). The wrapper is inline-block so
+   the bubble keeps sizing to the picture, and the shimmer is absolute inside it
+   so it costs no layout of its own. */
+.msg-image-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+.msg-image-skeleton {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  /* A photo whose intrinsic size is not known yet gives the wrapper zero
+     height; this keeps the shimmer at the bubble's usual footprint. */
+  min-width: 150px;
+  min-height: 110px;
 }
 
 /* M-D3: 聊天信息页 member grid */
@@ -612,25 +686,401 @@
   font-size: 18px;
   padding: 0 4px;
 }
-.forward-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  background: var(--color-overlay);
+
+/* Loading marker for older history (M-G2). Centred, small, grey — the same
+   register as the time bars it sits above, so it reads as chrome not content. */
+.chat-page__older {
+  padding: 8px 0;
+  text-align: center;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+/* Undelivered mark on your own message — and the retry control (M-H0).
+   Sits outside the bubble on the leading side, WeChat-style. */
+.msg-failed {
+  align-self: center;
+  flex: none;
+  margin-top: 6px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-badge);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-badge);
+  line-height: 1;
+  font-weight: var(--fw-medium);
+}
+.msg-failed:active {
+  filter: brightness(0.92);
+}
+
+/* ---- 合并转发 (M-I6): card in the thread + record viewer page. ---- */
+.merged-card {
+  min-width: 180px;
+  max-width: 230px;
+}
+.merged-card__title {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+.merged-card__line {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.merged-card__footer {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.merged-view {
+  background: var(--color-cell-bg);
+}
+.merged-view__empty {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+.merged-view__item {
+  padding: 10px 16px;
+}
+.merged-view__head {
   display: flex;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.merged-view__name {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.merged-view__time {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.merged-view__body {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  line-height: var(--lh-body);
+  word-break: break-word;
+}
+
+/* ---- 多选模式 (M-I6). ---- */
+.msg-selectable {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+}
+.msg-selectable > .msg-row {
+  flex: 1;
+  min-width: 0;
+}
+.msg-select-dot {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: var(--hairline-width) solid var(--color-text-secondary);
+  background: var(--color-cell-bg);
+}
+.msg-select-dot--on {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+}
+.select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px calc(10px + var(--safe-bottom));
+  background: var(--color-panel-bg, var(--color-cell-bg));
+  border-top: var(--hairline-width) solid var(--color-hairline);
+}
+.select-bar__action {
+  color: var(--color-link);
+  font-size: var(--fs-cell-title);
+}
+.select-bar__action:disabled {
+  opacity: 0.4;
+}
+.select-bar__cancel {
+  color: var(--color-text-secondary);
+  font-size: var(--fs-cell-title);
+}
+
+/* Search-hit anchor flash (M-I6): one pulse marking the row a search jump
+   landed on. Cleared via onAnimationEnd, so it can replay for a new hit. */
+.msg-anchor-flash {
+  border-radius: 8px;
+  animation: msg-anchor-flash 1.2s ease-out 1;
+}
+@keyframes msg-anchor-flash {
+  0%,
+  55% {
+    background: var(--color-page-pressed);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* ---- M-I13 rich cards: location / contact / file / link. ----
+   WeChat renders these WHITE on both sides (a card, not speech) — so the base
+   bubble background and the tail color are overridden together. */
+.loc-card,
+.namecard,
+.file-card,
+.link-card,
+.invite-card {
+  background: var(--color-bubble-other);
+  color: var(--color-bubble-other-text);
+  padding: 0;
+  overflow: hidden;
+  width: 232px;
+}
+.loc-card::before,
+.namecard::before,
+.file-card::before,
+.link-card::before,
+.invite-card::before {
+  border-left-color: var(--color-bubble-other);
+  border-right-color: var(--color-bubble-other);
+}
+
+/* 拉群提议卡 (M-I3)：她说的那句话在上，可点的邀请卡在下。 */
+.invite-card-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.msg-row--self .invite-card-wrap {
   align-items: flex-end;
 }
-.forward-panel {
-  width: 100%;
-  max-height: 60vh;
-  overflow-y: auto;
-  background: var(--color-cell-bg);
-  border-radius: 12px 12px 0 0;
-  padding-bottom: env(safe-area-inset-bottom);
+.invite-card__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
 }
-.forward-panel__title {
-  text-align: center;
-  padding: 14px 0 8px;
-  font-weight: var(--fw-medium);
+.invite-card__lines {
+  flex: 1;
+  min-width: 0;
+}
+.invite-card__title {
+  font-size: var(--fs-cell-title);
   color: var(--color-text-primary);
+}
+.invite-card__members {
+  margin-top: 3px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.invite-card__icon {
+  flex: none;
+  line-height: 0;
+}
+.invite-card__footer {
+  margin: 0 12px;
+  padding: 5px 0 6px;
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+/* 位置卡片：name + address text block, static mini-map below. */
+.loc-card__name {
+  padding: 8px 12px 0;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loc-card__addr {
+  padding: 1px 12px 6px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.loc-card__map {
+  height: 90px;
+  line-height: 0;
+}
+
+/* 名片：avatar + name, hairline, footer. */
+.namecard__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+}
+.namecard__lines {
+  min-width: 0;
+}
+.namecard__name {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.namecard__wxid {
+  margin-top: 2px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.namecard__footer,
+.file-card__footer {
+  margin: 0 12px;
+  padding: 5px 0 6px;
+  border-top: var(--hairline-width) solid var(--color-hairline);
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+
+/* 文件卡片：name/size left, doc icon right. */
+.file-card__main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+}
+.file-card__lines {
+  flex: 1;
+  min-width: 0;
+}
+.file-card__name {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.file-card__size {
+  margin-top: 4px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.file-card__icon {
+  position: relative;
+  flex: none;
+  line-height: 0;
+}
+.file-card__ext {
+  position: absolute;
+  left: 0;
+  right: 4px;
+  bottom: 7px;
+  text-align: center;
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+/* 链接分享卡：title, then summary + thumb row. */
+.link-card {
+  padding: 10px 12px;
+}
+.link-card__title {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.link-card__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.link-card__summary {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.link-card__thumb {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  background: var(--color-page-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 表情游戏：bare like a sticker — no bubble, just the face. */
+.msg-game {
+  font-size: 52px;
+  line-height: 1.05;
+}
+.msg-game svg {
+  display: block;
+}
+
+/* Emoji panel game row (dice / rock-paper-scissors senders). */
+.emoji-games {
+  display: flex;
+  gap: 14px;
+  padding: 10px 14px 4px;
+}
+.emoji-games__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: var(--color-cell-bg);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.emoji-games__item:active {
+  background: var(--color-cell-bg-pressed);
+}
+.emoji-games__glyph {
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+/* The emoji panel gained a games row — the whole panel scrolls if cramped. */
+.emoji-panel-scroll {
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* Accessibility (M-I8): the two animations in this file get their switch.
+   `voice-pulse` is an infinite loop on the hold-to-talk mic and `.msg-anchor-
+   flash` is the one-shot tint marking a row a search jump landed on — the
+   landing still happens with motion off, it just does not blink. */
+@media (prefers-reduced-motion: reduce) {
+  .voice-waves--playing i,
+  .msg-anchor-flash {
+    animation: none !important;
+  }
 }

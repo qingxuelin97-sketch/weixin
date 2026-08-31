@@ -17,9 +17,22 @@ import { useAppStore } from '../../store/appStore';
 import { VOICE_OPTIONS, DEFAULT_VOICE } from '../../llm/tts';
 import { repo } from '../../db/repo';
 import type { PersonaVM, ProviderVM } from '../../data/types';
-import { makePersona } from '../../data/persona-defaults';
+import { makePersona, PERSONA_LIMITS } from '../../data/persona-defaults';
 import { useGuard } from '../../app/useGuard';
+import { getDrift, explainDrift, resetDrift, type DriftExplanation } from '../../ai/drift';
+import type { WorldbookEntry } from '../../ai/worldbook';
+import { askEntryFields, editWorldbookEntry, newEntry } from './worldbook-edit';
+import { importStCard, exportStCard } from '../../ai/sillytavern';
+import { saveTextFile } from '../../lib/save-file';
+import { logError } from '../../lib/errlog';
+import { humanizePersona, HUMANIZE_LEVEL_LABELS, type HumanizeLevel } from '../../ai/humanize';
+import { applyPersonaPatch, strippedNote } from '../../data/persona-patch';
+import { HumanizeDiffSheet } from './HumanizeDiffSheet';
+import { showActionSheet, showConfirm } from '../../components/dialog';
+import { getRouter } from '../../llm/service';
+import { globalTier } from '../../lib/nsfw-tier';
 import './settings.css';
+import { Switch } from '../../components/Switch';
 
 function emptyPersona(contactId: string): PersonaVM {
   return makePersona({ contactId, core: '', speechStyle: '', proactivity: 0.5 });
@@ -56,9 +69,35 @@ export function PersonaEditPage() {
   const [providers, setProviders] = useState<ProviderVM[]>([]);
   const [pickingAvatar, setPickingAvatar] = useState(false);
 
+  const [drifted, setDrifted] = useState<DriftExplanation[]>([]);
+  const [personaBook, setPersonaBook] = useState<WorldbookEntry[]>([]);
+
   useEffect(() => {
     void repo.getProviders().then((all) => setProviders(all.filter((x) => x.enabled)));
   }, []);
+
+  // Her own worldbook entries (M-I18). They were always addressable — as rows
+  // in the global list wearing a 「· 角色 XX」 suffix — which meant the only way
+  // to see what lore ONE character carries was to read every entry in the app
+  // and match the suffix by eye. They belong next to her card; the rows are
+  // the same rows, so the global list keeps showing them too.
+  const reloadBook = () => {
+    if (!contactId) return;
+    void repo
+      .getWorldbook()
+      .then((all) => setPersonaBook(all.filter((e) => e.scope === 'persona' && e.scopeId === contactId)))
+      .catch(() => {});
+  };
+  useEffect(reloadBook, [contactId]);
+
+  // How she has actually changed since the card was written (M-H1). Shown here
+  // rather than only in the state page because this is where the user comes to
+  // ask "why is she like this" — and because a drift you cannot see or undo is
+  // indistinguishable from the app quietly rewriting your character.
+  useEffect(() => {
+    if (!contactId) return;
+    void getDrift(contactId, Date.now()).then((d) => setDrifted(explainDrift(d)));
+  }, [contactId]);
 
   const set = <K extends keyof PersonaVM>(k: K, v: PersonaVM[K]) => setP((prev) => ({ ...prev, [k]: v }));
 
@@ -70,10 +109,130 @@ export function PersonaEditPage() {
       return { ...prev, relations };
     });
 
+  const [cardNotes, setCardNotes] = useState<string[]>([]);
+
+  /**
+   * Import a V2 card over this persona.
+   *
+   * Deliberately does NOT save: it fills the form, so the user reviews a
+   * stranger's card before it becomes one of their friends.
+   */
+  const importCard = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const card = importStCard(parsed, contactId);
+      if (!card) {
+        showToast('不是可识别的角色卡');
+        return;
+      }
+      setP(card.persona);
+      setCardNotes(card.notes);
+      showToast(`已载入「${card.name}」，确认后再保存`);
+      // character_book (M-I4): the card's world entries, offered separately —
+      // they are additive rows, not form fields, so they save on their own.
+      if (card.worldbook.length) {
+        void showConfirm({
+          title: '导入世界书？',
+          body: `这张卡带了 ${card.worldbook.length} 条世界书条目（只对这个角色生效），要一并导入吗？`,
+          confirmText: '导入',
+        }).then(async (yes) => {
+          if (!yes) return;
+          const now = Date.now();
+          for (const e of card.worldbook) {
+            await repo.putWorldbookEntry({ ...e, createdAt: now }).catch(() => {});
+          }
+          showToast(`已导入 ${card.worldbook.length} 条世界书条目`);
+          reloadBook();
+        });
+      }
+      // 拟人化追问 (M-I2): imported cards are the ones most likely to read as
+      // generated — offer the rewrite while the card is still under review.
+      void showConfirm({
+        title: '顺手拟人化一遍？',
+        body: '刚导入的卡可以让 AI 加点人味——逐字段对照，想留哪条留哪条。',
+        confirmText: '来吧',
+      }).then((yes) => {
+        if (yes) void humanize();
+      });
+    } catch (err) {
+      logError('persona.import', err);
+      showToast('读取失败');
+    }
+  };
+
+  const exportCard = async () => {
+    try {
+      const name = contact?.remark ?? contact?.name ?? '角色';
+      // This persona's own worldbook entries travel with the card (M-I4).
+      const book = (await repo.getWorldbook()).filter(
+        (e) => e.scope === 'persona' && e.scopeId === contactId,
+      );
+      await saveTextFile(
+        `${name}.card.json`,
+        JSON.stringify(exportStCard(name, p, {}, book), null, 2),
+        'application/json',
+        '导出角色卡',
+      );
+    } catch (err) {
+      logError('persona.export', err);
+      showToast('导出失败');
+    }
+  };
+
   const save = async () => {
     await putPersona(p);
     showToast('已保存');
     navigate(-1);
+  };
+
+  // 一键拟人化 (M-I2): pick a level → chain → per-field diff → apply as PATCH.
+  // Fills the form like the ST import does; nothing lands until 保存.
+  const [hBusy, setHBusy] = useState(false);
+  const [hPatch, setHPatch] = useState<Partial<PersonaVM> | null>(null);
+  const humanize = async () => {
+    if (hBusy) return;
+    const levels: HumanizeLevel[] = ['light', 'medium', 'heavy'];
+    const idx = await showActionSheet({
+      title: '拟人化力度',
+      actions: levels.map((l) => HUMANIZE_LEVEL_LABELS[l]),
+    });
+    if (idx == null) return;
+    setHBusy(true);
+    try {
+      const router = await getRouter();
+      // Rule #6: the tier is derived from the global setting, never declared.
+      const tier = await globalTier();
+      const out = await humanizePersona(
+        p,
+        contact?.remark ?? contact?.name ?? '她',
+        levels[idx],
+        {
+          complete: async (messages, opts) =>
+            (
+              await router.complete(
+                { role: 'reasoning', nsfwTier: tier },
+                { messages, json: opts.json, maxTokens: opts.maxTokens, temperature: 0.9 },
+                {},
+                `humanize:${contactId}`,
+              )
+            ).text,
+          onProgress: (note) => showToast(note),
+        },
+      );
+      if (!out.ok || !out.value) {
+        showToast(out.error ?? '拟人化失败');
+        return;
+      }
+      setHPatch(out.value);
+    } catch (err) {
+      logError('persona.humanize', err);
+      showToast('拟人化失败');
+    } finally {
+      setHBusy(false);
+    }
   };
 
   // Relations targets: the user + every OTHER AI contact.
@@ -120,6 +279,7 @@ export function PersonaEditPage() {
             <textarea
               className="field__textarea"
               value={p.core}
+              maxLength={PERSONA_LIMITS.core}
               onChange={(e) => set('core', e.target.value)}
               placeholder="例：25 岁插画师，温柔但有点毒舌，爱猫爱咖啡"
             />
@@ -129,6 +289,7 @@ export function PersonaEditPage() {
             <input
               className="field__input"
               value={p.speechStyle ?? ''}
+              maxLength={PERSONA_LIMITS.speechStyle}
               onChange={(e) => set('speechStyle', e.target.value)}
               placeholder="例：短句、口语、爱用语气词"
             />
@@ -227,6 +388,19 @@ export function PersonaEditPage() {
               }}
             />
           </div>
+          <div className="field field--divided">
+            <span className="field__label">
+              表情使用率：{p.stickerRate.toFixed(2)}（发表情包与斗图的频率）
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={p.stickerRate}
+              onChange={(e) => set('stickerRate', Number(e.target.value))}
+            />
+          </div>
           <div className="field">
             <span className="field__label">抢红包速度</span>
             <div className="segmented" style={{ margin: 0 }}>
@@ -302,6 +476,47 @@ export function PersonaEditPage() {
               spellCheck={false}
             />
           </div>
+          <div className="field field--divided">
+            <span className="field__label">
+              大方程度：{(p.generosity ?? 0.35).toFixed(2)}（她主动发红包/转账的意愿与金额）
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={p.generosity ?? 0.35}
+              onChange={(e) => set('generosity', Number(e.target.value))}
+            />
+          </div>
+          {drifted.length > 0 && (
+            <div className="field">
+              <span className="field__label">相处出来的变化（不改卡片，只是叠在上面）</span>
+              {drifted.map((d) => (
+                <div key={d.dim} className="field__hint">
+                  · 她{d.label}（{d.delta > 0 ? '+' : ''}
+                  {d.delta.toFixed(2)}）{d.reason ? `——${d.reason}` : ''}
+                </div>
+              ))}
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  // Re-read instead of blanking the list: reset clears the
+                  // STORED layer, and the goal layer on top of it is not stored
+                  // and fades on its own. Showing an empty list would be the
+                  // page claiming an undo it did not perform.
+                  void resetDrift(contactId)
+                    .then(() => getDrift(contactId, Date.now()))
+                    .then((d) => {
+                      setDrifted(explainDrift(d));
+                      showToast('已恢复到卡片');
+                    });
+                }}
+              >
+                恢复到卡片
+              </button>
+            </div>
+          )}
           <div className="field">
             <span className="field__label">初始亲密度：{p.affinityInit}（影响赞评与嘘寒问暖）</span>
             <input
@@ -337,6 +552,53 @@ export function PersonaEditPage() {
               />
             </div>
           ))}
+        </div>
+
+        <div className="settings__group">
+          <div className="settings__group-title">她的世界书（只对这个角色生效）</div>
+          <div className="field">
+            <span className="field__hint">
+              关于她的设定——宠物、住处、你们之间的黑话。聊到相关话题时她会「记得」；
+              留空触发词 = 一直生效。全局条目仍在 设置 → 世界书。
+            </span>
+          </div>
+          {personaBook.length === 0 && (
+            <div className="field field--divided">
+              <span className="field__hint">还没有只属于她的条目</span>
+            </div>
+          )}
+          {personaBook.map((e) => (
+            <div
+              key={e.id}
+              className="settings__row settings__row--divided"
+              onClick={() => void editWorldbookEntry(e).then((changed) => changed && reloadBook())}
+            >
+              <span className="settings__label">
+                {e.title}
+                <span className="settings__value">
+                  {' '}
+                  · {e.keywords.length ? e.keywords.join('、') : '常驻'}
+                  {e.enabled ? '' : '（已停用）'}
+                </span>
+              </span>
+            </div>
+          ))}
+          <div className="field">
+            <button
+              className="btn-ghost"
+              onClick={() =>
+                guard('worldbook.add', async () => {
+                  const fields = await askEntryFields();
+                  if (!fields) return;
+                  await repo.putWorldbookEntry(newEntry(fields, 'persona', contactId, Date.now()));
+                  showToast('已添加');
+                  reloadBook();
+                })
+              }
+            >
+              添加条目
+            </button>
+          </div>
         </div>
 
         <div className="settings__group">
@@ -377,9 +639,7 @@ export function PersonaEditPage() {
         <div className="settings__group">
           <div className="settings__row settings__row--divided" onClick={() => set('nsfwPermit', !p.nsfwPermit)}>
             <span className="settings__label">允许 NSFW（此智能体）</span>
-            <span className={`switch${p.nsfwPermit ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={p.nsfwPermit} onChange={() => set('nsfwPermit', !p.nsfwPermit)} />
           </div>
           {p.nsfwPermit && (
             <div className="field">
@@ -406,10 +666,65 @@ export function PersonaEditPage() {
           </div>
         </div>
 
+        {/* SillyTavern V2 (M-H2). The V2 card is the interchange format for
+            this whole category of app: without it every character the user
+            already owns is unreachable, and every character made here is
+            trapped inside this app. */}
+        <div className="settings__group">
+          <div className="settings__group-title">一键拟人化</div>
+          <div className="settings__row" role="button" onClick={() => guard('persona.humanize', humanize)}>
+            <span className="settings__label">{hBusy ? '正在改写…' : 'AI 给这张卡加人味'}</span>
+            <span className="settings__value">逐字段可选</span>
+            <span className="settings__chevron">›</span>
+          </div>
+        </div>
+
+        <div className="settings__group">
+          <div className="settings__group-title">角色卡（SillyTavern V2）</div>
+          <label className="settings__row">
+            <span className="settings__label">导入角色卡</span>
+            <span className="settings__value">选择 .json</span>
+            <input type="file" accept=".json,application/json" hidden onChange={importCard} />
+          </label>
+          <div className="settings__row" role="button" onClick={() => void exportCard()}>
+            <span className="settings__label">导出角色卡</span>
+            <span className="settings__value">本 App 的字段会一并带走</span>
+          </div>
+          {cardNotes.map((n) => (
+            <div key={n} className="field__hint">
+              · {n}
+            </div>
+          ))}
+        </div>
+
         <button className="btn-primary" onClick={() => guard('persona.save', save)} disabled={!p.core.trim()}>
           保存
         </button>
       </div>
+
+      {hPatch && (
+        <HumanizeDiffSheet
+          open
+          original={p}
+          patch={hPatch}
+          onClose={() => setHPatch(null)}
+          onApply={(accepted) => {
+            // Patch semantics end to end: only accepted fields move, locked
+            // fields can't move even if the model tried (applyPersonaPatch
+            // strips them again as the last line of defense) — and what it
+            // stripped is written down, or the defense is unobservable.
+            const { persona, stripped } = applyPersonaPatch(p, accepted);
+            const note = strippedNote(
+              stripped,
+              `拟人化·${contact?.remark ?? contact?.name ?? p.contactId}`,
+            );
+            if (note) logError('persona.patch', note);
+            setP(persona);
+            setHPatch(null);
+            showToast('已应用，确认后记得保存');
+          }}
+        />
+      )}
     </>
   );
 }

@@ -1,0 +1,220 @@
+/**
+ * 按住说话 recording overlay (M-I9).
+ *
+ * All motion is CSS keyframes — the screenshot gate freezes CSS/WAAPI, so a
+ * rAF loop here would make goldens flake (hard constraint from the plan).
+ * All colors are tokens (constitution rule #1).
+ */
+
+.vrec {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-voice-rec);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-voice-scrim);
+  animation: vrec-fade 140ms var(--ease-standard);
+  /* The gesture is pointer-captured by the mic button; the overlay is display only. */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@keyframes vrec-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- Center stage: the green (or red, when cancelling) speech bubble ---- */
+.vrec__stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vrec__bubble {
+  position: relative;
+  min-width: 180px;
+  max-width: 240px;
+  min-height: 74px;
+  padding: 18px 26px;
+  border-radius: 16px;
+  background: var(--color-bubble-self);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  animation: vrec-pop 180ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+/* Bubble tail, WeChat-style: a small rotated square below center. */
+.vrec__bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  background: inherit;
+  transform: translateX(-50%) rotate(45deg);
+  border-radius: 2px;
+}
+.vrec--cancel .vrec__bubble {
+  background: var(--color-voice-cancel);
+}
+@keyframes vrec-pop {
+  from {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ---- Waveform: 13 bars breathing on staggered CSS keyframes (no rAF) ---- */
+.vrec__wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 34px;
+}
+.vrec__bar {
+  width: 3px;
+  height: 30%;
+  border-radius: 2px;
+  background: var(--color-bubble-self-text);
+  transform-origin: center;
+  animation: vrec-bar 1.05s ease-in-out infinite;
+  /* Negative, index-scaled delay: bars start mid-cycle, so the wave reads as
+     already alive on the first painted frame (also keeps goldens stable —
+     a frozen clock shows a mid-wave pose, not 13 identical stubs). */
+  animation-delay: calc(var(--i) * -0.13s);
+}
+.vrec--cancel .vrec__bar {
+  background: var(--color-text-on-brand);
+}
+@keyframes vrec-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  25% {
+    transform: scaleY(1);
+  }
+  55% {
+    transform: scaleY(0.55);
+  }
+  80% {
+    transform: scaleY(0.85);
+  }
+}
+
+/* Last-10-seconds countdown, like the device. */
+.vrec__count {
+  font-size: var(--fs-cell-title);
+  font-weight: var(--fw-medium);
+  color: var(--color-bubble-self-text);
+}
+
+/* ---- Slide-up cancel affordance ---- */
+.vrec__cancelzone {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 26px;
+}
+.vrec__cancel-blob {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-on-color-fill);
+  color: var(--color-voice-text);
+  font-size: 26px;
+  line-height: 56px;
+  text-align: center;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+.vrec--cancel .vrec__cancel-blob {
+  background: var(--color-voice-cancel);
+  color: var(--color-text-on-brand);
+  transform: scale(1.15);
+}
+.vrec__cancel-hint {
+  font-size: var(--fs-small-gray);
+  color: var(--color-voice-text);
+}
+
+/* ---- Bottom half-moon "release" zone ---- */
+.vrec__talkzone {
+  flex: none;
+  height: 110px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: calc(18px + var(--safe-bottom));
+  background: radial-gradient(120% 190% at 50% 100%, var(--color-on-color-fill) 0 55%, transparent 56%);
+}
+.vrec--cancel .vrec__talkzone {
+  opacity: 0.35;
+}
+.vrec__talk-label {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-voice-text);
+}
+
+/* ---- Transcribing state ---- */
+.vrec__bubble--busy {
+  background: var(--color-bubble-self);
+}
+.vrec__transcribing {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: var(--fs-cell-title);
+  color: var(--color-bubble-self-text);
+}
+.vrec__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-bubble-self-text);
+  animation: vrec-dot 1.2s ease-in-out infinite;
+}
+.vrec__dot:nth-child(2) {
+  animation-delay: 0s;
+}
+.vrec__dot:nth-child(3) {
+  animation-delay: 0.18s;
+}
+.vrec__dot:nth-child(4) {
+  animation-delay: 0.36s;
+}
+@keyframes vrec-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vrec,
+  .vrec__bubble,
+  .vrec__bar,
+  .vrec__dot {
+    animation: none !important;
+  }
+}

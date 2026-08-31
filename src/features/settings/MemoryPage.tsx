@@ -15,6 +15,7 @@ import type { MemoryFactVM } from '../../data/types';
 import { groupByEntity, retention, encodeVector } from '../../ai/entity-graph';
 import { useNow } from '../../lib/useNow';
 import { useGuard } from '../../app/useGuard';
+import { showPrompt } from '../../components/dialog';
 import './settings.css';
 
 /** DM gossip writes facts with these framings (see agent-dm gossipFacts). */
@@ -96,8 +97,8 @@ export function MemoryPage() {
         <button
           className="memory__btn"
           onClick={() => {
-            const next = window.prompt('改成：', f.fact);
-            if (next?.trim() && next.trim() !== f.fact) {
+            void showPrompt({ title: '修改记忆', initial: f.fact, maxLength: 50 }).then((next) => {
+              if (!(next?.trim()) || next.trim() === f.fact) return;
               // Edited facts are the user's word: confirmed, and re-vectorized
               // so retrieval matches the new text rather than the old.
               guard('memory.edit', () =>
@@ -107,7 +108,7 @@ export function MemoryPage() {
                   embedding: encodeVector(next.trim().slice(0, 50)),
                 }),
               );
-            }
+            });
           }}
         >
           修改

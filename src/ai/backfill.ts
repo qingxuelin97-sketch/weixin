@@ -53,9 +53,23 @@ export async function runBackfill(
       fireAt: ev.at,
       // `at` rides along in the payload so the handler stamps the message with
       // the time it was supposed to arrive, not the time the queue drained it.
-      payload: { contactId: ev.contactId, convId: ev.convId, at: ev.at },
+      // Reactions carry their post; DM sessions carry the pair — the payload
+      // shapes the live handlers already read (M-I5).
+      payload: {
+        contactId: ev.contactId,
+        convId: ev.convId,
+        at: ev.at,
+        ...(ev.momentId ? { momentId: ev.momentId } : {}),
+        ...(ev.dm ? { a: ev.dm.a, b: ev.dm.b, groupId: ev.dm.groupId, fireAt: ev.at } : {}),
+        // Kind-specific fields (gift envelope, 聚会 phase, 拉群 roster) —
+        // exactly the shapes the live handlers already read (M-I18).
+        ...(ev.payload ?? {}),
+      },
       now,
-      id: `bf_${ev.kind}_${ev.contactId}_${ev.at}`,
+      // A planned kind that the live foreground pass ALSO owns carries that
+      // path's stable id, or the `actionExists` guard three lines later would
+      // not recognise it and the same gift/聚会/拉群 would be queued twice.
+      id: ev.id ?? `bf_${ev.kind}_${ev.contactId}_${ev.at}`,
     });
   }
 

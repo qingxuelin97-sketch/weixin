@@ -46,6 +46,11 @@
   opacity: var(--nav-alpha);
 }
 
+/* 下拉刷新 (M-I8): the non-moving clip that hides the indicator parked above
+   the feed. The scroll pane itself is inside the host that translates. */
+.moments__pull {
+  height: 100%;
+}
 .moments__scroll {
   height: 100%;
   overflow-y: auto;
@@ -105,6 +110,16 @@
   font-weight: 600;
   color: var(--color-link);
 }
+/* 「刚刚活跃」绿点 (M-I16): seeded low-frequency presence hint by the name. */
+.moment__active-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-brand);
+  margin-left: 6px;
+  vertical-align: middle;
+}
 .moment__text {
   margin: 4px 0 0;
   font-size: 15px;
@@ -136,6 +151,14 @@
   aspect-ratio: 1;
   overflow: hidden;
   background: var(--color-moments-image-empty);
+  /* The shimmer below is absolutely positioned into this cell (M-I8). */
+  position: relative;
+}
+/* Loading shimmer, under the photo. `.skeleton` (motion.css) paints it; this
+   rule only says where it lives. */
+.moment__image-skeleton {
+  position: absolute;
+  inset: 0;
 }
 .moment__image img {
   width: 100%;
@@ -342,4 +365,213 @@
   background: var(--color-brand);
   font-size: 11px;
   color: var(--color-text-on-brand);
+}
+
+/* 删除 link on one's own post (M-I6): quiet link-blue beside the timestamp. */
+.moment__delete {
+  margin-left: 10px;
+  color: var(--color-link);
+  font-size: var(--fs-small-gray);
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* ---- M-I15: cover photo, visitor hint, topics, repost card, album ---- */
+
+/* User-chosen cover photo fills the gradient box; the gradient stays as the
+   loading/placeholder ground underneath. */
+.moments__cover {
+  overflow: hidden;
+}
+.moments__cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* Keep the name/avatar corner above the photo. */
+.moments__self {
+  z-index: 1;
+}
+
+/* Cover picker sheet */
+.moments__cover-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 8px 16px;
+}
+.moments__cover-choice {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--color-moments-image-empty);
+  cursor: pointer;
+}
+.moments__cover-choice--on {
+  outline: 2px solid var(--color-brand);
+  outline-offset: -2px;
+}
+.moments__cover-choice img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.moments__cover-reset {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 8px 16px 12px;
+  padding: 10px 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-input-field-bg);
+  color: var(--color-text-primary);
+  font-size: 15px;
+  cursor: pointer;
+}
+.moments__cover-empty {
+  padding: 16px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+/* 「XX 刚看过你的朋友圈」— a passing hint, styled like a whisper not a banner. */
+.moments__visitor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 28px 16px 0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--color-moments-comment-bg);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.moments__visitor-eye {
+  font-size: 13px;
+}
+/* When the visitor row is present it absorbs the list's cover clearance. */
+.moments__visitor + .moments__list {
+  padding-top: 12px;
+}
+
+/* #话题# runs inside post text — link-blue, tappable. */
+.moment__topic {
+  color: var(--color-link);
+  cursor: pointer;
+}
+
+/* 转发卡片: the quoted root original. Grey block, author in link-blue. */
+.moment__repost {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 3px;
+  background: var(--color-moments-comment-bg);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+.moment__repost-author {
+  color: var(--color-link);
+}
+/* On the repost composer the same card previews under the textarea. */
+.publish__repost-preview {
+  margin: 0 16px 16px;
+}
+
+/* Album & topic pages: white cards on the moments ground, no cover offset. */
+.moments__album {
+  background: var(--color-moments-bg);
+}
+.moments__list--album {
+  padding: 0 0 24px;
+}
+.moments__topic-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 16px 6px;
+}
+.moments__topic-tag {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-link);
+}
+.moments__topic-count {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* ---- M-I18: 可见范围 (publish page audience row + person picker) ---- */
+
+/* The 谁可以看 row sits directly under the composer, so it needs the gap the
+   settings group would otherwise get from a page body it isn't inside. */
+.publish__audience {
+  margin: 0 0 8px;
+}
+
+/* Tick in front of a name in the audience sheet. Same 20px circle as the
+   group-create picker; a local class rather than reaching into another
+   feature's stylesheet for it. */
+.publish__pick {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--color-text-placeholder);
+  margin-right: 10px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--color-text-on-brand);
+}
+.publish__pick--on {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+}
+
+/* 「私密」/「部分可见」tag on one's own restricted post in the feed. Grey and
+   small: it is a status the author already knows, not an announcement. */
+.moment__audience {
+  margin-left: 8px;
+  padding: 0 4px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 2px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-timestamp);
+}
+
+/* 通知锚定高亮 (M-I18): one pulse marking the post a notification tap landed
+   on. Same treatment as the chat page's `.msg-anchor-flash` — cleared via
+   onAnimationEnd so it can replay for the next notification.
+
+   `backwards`, never `both`: a retained end frame would leave a computed
+   transform/paint on this wrapper, and a moments card that becomes a
+   containing block turns the full-screen image viewer opened from inside it
+   into a 390px window (see CLAUDE.md 3.5 / specs/motion.md). Background-only
+   here, but the fill-mode habit is the point. */
+.moment-anchor-flash {
+  animation: moment-anchor-flash 1.2s ease-out 1 backwards;
+}
+@keyframes moment-anchor-flash {
+  0%,
+  55% {
+    background: var(--color-page-pressed);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .moment-anchor-flash {
+    animation: none !important;
+  }
 }

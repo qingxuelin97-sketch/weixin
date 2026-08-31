@@ -105,6 +105,10 @@ export interface SearchInput {
   moments: MomentVM[];
 }
 
+/** Newest-first within equal relevance. Shared by the pure and deep passes. */
+const byScore = (a: SearchHit, b: SearchHit) =>
+  b.score - a.score || (b.createdAt ?? 0) - (a.createdAt ?? 0);
+
 /** Per-kind base weight, so a matching name outranks a matching message body. */
 const KIND_WEIGHT: Record<SearchKind, number> = {
   contact: 1000,
@@ -242,7 +246,6 @@ export function search(input: SearchInput, queryRaw: string): SearchHit[] {
     });
   }
 
-  const byScore = (a: SearchHit, b: SearchHit) => b.score - a.score || (b.createdAt ?? 0) - (a.createdAt ?? 0);
   for (const group of [contactHits, convHits, msgHits, momentHits]) {
     hits.push(...group.sort(byScore).slice(0, PER_KIND_LIMIT));
   }
@@ -262,4 +265,131 @@ export function groupByKind(hits: SearchHit[]): Array<{ kind: SearchKind; label:
     label,
     hits: hits.filter((h) => h.kind === kind),
   })).filter((g) => g.hits.length > 0);
+}
+
+/* ==================================================================== */
+/* Whole-database search (M-G2)                                          */
+/* ==================================================================== */
+
+/** How far back per conversation. A ceiling, not a page size. */
+export const DEEP_SCAN_LIMIT = 3000;
+/** Rows per cursor page while scanning. */
+const SCAN_PAGE = 400;
+
+export interface DeepSearchDeps {
+  /**
+   * One page of a conversation's messages, newest first, strictly older than
+   * `beforeId`. Injected rather than imported so this module stays pure and
+   * unit-testable — the repo-backed implementation lives at the call site.
+   */
+  page: (convId: string, beforeId: number | undefined, limit: number) => Promise<MessageVM[]>;
+}
+
+export interface DeepSearchResult {
+  hits: SearchHit[];
+  /** True when some conversation hit `DEEP_SCAN_LIMIT` before running out. */
+  truncated: boolean;
+}
+
+/**
+ * Search everything, including history the store never loaded.
+ *
+ * `search()` above matches only `input.messages` — what hydration happened to
+ * put in memory, which was a flat 200 per conversation. So the app could not
+ * find a message it was perfectly capable of storing: "搜不到" and "翻不到"
+ * were the same bug seen from two directions, and M-G2 fixes both ends.
+ *
+ * The hidden-conversation rule is enforced HERE, exactly as in `search()`: a
+ * hidden thread is never even scanned. Keeping that check inside this module
+ * (rather than asking callers to pre-filter) is what makes leaking an AI↔AI
+ * exchange impossible rather than merely unlikely — that tell cannot be taken
+ * back once seen.
+ */
+export async function searchAll(
+  input: SearchInput,
+  queryRaw: string,
+  deps: DeepSearchDeps,
+): Promise<DeepSearchResult> {
+  const query = queryRaw.trim();
+  if (!query) return { hits: [], truncated: false };
+
+  // Everything except messages comes from the pure pass — contacts, titles and
+  // Moments are fully in memory already.
+  const shallow = search({ ...input, messages: {} }, query);
+
+  const hidden = new Set(input.conversations.filter((c) => c.isHidden).map((c) => c.id));
+  const scanned: Record<string, MessageVM[]> = {};
+  let truncated = false;
+
+  for (const conv of input.conversations) {
+    if (hidden.has(conv.id)) continue;
+    const rows: MessageVM[] = [];
+    let cursor: number | undefined;
+    for (;;) {
+      const page = await deps.page(conv.id, cursor, SCAN_PAGE);
+      if (page.length === 0) break;
+      rows.push(...page);
+      cursor = page.reduce((min, m) => Math.min(min, m.id), Number.MAX_SAFE_INTEGER);
+      if (page.length < SCAN_PAGE) break;
+      if (rows.length >= DEEP_SCAN_LIMIT) {
+        truncated = true;
+        break;
+      }
+    }
+    if (rows.length) scanned[conv.id] = rows;
+  }
+
+  // Re-run the pure matcher over the scanned bodies so message scoring,
+  // excerpting and the recall rule stay in exactly one place.
+  const deep = search({ ...input, messages: scanned }, query).filter((h) => h.kind === 'message');
+
+  return { hits: [...shallow, ...deep].sort(byScore), truncated };
+}
+
+/* ==================================================================== */
+/* Conversation-scoped search (M-I6)                                     */
+/* ==================================================================== */
+
+/**
+ * Search inside ONE conversation — the ChatInfoPage「查找聊天记录」entry.
+ *
+ * Reuses `search()` on a scoped input rather than re-implementing matching, so
+ * scoring, excerpting and the recall rule stay in exactly one place. The hidden
+ * guard is re-stated here even though `search()` also enforces it: this
+ * function takes a convId directly, so it must refuse a hidden id on its own —
+ * a caller cannot be trusted to have checked, and the leak is irreversible.
+ */
+export function searchConversation(input: SearchInput, convId: string, query: string): SearchHit[] {
+  const conv = input.conversations.find((c) => c.id === convId);
+  if (!conv || conv.isHidden) return [];
+  const scoped: SearchInput = {
+    contacts: [],
+    conversations: [conv],
+    messages: { [convId]: input.messages[convId] ?? [] },
+    moments: [],
+  };
+  return search(scoped, query).filter((h) => h.kind === 'message');
+}
+
+/**
+ * Conversation-scoped deep pass: scans this one thread's full history through
+ * the same paging dependency `searchAll` uses, and nothing else — the other
+ * conversations are never even read.
+ */
+export async function searchConversationAll(
+  input: SearchInput,
+  convId: string,
+  query: string,
+  deps: DeepSearchDeps,
+): Promise<DeepSearchResult> {
+  const conv = input.conversations.find((c) => c.id === convId);
+  if (!conv || conv.isHidden) return { hits: [], truncated: false };
+  const scoped: SearchInput = {
+    contacts: [],
+    conversations: [conv],
+    messages: {},
+    moments: [],
+  };
+  const r = await searchAll(scoped, query, deps);
+  return { hits: r.hits.filter((h) => h.kind === 'message'), truncated: r.truncated };
 }

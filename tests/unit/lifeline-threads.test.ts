@@ -12,6 +12,8 @@ import {
   threadsFromFacts,
   pickThread,
   threadDirective,
+  threadAwareness,
+  shouldSurfaceThread,
   isClosed,
   type Thread,
 } from '../../src/ai/threads';
@@ -335,5 +337,73 @@ describe('affect', () => {
       arousal: 0,
       at: T0,
     });
+  });
+});
+
+/* ==================== threads in ordinary conversation (M-G0) ==================== */
+
+/**
+ * Threads shipped in M-E3 wired to `sendProactiveMessage` and nowhere else, so
+ * "上次你说要去看牙" could only ever arrive hours later as an unprompted
+ * message — while you were actually talking to her the system was off.
+ *
+ * Turning it on for every reply would be the wrong fix: a friend who works
+ * through your old topics on every turn is a checklist. So it opens only where
+ * a person reaches for something to say.
+ */
+describe('when a loose thread may surface mid-conversation', () => {
+  const T = 1_755_400_000_000;
+  const msg = (over: Partial<MessageVM>): MessageVM =>
+    ({
+      id: 1,
+      convId: 'c1',
+      senderId: 'self',
+      type: 'text',
+      content: '今天上班好累啊，开了一整天的会',
+      status: 'sent',
+      createdAt: T,
+      ...over,
+    }) as MessageVM;
+
+  it('opens on a filler turn that carries no topic of its own', () => {
+    expect(shouldSurfaceThread([msg({ content: '嗯' })], T)).toBe(true);
+    expect(shouldSurfaceThread([msg({ content: '在吗' })], T)).toBe(true);
+  });
+
+  it('stays shut when the user actually said something', () => {
+    // Her reply belongs to what you just said, not to a topic from Tuesday.
+    expect(shouldSurfaceThread([msg({})], T)).toBe(false);
+  });
+
+  it('opens when the conversation is resuming after a real gap', () => {
+    const older = msg({ id: 1, createdAt: T - 20 * 3_600_000 });
+    const now = msg({ id: 2, createdAt: T });
+    expect(shouldSurfaceThread([older, now], T)).toBe(true);
+  });
+
+  it('never opens off the back of her own message', () => {
+    // Otherwise she would be answering herself with an old topic.
+    expect(shouldSurfaceThread([msg({ senderId: 'ai_lin', content: '嗯' })], T)).toBe(false);
+    expect(shouldSurfaceThread([], T)).toBe(false);
+  });
+
+  it('phrases the reply-path version as background, not as an instruction', () => {
+    const thread = {
+      id: 't1',
+      kind: 'plan' as const,
+      text: '去看牙',
+      speakerId: 'self',
+      convId: 'c1',
+      saidAt: T - 3 * 86_400_000,
+      ripeAt: T - 86_400_000,
+      staleAt: T + 86_400_000,
+    };
+    const awareness = threadAwareness(thread, T);
+    expect(awareness).toContain('去看牙');
+    // The user's actual message has to stay the subject of a reply.
+    expect(awareness).toContain('背景不是任务');
+    expect(awareness).not.toContain('自然地问一句');
+    // The proactive form still instructs, because there she opens the thread.
+    expect(threadDirective(thread, T)).toContain('自然地问一句');
   });
 });

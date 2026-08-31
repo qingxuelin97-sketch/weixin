@@ -101,6 +101,17 @@ export interface GenerateContext {
   prefixPrefill?: string;
   /** Persona-styled fallback line if the whole ladder fails (never a raw error). */
   personaRefusal?: () => Bubble[];
+  /**
+   * Persona-styled CUT-OFF line: the stream died after she had already started
+   * talking (M-I5). A different thing from a refusal and it must not reuse that
+   * copy — a refusal is "我现在不想聊这个", a truncation is "……先不说了，这边
+   * 有点事". Getting the two confused reads as her refusing halfway through a
+   * sentence she was clearly happy to say.
+   *
+   * Without this hook the turn just stops mid-air, which is what users actually
+   * saw after M-I5 shipped the transport half of streaming.
+   */
+  personaTruncation?: () => Bubble[];
 }
 
 export class LlmRouter {
@@ -206,6 +217,52 @@ export class LlmRouter {
     ctx: GenerateContext = {},
     convKey = 'default',
   ): AsyncIterable<Bubble> {
+    // Web-only progressive path (M-I5): stream from the PRIMARY rung. The
+    // degradation ladder is strictly a pre-first-bubble affair — refusal
+    // handling and provider fallback need the freedom to throw the text away,
+    // and a bubble already shown cannot be un-shown. So: the first bubble is
+    // inspected before release (a refusal opener aborts the stream and drops
+    // to the ladder); any later break keeps what was shown and closes the turn
+    // with the persona's cut-off line — never a retry, never silence.
+    // JSON-mode calls never stream — structured output is parsed whole.
+    const plan = this.policy.plan(req);
+    const stickyKey = `${convKey}::${req.nsfwTier}`;
+    const pinned = this.sticky.get(stickyKey);
+    const primary = pinned ?? { provider: plan.provider, model: plan.model };
+    if (!opts.json && primary.provider.canStream?.() && primary.provider.generateStream) {
+      let released = 0;
+      try {
+        void recordUsage(usageKindFor(req.role, convKey), Date.now()).catch(() => {});
+        for await (const b of primary.provider.generateStream({ ...opts, model: primary.model })) {
+          if (released === 0 && isRefusal({ text: b.content, finishReason: null, raw: null })) {
+            // First bubble reads as a refusal — abandon the stream unshown
+            // and let the one-shot ladder (soften/fallback/persona) handle it.
+            break;
+          }
+          released++;
+          yield b;
+        }
+        if (released > 0) {
+          if (pinned && --pinned.remaining <= 0) this.sticky.delete(stickyKey);
+          return; // the stream carried the turn
+        }
+      } catch (e) {
+        if (released > 0) {
+          // Post-first-bubble break. The ladder stays SHUT (retrying would
+          // re-answer a turn the user has already half-read), but ending here
+          // in silence is the bug M-I5 left behind: she stops mid-sentence and
+          // nothing ever explains it. So the turn gets closed in character.
+          logError(`llm.stream.truncated[${primary.provider.id}]`, e);
+          if (!opts.signal?.aborted && ctx.personaTruncation) {
+            for (const b of ctx.personaTruncation()) yield b;
+          }
+          return;
+        }
+        logError(`llm.stream[${primary.provider.id}]`, e);
+        // fall through to the one-shot ladder
+      }
+    }
+
     try {
       const r = await this.complete(req, opts, ctx, convKey);
       for (const b of parseBubbles(r.text)) yield b;

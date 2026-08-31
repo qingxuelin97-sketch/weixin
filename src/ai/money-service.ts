@@ -16,6 +16,7 @@ import { claimShare, isFullyClaimed, markBestLuck, appendTx, grabDelayMs } from 
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
 import { recordAffect } from '../lib/affect';
+import { noteDrift } from './drift';
 import { recordRelEvent } from './relationship';
 
 export interface MoneyHooks {
@@ -57,12 +58,58 @@ export async function sendRedPacket(
   grabbers: Array<{ contactId: string; persona?: PersonaVM }>,
   hooks: MoneyHooks,
 ): Promise<RedPacketVM> {
-  const now = hooks.now();
-  const id = `rp_${now}`;
+  return createRedPacket('self', convId, totalFen, count, greeting, grabbers, hooks);
+}
+
+/**
+ * The same, sent BY an agent (M-H1).
+ *
+ * Money used to flow one way only — every packet in the codebase was
+ * `senderId: 'self'`, so she could take and never give. The mechanics are
+ * identical; the two differences are that no wallet is debited (her money is
+ * fiction, and inventing a ledger for it would make the user's balance a lie)
+ * and that the sender is excluded from the grab queue.
+ */
+export async function sendRedPacketFrom(
+  senderId: string,
+  convId: string,
+  totalFen: number,
+  count: number,
+  greeting: string,
+  grabbers: Array<{ contactId: string; persona?: PersonaVM }>,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<RedPacketVM> {
+  return createRedPacket(
+    senderId,
+    convId,
+    totalFen,
+    count,
+    greeting,
+    grabbers.filter((g) => g.contactId !== senderId),
+    hooks,
+    at,
+  );
+}
+
+async function createRedPacket(
+  senderId: string,
+  convId: string,
+  totalFen: number,
+  count: number,
+  greeting: string,
+  grabbers: Array<{ contactId: string; persona?: PersonaVM }>,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<RedPacketVM> {
+  // `at` lets a backfilled packet carry the timestamp it "happened" at while
+  // the row is still written now — same discipline as every other handler.
+  const now = at ?? hooks.now();
+  const id = `rp_${now}_${senderId}`;
   const rp: RedPacketVM = {
     id,
     convId,
-    senderId: 'self',
+    senderId,
     totalFen,
     count,
     kind: 'lucky',
@@ -73,11 +120,13 @@ export async function sendRedPacket(
     createdAt: now,
   };
   await repo.putRedPacket(rp);
-  await recordWalletTx('rp_out', -totalFen, '发出红包', id, now);
+  // Only the user has a wallet. An agent's packet costs nothing and must not
+  // touch the ledger the balance page reads.
+  if (senderId === 'self') await recordWalletTx('rp_out', -totalFen, '发出红包', id, now);
 
   await hooks.appendMessage({
     convId,
-    senderId: 'self',
+    senderId,
     type: 'rp',
     content: '',
     meta: { rpId: id, greeting: rp.greeting, opened: false },
@@ -128,30 +177,49 @@ export async function claimRedPacket(
     // grabbing a packet YOU sent is the clearest positive event in the app.
     if (rp.senderId === 'self' && claimerId !== 'self') {
       void recordAffect(claimerId, 'gift_received', now).catch(() => {});
+      // …and the slow version of the same thing (M-H1): reciprocity is the
+      // most human money instinct there is, so someone you keep giving to
+      // becomes measurably more open-handed themselves.
+      void noteDrift(claimerId, 'gift_received', now);
     }
   }
 
   // Once the last share is gone, settle "best luck" and close the packet.
+  const mine = rp.senderId === 'self';
   if (isFullyClaimed(rp, all)) {
     for (const c of markBestLuck(rp, all)) await repo.putClaim(c);
     await repo.putRedPacket({ ...rp, status: 'done' });
-    await markRpMessageOpened(rp, hooks, '已被领完');
+    await markRpMessageOpened(rp, hooks, mine ? '已被领完' : '已领取');
   } else if (claimerId === 'self') {
     await markRpMessageOpened(rp, hooks, '');
   }
 
+  // WeChat's grey line names both ends. Before agents could send packets this
+  // only ever ran for the user's own, so the sender was left implicit — which
+  // rendered as the headless 「你领取了的红包」 the moment one arrived from her.
+  const senderName = mine ? '自己' : (await peerName(rp.senderId));
   await hooks.appendMessage({
     convId: rp.convId,
     senderId: 'self',
     type: 'system',
     content:
       claimerId === 'self'
-        ? `你领取了${rp.senderId === 'self' ? '自己' : ''}的红包`
-        : `${claimerName}领取了你的红包`,
+        ? `你领取了${senderName}的红包`
+        : `${claimerName}领取了${mine ? '你' : senderName}的红包`,
     status: 'sent',
     createdAt: now,
   });
   return claim;
+}
+
+/** Display name for a non-self sender; falls back to the id rather than empty. */
+async function peerName(contactId: string): Promise<string> {
+  try {
+    const c = await repo.getContact(contactId);
+    return c?.remark ?? c?.name ?? contactId;
+  } catch {
+    return contactId;
+  }
 }
 
 /** Flip the red packet bubble to its dim/claimed state. */
@@ -205,6 +273,78 @@ export async function sendTransfer(
     payload: { transferId: id, convId },
     now,
   });
+  await enqueueTransferReturn(t, now);
+  return t;
+}
+
+/** WeChat returns an uncollected transfer after 24 hours. So does this one. */
+export const TRANSFER_EXPIRE_MS = 24 * 3_600_000;
+
+/**
+ * Queue the 24h auto-return for a transfer that was just sent.
+ *
+ * Queued for BOTH directions. The user→AI direction normally settles in
+ * seconds via `transfer_accept`, and then this row finds a non-pending transfer
+ * and does nothing — but if that accept ever fails (the executor marks a row
+ * done BEFORE running it and never retries), the money left the wallet at send
+ * time and nothing would ever put it back. This is that floor.
+ *
+ * Stable id so a re-send of the same transfer id cannot stack two returns.
+ */
+async function enqueueTransferReturn(t: TransferVM, now: number): Promise<void> {
+  await enqueue({
+    kind: 'transfer_return',
+    fireAt: now + TRANSFER_EXPIRE_MS,
+    payload: { transferId: t.id, convId: t.convId, at: now + TRANSFER_EXPIRE_MS },
+    now,
+    id: `tr_return_${t.id}`,
+  });
+}
+
+/**
+ * A transfer sent BY an agent, to the user (M-H1).
+ *
+ * Deliberately NOT auto-accepted: in WeChat an incoming transfer sits there
+ * until you tap 收款, and that tap is the whole moment. The chat page already
+ * handles the tap for a pending transfer from the peer (`onMoneyTap`), and
+ * `acceptTransfer` already credits the wallet whenever `toId === 'self'` — so
+ * the money enters the ledger exactly when the user takes it, and never if
+ * they don't.
+ */
+export async function sendTransferFrom(
+  fromId: string,
+  convId: string,
+  amountFen: number,
+  note: string,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<TransferVM> {
+  const now = at ?? hooks.now();
+  const id = `tr_${now}_${fromId}`;
+  const t: TransferVM = {
+    id,
+    convId,
+    fromId,
+    toId: 'self',
+    amountFen,
+    note,
+    status: 'pending',
+    createdAt: now,
+  };
+  await repo.putTransfer(t);
+  await hooks.appendMessage({
+    convId,
+    senderId: fromId,
+    type: 'transfer',
+    content: '',
+    meta: { transferId: id, amountFen, note, status: 'pending' },
+    status: 'sent',
+    createdAt: now,
+  });
+  // …but it does not sit there forever. 24h uncollected → back to her, which is
+  // both WeChat's real behaviour and the case the user actually hits: she sends
+  // you money, you never tap 收款, and a permanently pending card is a lie.
+  await enqueueTransferReturn(t, now);
   return t;
 }
 
@@ -223,6 +363,7 @@ export async function acceptTransfer(transferId: string, hooks: MoneyHooks): Pro
   void recordRelEvent(t.fromId, t.toId, 'transfer_received', now).catch(() => {});
   if (t.fromId === 'self' && t.toId !== 'self') {
     void recordAffect(t.toId, 'gift_received', now).catch(() => {});
+    void noteDrift(t.toId, 'gift_received', now);
   }
 
   const msgs = await repo.getMessages(t.convId, { limit: 200 });
@@ -237,4 +378,69 @@ export async function acceptTransfer(transferId: string, hooks: MoneyHooks): Pro
       },
     });
   }
+}
+
+/**
+ * 24 小时未收款自动退还.
+ *
+ * `'returned'` was a status the schema, the VM and the transcript projection
+ * all knew about and NOTHING could ever produce — the one branch in render-msg
+ * even compared against `'refunded'`, a string this codebase never writes. So
+ * an uncollected transfer stayed 「请收款」 forever, the sender's money stayed
+ * debited forever, and she had no way to know you never took it.
+ *
+ * Idempotent by construction: anything but `pending` returns immediately, so
+ * the queued row is harmless once the transfer has been accepted (or returned
+ * by an earlier duplicate row).
+ *
+ * @param at the row's `fireAt` — the moment this "happened", per the backfill
+ *           rule that a queued action's timestamp is its fire time, not the
+ *           moment the app happened to be reopened.
+ */
+export async function returnTransfer(
+  transferId: string,
+  hooks: MoneyHooks,
+  at?: number,
+): Promise<void> {
+  const t = await repo.getTransfer(transferId);
+  if (!t || t.status !== 'pending') return;
+
+  const msgs = await repo.getMessages(t.convId, { limit: 200 });
+  // rowid 序 == 时间序 (CLAUDE.md): this row is inserted NOW, so its timestamp
+  // must never predate the newest one already in the thread — a backfilled
+  // return can be days behind a conversation that kept going.
+  const lastAt = msgs.at(-1)?.createdAt ?? 0;
+  const now = Math.max(at ?? hooks.now(), lastAt);
+
+  await repo.putTransfer({ ...t, status: 'returned' });
+
+  // The money goes back where it came from. Only the user has a real wallet:
+  // an agent's balance is fiction (see sendRedPacketFrom), so her returned
+  // transfer moves no ledger row — it was never debited from one.
+  if (t.fromId === 'self') {
+    await recordWalletTx('transfer_in', t.amountFen, '转账已退还', `${t.id}_ret`, now);
+  }
+
+  const target = msgs.find((m) => m.type === 'transfer' && m.meta?.transferId === t.id);
+  if (target) {
+    await hooks.updateMessage({
+      ...target,
+      meta: { ...target.meta, status: 'returned', statusText: '已退还' },
+    });
+  }
+
+  // The system line is what makes it legible in the thread — and, through
+  // render-msg, what lets HER know the money came back untouched.
+  const mine = t.fromId === 'self';
+  const who = mine ? '' : await peerName(t.fromId);
+  await hooks.appendMessage({
+    convId: t.convId,
+    senderId: 'self',
+    type: 'system',
+    content: mine
+      ? '你的转账超过 24 小时未被接收，已退还'
+      : `${who}的转账超过 24 小时未被接收，已退还`,
+    status: 'sent',
+    createdAt: now,
+  });
 }

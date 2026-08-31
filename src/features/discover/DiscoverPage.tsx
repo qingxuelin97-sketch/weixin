@@ -1,5 +1,8 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NavBar } from '../../components/NavBar';
+import { Avatar } from '../../components/Avatar';
+import { Badge } from '../../components/Badge';
 import { IconPlus, IconSearch } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
 import './discover.css';
@@ -161,6 +164,16 @@ const ROUTES: Record<string, string> = { moments: '/moments', search: '/search' 
 export function DiscoverPage() {
   const navigate = useNavigate();
   const showToast = useAppStore((s) => s.showToast);
+  // 朋友圈红点 (M-I15): likes/comments on YOUR posts since you last opened the
+  // feed. Derived from storage on mount — the badge must survive restarts, so
+  // it is never a counter that only lives in memory.
+  const momentsNews = useAppStore((s) => s.momentsNews);
+  const refreshMomentsNews = useAppStore((s) => s.refreshMomentsNews);
+  const contactById = useAppStore((s) => s.contactById);
+  useEffect(() => {
+    void refreshMomentsNews().catch(() => {});
+  }, [refreshMomentsNews]);
+  const newsActor = momentsNews.actorId ? contactById(momentsNews.actorId) : undefined;
   return (
     <>
       <NavBar
@@ -192,12 +205,27 @@ export function DiscoverPage() {
                 <DIcon kind={entry.key} />
                 <span className="discover__label">{entry.label}</span>
                 {entry.extra === 'badge' && entry.badge != null && (
-                  <span className="discover__num-badge">{entry.badge}</span>
+                  <Badge className="discover__num-badge" count={entry.badge} />
                 )}
-                {entry.extra === 'avatar-dot' && (
+                {entry.extra === 'avatar-dot' && momentsNews.count > 0 && (
+                  // WeChat's idiom: the ACTOR's face plus a red dot — the row
+                  // tells you WHO before you even enter the feed (M-I15).
                   <span className="discover__avatar-dot">
-                    <span className="discover__mini-avatar" />
-                    <span className="discover__reddot" />
+                    <span className="discover__news-hint">有新消息</span>
+                    <span className="discover__avatar-wrap">
+                      {newsActor ? (
+                        <Avatar
+                          text={newsActor.avatarText}
+                          color={newsActor.avatarColor}
+                          imageRef={newsActor.avatarRef}
+                          size={26}
+                        />
+                      ) : (
+                        <span className="discover__mini-avatar" />
+                      )}
+                      {/* The 「有新消息」 text above already names it. */}
+                      <Badge className="discover__reddot" dot />
+                    </span>
                   </span>
                 )}
                 <span className="discover__chevron">›</span>

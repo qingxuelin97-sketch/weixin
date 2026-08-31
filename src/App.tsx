@@ -1,8 +1,12 @@
 import { useEffect, type ReactNode } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { TabScaffold } from './app/TabScaffold';
+import { PageStack } from './app/PageStack';
 import { Toast } from './components/Toast';
+import { IncomingCall } from './features/call/IncomingCall';
+import { DialogHost } from './components/dialog';
+import { useBackButton } from './app/useBackButton';
 import { ChatListPage } from './features/chat-list/ChatListPage';
 import { ContactsPage } from './features/contacts/ContactsPage';
 import { DiscoverPage } from './features/discover/DiscoverPage';
@@ -11,6 +15,7 @@ import { ProfilePage } from './features/me/ProfilePage';
 import { ChatPage } from './features/chat/ChatPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { ApiConfigPage } from './features/settings/ApiConfigPage';
+import { AsrConfigPage } from './features/settings/AsrConfigPage';
 import { PersonaEditPage } from './features/settings/PersonaEditPage';
 import { RedPacketSendPage } from './features/money/RedPacketSendPage';
 import { RedPacketOpenPage } from './features/money/RedPacketOpenPage';
@@ -19,34 +24,65 @@ import { TransferSendPage } from './features/money/TransferSendPage';
 import { WalletPage } from './features/money/WalletPage';
 import { MomentsPage } from './features/moments/MomentsPage';
 import { MomentPublishPage } from './features/moments/MomentPublishPage';
+import { MomentRepostPage } from './features/moments/MomentRepostPage';
+import { MomentTopicPage } from './features/moments/MomentTopicPage';
+import { MomentAlbumPage } from './features/moments/MomentAlbumPage';
 import { BackupPage } from './features/settings/BackupPage';
 import { NotifyTestPage } from './features/settings/NotifyTestPage';
 import { EnvDiagPage } from './features/settings/EnvDiagPage';
 import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
-import { StoryPage } from './features/settings/StoryPage';
+import { WorldbookPage } from './features/settings/WorldbookPage';
+import { MergedViewPage } from './features/chat/MergedViewPage';
+import { StoryPage } from './features/story/StoryPage';
+import { ScriptDetailPage } from './features/story/ScriptDetailPage';
+import { StoryRunPage } from './features/story/StoryRunPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
+import { StatusPage } from './features/contacts/StatusPage';
+import { YearReportPage } from './features/me/YearReportPage';
+import { FavoritesPage } from './features/favorites/FavoritesPage';
 import { NewContactPage } from './features/contacts/NewContactPage';
+import { PersonaGeneratePage } from './features/contacts/PersonaGeneratePage';
 import { GroupCreatePage } from './features/contacts/GroupCreatePage';
+import { GroupGeneratePage } from './features/contacts/GroupGeneratePage';
 import { ChatInfoPage } from './features/chat/ChatInfoPage';
 import { GroupListPage, NewFriendsPage, SimpleListPage } from './features/contacts/ContactListPages';
 import { CallPage } from './features/call/CallPage';
 import { SearchPage } from './features/search/SearchPage';
+import { NativePage } from './features/settings/NativePage';
+import { UsagePage } from './features/settings/UsagePage';
+import { PromptLabPage } from './features/settings/PromptLabPage';
+import { BatteryGuidePage } from './features/settings/BatteryGuidePage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
+import { useDeepLinks } from './app/useDeepLinks';
+
+/** Mounts the Android hardware-back handler; needs the router context. */
+function BackButtonBridge() {
+  useBackButton();
+  return null;
+}
 
 /**
- * Full-screen pushed pages slide in from the right (finally consuming the
- * `--dur-page` token defined in M1). Keyed by location so every navigation —
- * including chat→chat — replays the entrance. Tabs switch instantly, like WeChat.
+ * A pushed full-screen page.
+ *
+ * The transition itself moved to `PageStack` in M-H3: this wrapper used to
+ * re-key on `location.key` to replay an ENTRANCE, which is exactly why there
+ * was never an exit — the departing page unmounted on the same frame. It is
+ * now just the layout box; `PageStack` animates both sides.
  */
 function Push({ children }: { children: ReactNode }) {
-  const location = useLocation();
-  return (
-    <div className="page-push" key={location.key}>
-      {children}
-    </div>
-  );
+  return <div className="page-push">{children}</div>;
+}
+
+/**
+ * aiwx:// deep links (M-I10): bubble taps, notification taps, the call
+ * full-screen intent and the widget all land here. Needs useNavigate, so it
+ * must live INSIDE the HashRouter — hence a null component, not a hook in App.
+ */
+function DeepLinkBridge() {
+  useDeepLinks();
+  return null;
 }
 
 /**
@@ -85,12 +121,16 @@ export function App() {
 
   return (
     <HashRouter>
+      <DeepLinkBridge />
       <div className="app-shell">
+        <BackButtonBridge />
         <ErrorBoundary>
           {!hydrated ? (
             <div className="app-loading" />
           ) : (
-            <Routes>
+            <PageStack>
+              {(loc) => (
+            <Routes location={loc}>
               <Route element={<TabScaffold />}>
                 <Route path="/" element={<Navigate to="/chats" replace />} />
                 <Route path="/chats" element={<ChatListPage />} />
@@ -102,19 +142,36 @@ export function App() {
               <Route path="/search" element={<Push><SearchPage /></Push>} />
               <Route path="/moments" element={<Push><MomentsPage /></Push>} />
               <Route path="/moments/publish" element={<Push><MomentPublishPage /></Push>} />
+              <Route path="/moments/repost/:momentId" element={<Push><MomentRepostPage /></Push>} />
+              <Route path="/moments/topic/:tag" element={<Push><MomentTopicPage /></Push>} />
+              <Route path="/moments/album/:contactId" element={<Push><MomentAlbumPage /></Push>} />
               <Route path="/profile" element={<Push><ProfilePage /></Push>} />
               <Route path="/settings" element={<Push><SettingsPage /></Push>} />
               <Route path="/settings/api" element={<Push><ApiConfigPage /></Push>} />
+              <Route path="/settings/asr" element={<Push><AsrConfigPage /></Push>} />
               <Route path="/settings/backup" element={<Push><BackupPage /></Push>} />
               <Route path="/settings/notify-test" element={<Push><NotifyTestPage /></Push>} />
               <Route path="/settings/env" element={<Push><EnvDiagPage /></Push>} />
+              <Route path="/settings/usage" element={<Push><UsagePage /></Push>} />
+              <Route path="/settings/prompt-lab" element={<Push><PromptLabPage /></Push>} />
               <Route path="/settings/media" element={<Push><MediaLibraryPage /></Push>} />
+              <Route path="/settings/native" element={<Push><NativePage /></Push>} />
+              <Route path="/settings/battery" element={<Push><BatteryGuidePage /></Push>} />
               <Route path="/persona/:contactId" element={<Push><PersonaEditPage /></Push>} />
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
+              <Route path="/settings/worldbook" element={<Push><WorldbookPage /></Push>} />
+              <Route path="/merged/:convId/:msgId" element={<Push><MergedViewPage /></Push>} />
               <Route path="/story" element={<Push><StoryPage /></Push>} />
+              <Route path="/story/script/:scriptId" element={<Push><ScriptDetailPage /></Push>} />
+              <Route path="/story/run/:saveId" element={<Push><StoryRunPage /></Push>} />
               <Route path="/contact/:contactId" element={<Push><ContactProfilePage /></Push>} />
+              <Route path="/status/:contactId" element={<Push><StatusPage /></Push>} />
+              <Route path="/report" element={<Push><YearReportPage /></Push>} />
+              <Route path="/favorites" element={<Push><FavoritesPage /></Push>} />
               <Route path="/contact-new" element={<Push><NewContactPage /></Push>} />
+              <Route path="/contact-new/ai" element={<Push><PersonaGeneratePage /></Push>} />
               <Route path="/group-new" element={<Push><GroupCreatePage /></Push>} />
+              <Route path="/group-new/ai" element={<Push><GroupGeneratePage /></Push>} />
               <Route path="/chat/:convId/info" element={<Push><ChatInfoPage /></Push>} />
               <Route path="/groups" element={<Push><GroupListPage /></Push>} />
               <Route path="/new-friends" element={<Push><NewFriendsPage /></Push>} />
@@ -128,9 +185,17 @@ export function App() {
               <Route path="/wallet" element={<Push><WalletPage /></Push>} />
               <Route path="*" element={<Navigate to="/chats" replace />} />
             </Routes>
+              )}
+            </PageStack>
           )}
         </ErrorBoundary>
         <Toast />
+        {/* Imperative dialogs (showConfirm/showPrompt/showActionSheet) render
+            here, above every feature overlay (M-I0). */}
+        <DialogHost />
+        {/* Over everything, on any route: a call you have to navigate to is not
+            a call. Renders nothing until an agent actually rings (M-H1). */}
+        <IncomingCall />
       </div>
     </HashRouter>
   );

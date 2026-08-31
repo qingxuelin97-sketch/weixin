@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import 'fake-indexeddb/auto';
 import { repo } from '../../src/db/repo';
 import { makePolicy, type ResolvedConfig } from '../../src/llm/service';
@@ -7,6 +9,7 @@ import type { ChatProvider, GenerateOptions, CompletionResult, Bubble } from '..
 import type { ProviderVM, MessageVM } from '../../src/data/types';
 import { makePersona } from '../../src/data/persona-defaults';
 import { extractMemory, selectFactsForInjection } from '../../src/ai/memory';
+import { matchWorldbook, type WorldbookEntry } from '../../src/ai/worldbook';
 import { callDirector } from '../../src/ai/director';
 import { runAgentDm, type DmDeps, type DmPlan } from '../../src/ai/agent-dm';
 import {
@@ -283,6 +286,81 @@ describe('call site 3 — runAgentDm (hidden, and therefore trace-free)', () => 
 
 /* ------------------------------------------------------------------ */
 
+describe('call site 4 — call script (M-I16 通话台词)', () => {
+  const callPeer = {
+    id: 'ai_call',
+    type: 'ai',
+    name: '小雨',
+    avatarColor: '#000000',
+    avatarText: '雨',
+  } as const;
+
+  it('full-tier call lines land on the permissive channel and carry the transcript', async () => {
+    const { CallSession } = await import('../../src/ai/call-script');
+    const { router, landings } = recordingRouter('{"type":"text","content":"喂"}');
+    const sess = new CallSession({
+      convId: 'c_call_full',
+      peer: callPeer,
+      persona: makePersona({ contactId: 'ai_call', core: 'c', nsfwPermit: true }),
+      globalTier: 'full',
+      direction: 'out',
+      recent: [msg(1, 'self', EXPLICIT)],
+      now: () => 1_754_600_200_000,
+      onLine: () => {},
+      router,
+      pace: () => 0,
+    });
+    await sess.start();
+    expect(landings.length).toBeGreaterThan(0);
+    for (const l of landings) {
+      expect(l.tier).toBe('full');
+      expect(DOMESTIC_KINDS).not.toContain(l.providerKind);
+    }
+    expect(landings[0].providerId).toBe('prov_zen');
+    // The chat context really rides along — this is not a vacuous pass.
+    expect(landings[0].sent).toContain(EXPLICIT);
+  });
+
+  it('an off-tier call still uses the cheap default provider (no over-correction)', async () => {
+    const { CallSession } = await import('../../src/ai/call-script');
+    const { router, landings } = recordingRouter('{"type":"text","content":"喂"}');
+    const sess = new CallSession({
+      convId: 'c_call_off',
+      peer: callPeer,
+      persona: makePersona({ contactId: 'ai_call', core: 'c', nsfwPermit: false }),
+      globalTier: 'full', // permit off pins the tier to off regardless
+      direction: 'in',
+      recent: [msg(1, 'self', '今天下雨了')],
+      now: () => 1_754_600_200_000,
+      onLine: () => {},
+      router,
+      pace: () => 0,
+    });
+    await sess.start();
+    expect(landings[0].tier).toBe('off');
+    expect(landings[0].providerId).toBe('prov_deepseek');
+  });
+
+  it('the call summary rides the same tier discipline', async () => {
+    const { summarizeCall } = await import('../../src/ai/call-script');
+    const { router, landings } = recordingRouter('说好周五见');
+    await summarizeCall({
+      convId: 'c_call_full',
+      peerName: '小雨',
+      tier: 'full',
+      turns: [{ speaker: 'peer', text: EXPLICIT, at: 1_754_600_200_000 }],
+      durationMs: 60_000,
+      router,
+    });
+    expect(landings).toHaveLength(1);
+    expect(landings[0].tier).toBe('full');
+    expect(DOMESTIC_KINDS).not.toContain(landings[0].providerKind);
+    expect(landings[0].sent).toContain(EXPLICIT);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
 describe('tier derivation is centralised (call sites cannot invent one)', () => {
   const permit = makePersona({ contactId: 'p', core: 'c', nsfwPermit: true });
   const noPermit = makePersona({ contactId: 'n', core: 'c', nsfwPermit: false });
@@ -310,6 +388,55 @@ describe('tier derivation is centralised (call sites cannot invent one)', () => 
     expect(out).toContain('小雨');
     expect(out).not.toContain(EXPLICIT);
     expect(out).toContain('…');
+  });
+});
+
+/**
+ * Worldbook selection is a SECOND way authored text reaches a prompt, and
+ * M-I18 gave it a second way to be selected (approximate matching). A gate
+ * that only covers the exact path is not a gate — the tier check has to sit
+ * ahead of BOTH, which is what these assert.
+ */
+describe('call site 5 — worldbook selection, exact and approximate (M-I18)', () => {
+  const T0 = 1_700_000_000_000;
+  const wb = (over: Partial<WorldbookEntry>): WorldbookEntry => ({
+    id: `wb_${over.id ?? 'x'}`,
+    title: 't',
+    keywords: [],
+    content: '内容',
+    scope: 'global',
+    priority: 50,
+    enabled: true,
+    createdAt: T0,
+    ...over,
+  });
+
+  it('nsfw lore never rides an off-tier surface, however it was matched', () => {
+    // 「触发」 is not in the query, so the only route in is the approximate one.
+    const e = wb({ id: 'a', nsfw: true, keywords: ['触发'], content: '她的猫叫年糕' });
+    expect(matchWorldbook([e], { query: '你家猫呢', tier: 'off' })).toEqual([]);
+    expect(matchWorldbook([e], { query: '你家猫呢', tier: 'ambiguous' })).toEqual([
+      '她的猫叫年糕',
+    ]);
+    // And the exact route agrees at both tiers.
+    expect(matchWorldbook([e], { query: '触发一下', tier: 'off' })).toEqual([]);
+    expect(matchWorldbook([e], { query: '触发一下', tier: 'ambiguous' })).toHaveLength(1);
+  });
+
+  it('someone else’s lore is not reachable by approximation either', () => {
+    const e = wb({ id: 'b', scope: 'persona', scopeId: 'ai_a', keywords: ['触发'], content: '她的猫叫年糕' });
+    expect(matchWorldbook([e], { query: '你家猫呢', contactId: 'ai_b', tier: 'full' })).toEqual([]);
+    expect(matchWorldbook([e], { query: '你家猫呢', contactId: 'ai_a', tier: 'full' })).toHaveLength(1);
+  });
+
+  it('both engines derive the tier for the worldbook call rather than declaring one', () => {
+    for (const f of ['src/ai/engine.ts', 'src/ai/group-engine.ts']) {
+      const code = readFileSync(resolve(__dirname, '../..', f), 'utf8');
+      // The `tier` handed to worldLinesFor is the same local the memory
+      // selection uses — never a literal (constitution rule #6).
+      expect(code).toMatch(/worldLinesFor\(\{[\s\S]{0,200}?\btier\b\s*[,}]/);
+      expect(code).not.toMatch(/worldLinesFor\(\{[\s\S]{0,200}?tier:\s*'/);
+    }
   });
 });
 
@@ -369,4 +496,117 @@ describe('memory injection whitelist (specs/nsfw.md, finally implemented)', () =
     const single = selectFactsForInjection(facts, now, { surface: 'single', tier: 'full' });
     expect(single.pinned).toContain('一件私密的事');
   });
+});
+
+/* ==================== images are context too (M-H1) ==================== */
+
+/**
+ * Vision is the highest rule-#6 risk this round introduces.
+ *
+ * A photograph at the full tier is at least as sensitive as the text around
+ * it, and the failure mode is worse: text sent to the wrong endpoint is a
+ * string in someone's log, a photo is a photo. The defence is architectural —
+ * images ride the SAME `GenerateOptions` through the SAME router under the
+ * SAME tier, so there is no second channel that could forget to ask. These
+ * tests pin that there is no second channel.
+ */
+describe('a photo cannot take a different route than the words around it', () => {
+  it('image parts travel in GenerateOptions, not in a separate request', async () => {
+    const src = readFileSync(resolve(__dirname, '../../src/llm/vision.ts'), 'utf8');
+    // No transport of its own: `vision.ts` must not import http/fetch. If it
+    // ever posts by itself, it is by definition outside the router's tier
+    // decision, and rule #6 stops being enforceable by construction.
+    expect(src).not.toContain("from './http'");
+    expect(src).not.toMatch(/\bfetch\s*\(/);
+  });
+
+  it('the AI-side collector has no route of its own either', () => {
+    const src = readFileSync(resolve(__dirname, '../../src/ai/vision-context.ts'), 'utf8');
+    expect(src).not.toContain('getRouter');
+    expect(src).not.toContain("from '../llm/http'");
+  });
+
+  it('a text-only model never receives image parts', async () => {
+    const { attachImages, modelSupportsVision } = await import('../../src/llm/vision');
+    expect(modelSupportsVision('deepseek-chat')).toBe(false);
+    expect(modelSupportsVision('gpt-4o')).toBe(true);
+    // The adapter gates on this; handing image parts to a text model is a hard
+    // 400 on every turn, which reads to the user as "she stopped replying".
+    const msgs = [{ role: 'user', content: '这是什么' }];
+    expect(attachImages(msgs, [])).toBe(msgs);
+  });
+
+  it('attaches to the newest user message and keeps the text last', async () => {
+    const { attachImages } = await import('../../src/llm/vision');
+    const out = attachImages(
+      [
+        { role: 'system', content: 'S' },
+        { role: 'user', content: '旧的' },
+        { role: 'assistant', content: 'A' },
+        { role: 'user', content: '这是什么' },
+      ],
+      ['data:image/jpeg;base64,xxx'],
+    );
+    const last = out[3] as { content: Array<{ type: string }> };
+    expect(Array.isArray(last.content)).toBe(true);
+    expect(last.content[0].type).toBe('image_url');
+    expect(last.content[last.content.length - 1].type).toBe('text');
+    // The older user message stays a plain string — an unchanged prefix is a
+    // cacheable prefix.
+    expect(typeof (out[1] as { content: unknown }).content).toBe('string');
+  });
+
+  it('only the recent, non-recalled photos ride along', async () => {
+    const { imageRefsForTurn } = await import('../../src/ai/vision-context');
+    const img = (id: number, ref: string, over = {}) =>
+      ({ id, convId: 'c', senderId: 'self', type: 'image', content: ref, status: 'sent', createdAt: id, ...over }) as never;
+    const rows = [
+      img(1, 'idb:old'),
+      img(2, 'idb:a'), img(3, 'idb:b'), img(4, 'idb:c'), img(5, 'idb:d'),
+      img(6, 'idb:recalled', { isRecalled: true }),
+    ];
+    const refs = imageRefsForTurn(rows);
+    // Capped, newest-first-wins, and a photo the user took back is never sent:
+    // she must not react to something that is no longer there.
+    expect(refs).not.toContain('recalled');
+    expect(refs.length).toBeLessThanOrEqual(3);
+    expect(refs).toContain('d');
+  });
+});
+
+/**
+ * 铁律 6 的 tier 参数不许有默认值 (M-I18).
+ *
+ * `extractMemory` carried `tier: NsfwTier = 'off'` three lines below its own
+ * doc comment saying the parameter is "REQUIRED, and never invented here", and
+ * `voiceMeta` had the same default. `'off'` is the most permissive value there
+ * is: a caller that simply forgot the argument declared explicit chat content
+ * safe for a mainland endpoint, silently, at runtime.
+ *
+ * Rule 6 is stated in the constitution as a CODE-LEVEL constraint, not a
+ * prompt-level suggestion — so the compiler should be the thing enforcing it.
+ * Every call site already passed a tier when the defaults were removed, which
+ * is exactly why this needs a guard: nothing was broken, so nothing would have
+ * noticed the day something was.
+ */
+describe('tier 是必传参数，不是有默认值的参数', () => {
+  const SIGNATURES = [
+    { file: 'src/ai/memory.ts', fn: 'extractMemory' },
+    { file: 'src/ai/engine.ts', fn: 'voiceMeta' },
+  ];
+
+  for (const { file, fn } of SIGNATURES) {
+    it(`${fn} takes tier without a default`, () => {
+      const src = readFileSync(resolve(__dirname, '..', '..', file), 'utf8');
+      const at = src.indexOf(`export async function ${fn}`);
+      expect(at, `${file} 里找不到 ${fn}——守卫失去了目标`).toBeGreaterThan(-1);
+      const sig = src.slice(at, src.indexOf('{', src.indexOf('): ', at)));
+      expect(sig).toContain('tier: NsfwTier');
+      expect(
+        sig,
+        `${fn} 的 tier 又有默认值了。'off' 是最宽松的档：漏传的调用点会把全开档` +
+          `内容声明成可以走国内端点，而且不报错。铁律 6 应当在编译期失败。`,
+      ).not.toMatch(/tier: NsfwTier\s*=/);
+    });
+  }
 });

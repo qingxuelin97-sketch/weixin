@@ -18,10 +18,15 @@
 import { seededRng } from '../lib/money';
 import { isActiveAt } from './heartbeat';
 import { agendaAt } from './lifeline';
-import type { PersonaVM } from '../data/types';
+import { planGift } from './money-motive';
+import { maybeGroupEvent } from './group-events';
+import { maybeGroupInvite } from './agent-invite';
+import type { MomentVisibility, PersonaVM } from '../data/types';
+import { canSeeMoment } from '../lib/moment-visibility';
 
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 
 /** Nothing is fabricated inside this margin — it would collide with live play. */
 export const SETTLE_MARGIN = 2 * MINUTE;
@@ -42,9 +47,82 @@ export const LIMITS = {
   groupMessagesPerHour: 6,
   /** Total posts across everyone. */
   moments: 6,
+  /** 赞+评 on pre-absence posts, total per stretch (M-I5). Likes cost 0 LLM. */
+  socialReactions: 4,
+  /** Offline AI↔AI DM sessions per stretch (M-I5). One: DMs are expensive. */
+  offlineDms: 1,
+  /**
+   * Gifts across a whole absence (M-I18). One. Money is a gesture; two of them
+   * in one night is a malfunction, and `planGift`'s own cooldown agrees.
+   */
+  gifts: 1,
+  /** 聚会提议 + 拉群提议 planned offline, total (M-I18). */
+  socialPlans: 2,
   /** Hard ceiling on LLM calls the drain will make. */
-  llmCalls: 8,
+  llmCalls: 10,
+  /**
+   * Hard ceiling on ROWS, whatever they cost. Some kinds are free (a like is a
+   * row, a gift's line was written by the planner, an invite is a template),
+   * so the call budget alone would let a long absence queue an unbounded pile
+   * of them.
+   */
+  events: 16,
 } as const;
+
+/**
+ * What each kind costs the drain, in LLM calls.
+ *
+ * Counting free kinds as calls is not a conservative rounding — it spends the
+ * budget on work that never happens, and the thing it crowds out is always a
+ * real message. Keyed by kind so a new kind cannot be added without deciding.
+ */
+const LLM_COST: Record<SimEvent['kind'], number> = {
+  heartbeat: 1,
+  moment_post: 1,
+  group_msg: 1,
+  moment_comment: 1,
+  agent_dm: 1,
+  group_event: 1, // the propose line is generated in her voice
+  moment_like: 0,
+  ai_money: 0, // line + note come from the planner
+  agent_invite: 0, // `inviteLine` is a template
+};
+
+/**
+ * Which kinds get the last slot when the budget runs out. Lower wins.
+ *
+ * Spending the ceiling in chronological order sounds neutral and is not: group
+ * chatter outnumbers everything else by an order of magnitude and starts at the
+ * top of the window, so a plain `slice` hands it the entire budget and every
+ * rarer kind is cut for being later. Measured, that made 聚会 unreachable in
+ * 60 consecutive seeds. Order is by what an absence would be poorest without —
+ * the one thing that HAPPENED beats the twentieth line of ambient talk.
+ */
+const KEEP_ORDER: Record<SimEvent['kind'], number> = {
+  ai_money: 0,
+  agent_invite: 0,
+  group_event: 1,
+  agent_dm: 1,
+  heartbeat: 2,
+  moment_post: 3,
+  moment_comment: 4,
+  moment_like: 4,
+  group_msg: 5,
+};
+
+/**
+ * What the gift planner needs that simulate cannot read for itself (M-I18).
+ *
+ * Resolved by the impure caller, same arrangement as `SimGroup.activity`.
+ * Absent = she never sends anything offline in this conversation, which is
+ * exactly the pre-I18 behaviour.
+ */
+export interface SimGiftInput {
+  /** Effective closeness 0..100 (relationship edge, already resolved). */
+  affinity: number;
+  /** When she last gave money HERE. Undefined = never. */
+  lastGiftAt?: number;
+}
 
 export interface SimContact {
   contactId: string;
@@ -52,6 +130,8 @@ export interface SimContact {
   persona: PersonaVM;
   /** Timestamp of the last message in that conversation, if any. */
   lastMsgAt?: number;
+  /** Enables offline gifts for this conversation (M-I18). */
+  gift?: SimGiftInput;
 }
 
 export interface SimGroup {
@@ -59,18 +139,75 @@ export interface SimGroup {
   /** Member contact ids that have personas. */
   memberIds: string[];
   lastMsgAt?: number;
+  /**
+   * Activity multiplier from the group's knobs (M-I1), default 1. Scales the
+   * message BUDGET only — never the spacing, so the "≤2 events per 15 min"
+   * bar holds at every level. Passed in by the caller because simulate() is a
+   * pure function that must not read storage.
+   */
+  activity?: number;
 }
 
 export interface SimInput {
   singles: SimContact[];
   groups: SimGroup[];
+  /**
+   * User-visible moments that existed BEFORE the absence (M-I5) — the posts
+   * offline friends may belatedly like or comment on. Newest few only; the
+   * caller reads them, simulate stays pure.
+   */
+  recentMoments?: Array<{
+    id: string;
+    authorId: string;
+    createdAt: number;
+    /**
+     * 可见范围 (M-I18). Rides in with the row because the belated-reaction
+     * planner below must honour it — an offline absence that comes back with a
+     * like from someone the post was hidden from is the same穿帮 as a live one,
+     * and the backfill path is the one most likely to be forgotten.
+     */
+    visibility?: MomentVisibility;
+  }>;
+  /**
+   * Member lists of every non-hidden group (M-I18), for `agent_invite`: a trio
+   * that already shares a room must never be proposed one. Passed in rather
+   * than derived from `groups` so the offline decision uses the SAME rosters
+   * the live foreground pass does — including rooms whose members have no
+   * persona, which still count as "already together".
+   */
+  groupRosters?: string[][];
 }
 
 export interface SimEvent {
-  kind: 'heartbeat' | 'moment_post' | 'group_msg';
+  kind:
+    | 'heartbeat'
+    | 'moment_post'
+    | 'group_msg'
+    | 'moment_like'
+    | 'moment_comment'
+    | 'agent_dm'
+    | 'ai_money'
+    | 'group_event'
+    | 'agent_invite';
   contactId: string;
   convId?: string;
   at: number;
+  /** For moment_like / moment_comment: which post drew the reaction. */
+  momentId?: string;
+  /** For agent_dm: the session's pair and shared room. */
+  dm?: { a: string; b: string; groupId: string };
+  /**
+   * Stable action id, when the LIVE path owns one too (M-I18).
+   *
+   * `gift_<conv>_<day>` / `gevt_<conv>_<week>_propose` / `ainv_<id>_<week>` are
+   * all guarded by `actionExists` in the foreground pass. Materialising them
+   * under backfill's own `bf_…` id would defeat that guard and schedule the
+   * same event twice — once from the absence, once from the pass that runs
+   * three lines later.
+   */
+  id?: string;
+  /** Extra payload fields the live handler for this kind already reads. */
+  payload?: Record<string, unknown>;
 }
 
 /**
@@ -174,11 +311,212 @@ export function simulate(t0: number, t1: number, input: SimInput, seed: string):
     events.push(...planGroupChatter(g, from, to, hours, seed));
   }
 
+  // --- 赞评 on posts that predate the absence (M-I5). Coming back to a like
+  // stamped 3am on last night's post is the cheapest possible proof the world
+  // kept moving; likes cost zero LLM calls, comments cost one each. ---
+  const reactBudget = Math.min(LIMITS.socialReactions, Math.round(hours / 3) + 1);
+  let reacted = 0;
+  for (const m of input.recentMoments ?? []) {
+    if (reacted >= reactBudget) break;
+    if (from - m.createdAt > 48 * HOUR) continue; // stale posts stop drawing
+    for (const cand of candidates) {
+      if (reacted >= reactBudget) break;
+      if (cand.contactId === m.authorId) continue; // never self-react
+      if (!canSeeMoment(m, cand.contactId)) continue; // 可见范围 (M-I18)
+      const r = seededRng(`react:${seed}:${from}:${m.id}:${cand.contactId}`);
+      if (r() >= cand.persona.likeRate * 0.5) continue;
+      const at = pickTimes(
+        // A reaction can never predate its post; likes have no rowid concern,
+        // but a like "before" the post reads as time travel all the same.
+        Math.max(from, m.createdAt + MINUTE),
+        to,
+        1,
+        cand.persona,
+        `rt:${seed}:${m.id}:${cand.contactId}`,
+      )[0];
+      if (at == null) continue;
+      reacted++;
+      const isComment = r() < cand.persona.commentRate;
+      events.push({
+        kind: isComment ? 'moment_comment' : 'moment_like',
+        contactId: cand.contactId,
+        momentId: m.id,
+        at,
+      });
+    }
+  }
+
+  // --- One AI↔AI DM session per absence (M-I5): the private social life the
+  // agents already have live keeps running while the user is away — and its
+  // spill/joint-plan/forward hatching all rides in through the same handler.
+  if (hours >= 3) {
+    let dms = 0;
+    for (const g of input.groups) {
+      if (dms >= LIMITS.offlineDms) break;
+      if (g.memberIds.length < 2) continue;
+      const r = seededRng(`odm:${seed}:${from}:${g.convId}`);
+      if (r() >= 0.35) continue;
+      const a = g.memberIds[Math.floor(r() * g.memberIds.length)];
+      const rest = g.memberIds.filter((id) => id !== a);
+      const b = rest[Math.floor(r() * rest.length)];
+      if (!b) continue;
+      dms++;
+      // Deliberately NO convId: the session happens in the hidden DM thread,
+      // not in the group — and a convId here would wrongly count against the
+      // group's ≤2-per-15min message bar.
+      events.push({
+        kind: 'agent_dm',
+        contactId: a,
+        at: Math.round(from + r() * Math.max(1, to - from)),
+        dm: { a, b, groupId: g.convId },
+      });
+    }
+  }
+
+  // --- Gifts (M-I18). She has been able to send you something since M-H1, but
+  // only from the FOREGROUND pass, which plans with `now` = the live clock —
+  // so every gift it has ever produced fires from now on, and three days away
+  // meant three days in which she demonstrably never sent anything. The
+  // decision stays `planGift`: one planner, live and offline. ---
+  let gifts = 0;
+  for (const cand of candidates) {
+    if (gifts >= LIMITS.gifts) break;
+    const g = cand.gift;
+    if (!g || cand.lastMsgAt == null) continue; // a chat with no history gets none
+    const floor = Math.max(from, cand.lastMsgAt + MINUTE);
+    if (floor >= to) continue;
+    const at = pickTimes(floor, to, 1, cand.persona, `gift:${seed}:${cand.contactId}`)[0];
+    if (at == null) continue;
+    const plan = planGift({
+      persona: cand.persona,
+      now: at,
+      affinity: g.affinity,
+      // Date-anchored reasons (生日/节日) belong to TODAY, which the live pass
+      // owns; reactive ones (道歉/安慰) need something you just said to react
+      // to. What is left is the one that actually reads as an absence that
+      // kept going: 「随手请你喝杯奶茶」.
+      occasions: [],
+      recent: [
+        { senderId: cand.contactId, type: 'text', content: '', createdAt: cand.lastMsgAt },
+      ],
+      lastGiftAt: g.lastGiftAt,
+    });
+    // `planGift` already aligned fireAt to an active hour; it may land past the
+    // window, in which case this is simply not an offline gift.
+    if (!plan || plan.fireAt <= floor || plan.fireAt > to) continue;
+    gifts++;
+    events.push({
+      kind: 'ai_money',
+      contactId: cand.contactId,
+      convId: cand.convId,
+      at: plan.fireAt,
+      // Same id the live `considerGift` would mint for that day — one gift per
+      // conversation per day, whichever path got there first.
+      id: `gift_${cand.convId}_${Math.floor(at / DAY)}`,
+      payload: {
+        kind: plan.kind,
+        reason: plan.reason,
+        amountFen: plan.amountFen,
+        note: plan.note,
+        line: plan.line,
+        ...(plan.kind === 'rp' ? { count: 1 } : {}),
+      },
+    });
+  }
+
+  // --- Social plans (M-I3, offline since M-I18). 聚会 and 拉群 proposals are
+  // seeded weekly dice that the foreground pass rolls with `now` and schedules
+  // 2–30h into the FUTURE — so they could never once happen during an absence.
+  // Rolled here at `from` instead, with the same pure planners and the same
+  // stable ids, so the live pass's actionExists guard still sees them. ---
+  const personaById = new Map(candidates.map((c) => [c.contactId, c.persona]));
+  const awakeFor = (contactId: string, t: number): boolean => {
+    const p = personaById.get(contactId);
+    if (p) return isActiveAt(p, t) && !agendaAt(p, t).busy;
+    // No card to consult (a group member with no 1:1): fall back to plain
+    // daytime. A 3am 聚会提议 is the same failure as the 6am night-owl text.
+    const h = new Date(t).getHours();
+    return h >= 9 && h < 23;
+  };
+
+  let socialPlans = 0;
+  for (const g of input.groups) {
+    if (socialPlans >= LIMITS.socialPlans) break;
+    if (g.memberIds.length === 0) continue;
+    const ev = maybeGroupEvent(g.convId, g.memberIds, from);
+    if (!ev) continue;
+    const lo = Math.max(from, (g.lastMsgAt ?? 0) + MINUTE);
+    if (ev.proposeAt <= lo || ev.proposeAt > to) continue;
+    if (!awakeFor(ev.initiator, ev.proposeAt)) continue;
+    // The proposal IS a message in that room, so it answers to the same
+    // ≤2-per-15-min bar the chatter does. A collision means skipping, not
+    // squeezing: the live pass re-rolls this week's event under the same
+    // stable id, so nothing is lost by staying quiet here.
+    if (
+      events.some(
+        (e) => e.convId === g.convId && Math.abs(e.at - ev.proposeAt) < MIN_GROUP_GAP_MS,
+      )
+    ) {
+      continue;
+    }
+    socialPlans++;
+    events.push({
+      kind: 'group_event',
+      contactId: ev.initiator,
+      convId: g.convId,
+      at: ev.proposeAt,
+      id: `${ev.id}_propose`,
+      payload: {
+        eventId: ev.id,
+        initiator: ev.initiator,
+        activity: ev.activity,
+        phase: 'propose',
+      },
+    });
+  }
+
+  const rosters = input.groupRosters ?? input.groups.map((g) => g.memberIds);
+  for (const cand of candidates) {
+    if (socialPlans >= LIMITS.socialPlans) break;
+    const relationAiIds = Object.keys(cand.persona.relations ?? {}).filter(
+      (id) => id !== 'user' && personaById.has(id),
+    );
+    const inv = maybeGroupInvite(cand.contactId, relationAiIds, rosters, from);
+    if (!inv) continue;
+    const lo = Math.max(from, (cand.lastMsgAt ?? 0) + MINUTE);
+    if (inv.fireAt <= lo || inv.fireAt > to) continue;
+    if (!awakeFor(cand.contactId, inv.fireAt)) continue;
+    socialPlans++;
+    events.push({
+      kind: 'agent_invite',
+      contactId: cand.contactId,
+      convId: cand.convId,
+      at: inv.fireAt,
+      id: inv.id,
+      payload: { friend1: inv.friends[0], friend2: inv.friends[1] },
+    });
+  }
+
   // Chronological: the drain inserts in this order, keeping rowid == time order.
   events.sort((a, b) => a.at - b.at);
 
-  // Cap total LLM work regardless of how the rolls went.
-  return { events: events.slice(0, LIMITS.llmCalls), from, to, truncated };
+  // Two ceilings, because the two costs are different: the network bill (LLM
+  // calls) and the wall of rows the user opens the app to. A free kind that
+  // does not fit under `events` still stops here; a free kind that does keeps
+  // going even when the call budget is spent. Spent in KEEP_ORDER, returned in
+  // time order — the drain inserts in the order it is handed.
+  const keep = new Set<SimEvent>();
+  let calls = 0;
+  for (const e of [...events].sort(
+    (a, b) => KEEP_ORDER[a.kind] - KEEP_ORDER[b.kind] || a.at - b.at,
+  )) {
+    if (keep.size >= LIMITS.events) break;
+    const cost = LLM_COST[e.kind];
+    if (calls + cost > LIMITS.llmCalls) continue;
+    calls += cost;
+    keep.add(e);
+  }
+  return { events: events.filter((e) => keep.has(e)), from, to, truncated };
 }
 
 /**
@@ -201,7 +539,16 @@ function planGroupChatter(
   if (lo >= to) return [];
 
   const rng = seededRng(`grp:${seed}:${g.convId}:${from}`);
-  const budget = Math.min(groupMessageBudget(lo, to), Math.max(1, Math.round(hours)));
+  const rawBudget = Math.min(
+    groupMessageBudget(lo, to, g.memberIds.length),
+    // …and still at most one per hour of absence: a big room is more talkative
+    // per hour, not a wall of text the moment you open the app.
+    Math.max(1, Math.round(hours * Math.min(2, Math.sqrt(g.memberIds.length / 4)))),
+  );
+  // The activity knob (M-I1) scales the BUDGET only. Spacing below is what
+  // enforces the ≤2-per-15min bar and is deliberately untouched; and a quiet
+  // room still says at least one thing per absence — quiet is not dead.
+  const budget = Math.max(1, Math.round(rawBudget * Math.min(2, Math.max(0.1, g.activity ?? 1))));
   const maxBySpacing = Math.floor((to - lo) / MIN_GROUP_GAP_MS) + 1;
   const count = Math.min(budget, maxBySpacing);
   if (count <= 0) return [];
@@ -256,7 +603,15 @@ function pickTimes(
  * Group chatter budget for a window. Exposed separately because group backfill
  * is driven by the director rather than per-person heartbeats.
  */
-export function groupMessageBudget(from: number, to: number): number {
+export function groupMessageBudget(from: number, to: number, memberCount = 4): number {
   const hours = Math.max(0, (to - from) / HOUR);
-  return Math.min(LIMITS.groupMessagesPerHour * Math.ceil(hours), LIMITS.groupMessagesPerHour * 4);
+  // Scale gate (M-H2). The per-hour budget was calibrated when a group meant
+  // "≤4 AI members": come back after eight hours to a twenty-person group and
+  // finding two messages reads as a dead room, not as a quiet night. Scaling
+  // is deliberately sub-linear and hard-capped — the completion bar
+  // ("≤2 events per 15 minutes", enforced by spacing) still holds, because
+  // this only raises the ceiling, never the spacing.
+  const scale = Math.min(3, Math.max(1, Math.sqrt(Math.max(1, memberCount) / 4)));
+  const perHour = Math.round(LIMITS.groupMessagesPerHour * scale);
+  return Math.min(perHour * Math.ceil(hours), perHour * 4);
 }

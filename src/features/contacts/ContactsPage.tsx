@@ -3,6 +3,8 @@ import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
 import { IconPlus, IconSearch } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
+import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
+import { useStagger, type StaggerRowProps } from '../../lib/useStagger';
 import './contacts.css';
 
 /**
@@ -69,17 +71,34 @@ function FnGlyph({ kind }: { kind: string }) {
   }
 }
 
-const INDEX_RAIL = ['↑', '☆', 'A', 'C', 'L', 'M', '#'];
-
 export function ContactsPage() {
   const navigate = useNavigate();
+  // First paint only (M-I8): the letter sections arrive in sequence instead of
+  // all at once. Rows revealed by the A-Z rail or by scrolling do not replay —
+  // the effect belongs to arriving at the list.
+  const stagger = useStagger();
+  let row = 0;
   const showToast = useAppStore((s) => s.showToast);
   // Select the STABLE array reference, then derive — a selector that returns a
   // fresh array (`.filter`) each call makes useSyncExternalStore loop (React #185).
   const allContacts = useAppStore((s) => s.contacts);
   const contacts = allContacts.filter((c) => c.type === 'ai');
   const groups = groupByInitial(contacts);
-  const starred = contacts.filter((c) => (c as { isStarred?: boolean }).isStarred);
+  const starred = contacts.filter((c) => c.isStarred);
+
+  // A-Z rail made REAL (M-I6): letters come from the actual sections, taps and
+  // finger drags land on them. It was seven hardcoded decorative glyphs.
+  const rail = ['↑', ...(starred.length ? ['☆'] : []), ...groups.map(([letter]) => letter)];
+  const jumpTo = (railKey: string) => {
+    const id =
+      railKey === '↑' ? 'contacts-top' : railKey === '☆' ? 'contacts-star' : `contacts-${railKey}`;
+    document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  };
+  const railFromPoint = (clientY: number, el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    const idx = Math.floor(((clientY - rect.top) / rect.height) * rail.length);
+    return rail[Math.min(Math.max(idx, 0), rail.length - 1)];
+  };
 
   return (
     <>
@@ -97,6 +116,7 @@ export function ContactsPage() {
         }
       />
       <div className="page-body contacts">
+        <div id="contacts-top" />
         <div className="contacts__functions">
           {FUNCTION_ENTRIES.map((f) => (
             <div
@@ -121,7 +141,7 @@ export function ContactsPage() {
           ))}
         </div>
         {starred.length > 0 && (
-          <div className="contacts__group">
+          <div className="contacts__group" id="contacts-star">
             <div className="contacts__index">星标朋友</div>
             {starred.map((cc) => (
               <ContactRow
@@ -130,13 +150,15 @@ export function ContactsPage() {
                 color={cc.avatarColor}
                 text={cc.avatarText}
                 imageRef={cc.avatarRef}
+                flipKey={FLIP_KEYS.contactAvatar(cc.id)}
+                stagger={stagger(row++)}
                 onClick={() => navigate(`/contact/${cc.id}`)}
               />
             ))}
           </div>
         )}
         {groups.map(([letter, list]) => (
-          <div key={letter} className="contacts__group">
+          <div key={letter} className="contacts__group" id={`contacts-${letter}`}>
             <div className="contacts__index">{letter}</div>
             {list.map((cc) => (
               <ContactRow
@@ -145,6 +167,8 @@ export function ContactsPage() {
                 color={cc.avatarColor}
                 text={cc.avatarText}
                 imageRef={cc.avatarRef}
+                flipKey={FLIP_KEYS.contactAvatar(cc.id)}
+                stagger={stagger(row++)}
                 onClick={() => navigate(`/contact/${cc.id}`)}
               />
             ))}
@@ -152,8 +176,19 @@ export function ContactsPage() {
         ))}
         <div className="contacts__count">{contacts.length} 位联系人</div>
       </div>
-      <div className="contacts__az">
-        {INDEX_RAIL.map((l) => (
+      <div
+        className="contacts__az"
+        // Tap OR drag: pointermove tracks the finger so sliding down the rail
+        // sweeps through sections, like the device does.
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          jumpTo(railFromPoint(e.clientY, e.currentTarget));
+        }}
+        onPointerMove={(e) => {
+          if (e.buttons > 0) jumpTo(railFromPoint(e.clientY, e.currentTarget));
+        }}
+      >
+        {rail.map((l) => (
           <span key={l}>{l}</span>
         ))}
       </div>
@@ -167,15 +202,33 @@ function ContactRow({
   text,
   imageRef,
   onClick,
+  flipKey,
+  stagger,
 }: {
   name: string;
   color: string;
   text: string;
   imageRef?: string;
   onClick?: () => void;
+  /** Hand this row's avatar rect to the profile card's (M-I8, lib/flip.ts). */
+  flipKey?: string;
+  /** First-paint entrance props, or undefined for a row arriving later (M-I8). */
+  stagger?: StaggerRowProps;
 }) {
   return (
-    <div className="contacts__row" onClick={onClick}>
+    <div
+      className={`contacts__row${stagger?.className ? ` ${stagger.className}` : ''}`}
+      style={stagger?.style}
+      onClick={(e) => {
+        // The avatar is found by query rather than held in a ref, deliberately:
+        // a ref would need a wrapper element around <Avatar/>, and every row in
+        // the contacts golden would shift by whatever that wrapper's box does.
+        // Measured at the TAP, because the list scrolls (and unmounts) before
+        // the profile card lays out, and a rect read late flies in from nowhere.
+        if (flipKey) captureFlipSource(flipKey, e.currentTarget.querySelector('.avatar'));
+        onClick?.();
+      }}
+    >
       <Avatar color={color} text={text} imageRef={imageRef} size={40} />
       <span className="contacts__name hairline-bottom contacts__cell">{name}</span>
     </div>

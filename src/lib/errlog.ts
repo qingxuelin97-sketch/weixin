@@ -42,7 +42,11 @@ export function getErrors(): ErrEntry[] {
   if (buffer.length === 0) {
     try {
       const raw = localStorage.getItem(LS_KEY);
-      if (raw) return JSON.parse(raw) as ErrEntry[];
+      // Storage keeps oldest-first (append order); reverse to match the
+      // in-memory path. This branch shipped un-reversed, so the diagnostics
+      // page — read most often right after a restart, off exactly this path —
+      // showed the OLDEST errors on top while claiming newest-first.
+      if (raw) return (JSON.parse(raw) as ErrEntry[]).reverse();
     } catch {
       /* ignore */
     }

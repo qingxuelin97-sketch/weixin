@@ -71,8 +71,19 @@ export function termFreq(text: string): Map<string, number> {
  * (they are punctuation, which the tokenizer already removed).
  */
 export function encodeVector(text: string): string {
+  return encodeTerms(termFreq(text));
+}
+
+/**
+ * The same serialization, for a term map built some other way.
+ *
+ * The worldbook (M-I18) indexes its entries with an augmented tokenizer and
+ * still has to hand `buildCorpus` something it can read back — going through
+ * the wire format is what keeps ONE definition of it.
+ */
+export function encodeTerms(tf: Map<string, number>): string {
   const parts: string[] = [];
-  for (const [term, n] of termFreq(text)) {
+  for (const [term, n] of tf) {
     if (term.includes('|') || term.includes(':')) continue;
     parts.push(`${term}:${n}`);
   }
@@ -93,8 +104,21 @@ export function decodeVector(encoded: string | undefined): Map<string, number> {
   return tf;
 }
 
-/** The vector for a fact, from its stored column or recomputed from the text. */
-export function vectorOf(fact: MemoryFactVM): Map<string, number> {
+/**
+ * The least a document needs to be retrievable.
+ *
+ * Structural, not `MemoryFactVM`: BM25 knows nothing about importance or
+ * sensitivity, and stating that lets the worldbook (M-I18) reuse the same
+ * retrieval instead of growing a second, subtly different copy of it.
+ */
+export interface RetrievalDoc {
+  id: string;
+  fact: string;
+  embedding?: string;
+}
+
+/** The vector for a doc, from its stored column or recomputed from the text. */
+export function vectorOf(fact: RetrievalDoc): Map<string, number> {
   const stored = decodeVector(fact.embedding);
   return stored.size > 0 ? stored : termFreq(fact.fact);
 }
@@ -116,7 +140,7 @@ interface Corpus {
 }
 
 /** Build the inverted statistics once per retrieval. Pure. */
-export function buildCorpus(facts: MemoryFactVM[]): Corpus {
+export function buildCorpus(facts: RetrievalDoc[]): Corpus {
   const df = new Map<string, number>();
   const vectors = new Map<string, Map<string, number>>();
   const lengths = new Map<string, number>();

@@ -24,11 +24,16 @@ import {
   seedMomentComments,
 } from '../data/seed';
 import { repo, IdbRepo } from '../db/repo';
-import { registerMedia } from '../data/media-registry';
+import { initStorageDriver } from '../db/driver';
+import { registerMediaMeta, materializeMedia } from '../data/media-registry';
 import { makePersona } from '../data/persona-defaults';
 import { recordRelEvent } from '../ai/relationship';
 import { cancelActionsForConversation } from '../ai/scheduler';
+import { abortConversation } from '../ai/engine';
+import { applyStoryStamp } from '../ai/story-stamp';
+import { collectMomentsNews, type MomentsNews } from '../ai/moments-news';
 import { logError } from '../lib/errlog';
+import { withoutContact } from '../lib/moment-visibility';
 
 /** A like warms the (liker, author) edge — fire-and-forget, never blocks UI. */
 async function relEventForLike(momentId: string, likerId: string, now: number): Promise<void> {
@@ -61,16 +66,60 @@ interface AppState {
   toast: string | null;
   showToast: (msg: string) => void;
 
+  /**
+   * An agent is calling right now (M-H1). Null = nobody is.
+   *
+   * Kept in the store rather than routed to a page: the overlay has to be able
+   * to appear over WHATEVER the user is looking at — that is what makes it a
+   * call rather than a screen you navigated to.
+   */
+  incomingCall: { convId: string; contactId: string; reason: string; at: number } | null;
+  setIncomingCall: (call: AppState['incomingCall']) => void;
+
   /** Moments feed, newest first. Loaded lazily — the feed is not on the hot path. */
   moments: MomentVM[];
   momentsLoaded: boolean;
   /** Keyed by momentId so selectors can return a stable reference (see CLAUDE.md §3.5). */
   momentLikes: Record<string, MomentLikeVM[]>;
   momentComments: Record<string, MomentCommentVM[]>;
+  /**
+   * 朋友圈新消息 (M-I15): likes/comments on the user's own posts since they
+   * last opened the feed. DERIVED from stored rows + the `momentsSeenAt`
+   * setting (never counted in place), so restarts and backfill cannot make the
+   * Discover-tab badge lie. Stable reference; only refresh/markSeen replace it.
+   */
+  momentsNews: MomentsNews;
+  /** Recompute momentsNews from storage. Cheap (one feed page + social rows). */
+  refreshMomentsNews: () => Promise<void>;
+  /** The user just looked at the feed: persist the watermark, clear the badge. */
+  markMomentsSeen: (now: number) => Promise<void>;
 
   // selectors (stable signatures)
   contactById: (id: string) => ContactVM | undefined;
   messagesFor: (convId: string) => MessageVM[];
+  /** Has this conversation's thread been loaded (an empty thread still counts)? */
+  hasThread: (convId: string) => boolean;
+  /** Load a conversation's newest page on first open. Idempotent. */
+  openConversation: (convId: string, limit?: number) => Promise<void>;
+  /** Prepend the page before the oldest held message; returns how many arrived. */
+  loadOlderMessages: (convId: string, limit?: number) => Promise<number>;
+  /**
+   * Re-read a conversation's newest page from the Repo, REPLACING whatever the
+   * store holds (M-I7). The one caller is story rollback: it deletes rows
+   * underneath the store, and a stale in-memory tail would resurrect trimmed
+   * scenes on the next render. No-op for a thread that was never loaded.
+   */
+  reloadConversation: (convId: string, limit?: number) => Promise<void>;
+  /**
+   * Re-read the conversation list from the Repo (M-I8, 下拉刷新).
+   *
+   * The list is written through on every mutation, so this is not about
+   * repairing state — it is about the rows an AGENT wrote while the user was
+   * looking at something else (a backfilled absence, a background heartbeat,
+   * an AI↔AI thread surfacing). Hydration is guarded by `hydrated` and cannot
+   * be asked twice, so pull-to-refresh needed a door of its own.
+   */
+  refreshConversations: () => Promise<void>;
   conversationById: (id: string) => ConversationVM | undefined;
   personaFor: (contactId: string) => PersonaVM | undefined;
   setTyping: (convId: string, on: boolean) => void;
@@ -92,7 +141,16 @@ interface AppState {
   addConversation: (c: ConversationVM) => Promise<void>;
   putPersona: (p: PersonaVM) => Promise<void>;
   putContact: (c: ContactVM) => Promise<void>;
-  loadMoments: () => Promise<void>;
+  /**
+   * Remove a contact and every trace of them (M-I1). Orchestrates: abort any
+   * in-flight generation for their threads → repo cascade → in-memory mirror.
+   */
+  deleteContact: (id: string) => Promise<void>;
+  /** Delete one's own comment (M-I6). */
+  deleteComment: (momentId: string, commentId: string) => Promise<void>;
+  /** Delete one's own moment with its social rows (M-I6). */
+  deleteMoment: (momentId: string) => Promise<void>;
+  loadMoments: (force?: boolean) => Promise<void>;
   addMoment: (m: MomentVM) => Promise<void>;
   /** Add or remove a like. Returns true if the moment is liked afterwards. */
   toggleLike: (momentId: string, contactId: string, now: number) => Promise<boolean>;
@@ -108,6 +166,7 @@ const EMPTY_MESSAGES: MessageVM[] = [];
 // Module-level constants: returning a fresh [] from a selector re-renders forever.
 const EMPTY_LIKES: MomentLikeVM[] = [];
 const EMPTY_COMMENTS: MomentCommentVM[] = [];
+const EMPTY_NEWS: MomentsNews = { count: 0, items: [] };
 
 // Fixed timestamp for seeded rows so first-run state is deterministic.
 const SEED_BASE = 1_754_500_000_000;
@@ -121,6 +180,10 @@ type Set = (partial: Partial<AppState>) => void;
 type Get = () => AppState;
 
 async function doHydrate(set: Set, _get: Get): Promise<void> {
+  // Choose the storage driver BEFORE the first Repo read (M-I17): on a native
+  // device that completed the SQLite migration this swaps the driver in;
+  // everywhere else it is a no-op and IndexedDB stays. Never throws.
+  await initStorageDriver();
   // First run: write seed into the Repo so the app has believable friends.
   if (await repo.isEmpty()) {
     const seedMsgs = seedConversations.flatMap((conv) =>
@@ -151,12 +214,12 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
     repo.getContacts(),
     repo.getConversations(),
   ]);
+  // Messages are NOT loaded here. Hydration used to pull 200 per conversation
+  // — on the critical path of a white screen, growing linearly with how much
+  // the app is used — when the only thing the first screen draws is the
+  // conversation list, and every row already carries its own `lastMsgPreview`.
+  // `openConversation` fetches a thread when it is actually opened.
   const messages: Record<string, MessageVM[]> = {};
-  await Promise.all(
-    conversations.map(async (conv) => {
-      messages[conv.id] = await repo.getMessages(conv.id, { limit: 200 });
-    }),
-  );
   const personas: Record<string, PersonaVM> = {};
   await Promise.all(
     contacts
@@ -170,14 +233,20 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
         if (p) personas[cc.id] = makePersona(p);
       }),
   );
-  // Prime the media registry so `idb:` refs (avatars, photo pools) resolve
-  // synchronously everywhere. Object URLs live for the process lifetime.
+  // Prime the media registry.
+  //
+  // METADATA for everything (pool selection needs kind+tags and they cost
+  // nothing); object URLs only for AVATARS, which every conversation row draws.
+  // Photos are materialized on demand by `primeMedia`.
+  //
+  // This loop used to `createObjectURL` every item in the library, serially, on
+  // the critical path of the first paint — and an object URL pins its blob
+  // until revoked, which happened only on delete. A few hundred photos was
+  // therefore several hundred megabytes held for the life of the process,
+  // behind a white screen while it was built.
   for (const item of await repo.getMedia()) {
-    registerMedia(item.id, {
-      url: URL.createObjectURL(item.blob),
-      kind: item.kind,
-      tags: item.tags,
-    });
+    registerMediaMeta(item.id, { kind: item.kind, tags: item.tags });
+    if (item.kind === 'avatar') materializeMedia(item.id, item.blob);
   }
   conversations.sort(sortConversations);
   set({ hydrated: true, contacts, conversations, messages, personas });
@@ -193,13 +262,87 @@ export const useAppStore = create<AppState>((set, get) => ({
   typing: {},
   activeConvId: null,
   toast: null,
+  incomingCall: null,
   moments: [],
   momentsLoaded: false,
   momentLikes: {},
   momentComments: {},
+  momentsNews: EMPTY_NEWS,
 
   contactById: (id) => get().contacts.find((cc) => cc.id === id),
   messagesFor: (convId) => get().messages[convId] ?? EMPTY_MESSAGES,
+
+  /**
+   * Has this conversation's thread been loaded?
+   *
+   * Distinct from "has messages": a conversation can legitimately be empty.
+   * Derived from the store rather than from a timer, so it flips in the SAME
+   * React commit that renders the messages — which is what makes it a sound
+   * readiness signal for anything observing the settled page.
+   */
+  hasThread: (convId) => get().messages[convId] != null,
+
+  /**
+   * Load a conversation's newest page, once, when it is opened.
+   *
+   * Idempotent: an already-loaded thread is left alone so re-entering does not
+   * discard messages that arrived since (or the older pages the user paged in).
+   */
+  openConversation: async (convId, limit = 60) => {
+    if (get().messages[convId] != null) return;
+    const rows = await repo.getMessages(convId, { limit });
+    set((s) => (s.messages[convId] != null ? s : { messages: { ...s.messages, [convId]: rows } }));
+  },
+
+  /**
+   * Prepend the page of messages before the oldest one currently held.
+   *
+   * The `beforeId` pagination pipeline has existed since M1 — `idb.ts` →
+   * `repo.getMessages` — with ZERO callers, while hydration loaded a flat 200
+   * per conversation. Everything older than that was in the database and
+   * unreachable from the app: you could not scroll to it and search could not
+   * find it, because search only ever looked at what the store held.
+   *
+   * Returns how many rows arrived, so the caller can stop asking at the top.
+   */
+  loadOlderMessages: async (convId, limit = 40) => {
+    const existing = get().messages[convId] ?? EMPTY_MESSAGES;
+    const oldest = existing[0]?.id;
+    if (oldest == null) return 0;
+    const older = await repo.getMessages(convId, { limit, beforeId: oldest });
+    if (older.length === 0) return 0;
+    set((s) => {
+      const cur = s.messages[convId] ?? EMPTY_MESSAGES;
+      // Guard against a concurrent load having already prepended these: ids
+      // are the autoincrement primary key, so "already present" is exact.
+      const have = new Set(cur.map((m) => m.id));
+      const fresh = older.filter((m) => !have.has(m.id));
+      if (fresh.length === 0) return s;
+      return { messages: { ...s.messages, [convId]: [...fresh, ...cur] } };
+    });
+    return older.length;
+  },
+  reloadConversation: async (convId, limit = 60) => {
+    if (get().messages[convId] == null) return;
+    const rows = await repo.getMessages(convId, { limit });
+    set((s) => ({ messages: { ...s.messages, [convId]: rows } }));
+    // The tail may have changed shape (rollback trims scenes): the list row's
+    // preview must follow, or a deleted line keeps advertising the thread.
+    const s = get();
+    const last = rows.at(-1);
+    await s.patchConversation(convId, {
+      lastMsgPreview: last ? previewOf(last, senderNameOf(s.contacts, last.senderId)) : '',
+      ...(last ? { lastMsgAt: last.createdAt } : {}),
+    });
+  },
+  refreshConversations: async () => {
+    // Only the list rows: messages stay lazily loaded per conversation, which
+    // is the whole reason hydration got off the critical path in M-G2. Pulling
+    // 200 messages per thread here would put it straight back.
+    const conversations = await repo.getConversations();
+    conversations.sort(sortConversations);
+    set({ conversations });
+  },
   conversationById: (id) => get().conversations.find((cc) => cc.id === id),
   personaFor: (contactId) => get().personas[contactId],
   setTyping: (convId, on) => set((s) => ({ typing: { ...s.typing, [convId]: on } })),
@@ -221,6 +364,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  setIncomingCall: (call) => set({ incomingCall: call }),
+
   showToast: (msg) => {
     set({ toast: msg });
     clearTimeout(toastTimer);
@@ -237,7 +382,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   appendMessage: async (msg) => {
-    const saved = await repo.addMessage(msg);
+    // Story mode (M-I7): while a beat is playing in this conversation, every
+    // appended row — narration, actor lines, the user's replies — is tagged
+    // with the run's (scriptId, seq). One choke point, so the group engine
+    // and every other append path stay story-blind.
+    const saved = await repo.addMessage(applyStoryStamp(msg));
     const s0 = get();
     const conv = s0.conversations.find((c) => c.id === msg.convId);
     set((s) => ({
@@ -342,17 +491,113 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
-  /** Pull the feed plus every post's likes/comments. Idempotent. */
-  loadMoments: async () => {
-    if (get().momentsLoaded) return;
+  deleteComment: async (momentId, commentId) => {
+    await repo.deleteComment(commentId);
+    set((s) => ({
+      momentComments: {
+        ...s.momentComments,
+        [momentId]: (s.momentComments[momentId] ?? []).filter((c) => c.id !== commentId),
+      },
+    }));
+  },
+
+  deleteMoment: async (momentId) => {
+    await repo.deleteMoment(momentId);
+    set((s) => {
+      const momentLikes = { ...s.momentLikes };
+      const momentComments = { ...s.momentComments };
+      delete momentLikes[momentId];
+      delete momentComments[momentId];
+      return {
+        moments: s.moments.filter((m) => m.id !== momentId),
+        momentLikes,
+        momentComments,
+      };
+    });
+  },
+
+  deleteContact: async (id) => {
+    // Abort BEFORE the rows go: a reply landing after the cascade would
+    // recreate messages for a thread whose contact no longer exists.
+    const s0 = get();
+    const deadConvs = s0.conversations.filter(
+      (c) =>
+        c.type === 'single' &&
+        (c.peerId === id || (c.isHidden && (c.memberIds ?? []).includes(id))),
+    );
+    for (const c of deadConvs) abortConversation(c.id);
+
+    await repo.deleteContact(id);
+
+    // Mirror the cascade's visible slice in memory. Cheaper and less
+    // disruptive than a full re-hydrate, and exact because the repo cascade's
+    // rules are restated here 1:1 for the four stores the UI holds.
+    set((s) => {
+      const deadIds = new Set(deadConvs.map((c) => c.id));
+      const messages = { ...s.messages };
+      for (const cid of deadIds) delete messages[cid];
+      const personas: typeof s.personas = {};
+      for (const [pid, p] of Object.entries(s.personas)) {
+        if (pid === id) continue;
+        personas[pid] = id in p.relations
+          ? { ...p, relations: Object.fromEntries(Object.entries(p.relations).filter(([k]) => k !== id)) }
+          : p;
+      }
+      const deadMoments = new Set(s.moments.filter((m) => m.authorId === id).map((m) => m.id));
+      const momentLikes: typeof s.momentLikes = {};
+      for (const [mid, ls] of Object.entries(s.momentLikes)) {
+        if (deadMoments.has(mid)) continue;
+        momentLikes[mid] = ls.filter((l) => l.contactId !== id);
+      }
+      const momentComments: typeof s.momentComments = {};
+      for (const [mid, cs] of Object.entries(s.momentComments)) {
+        if (deadMoments.has(mid)) continue;
+        momentComments[mid] = cs.filter((c) => c.authorId !== id);
+      }
+      return {
+        contacts: s.contacts.filter((c) => c.id !== id),
+        personas,
+        conversations: s.conversations
+          .filter((c) => !deadIds.has(c.id))
+          .map((c) =>
+            c.type === 'group' && c.memberIds?.includes(id)
+              ? { ...c, memberIds: c.memberIds.filter((m) => m !== id) }
+              : c,
+          ),
+        messages,
+        moments: s.moments
+          .filter((m) => !deadMoments.has(m.id))
+          // Mirror the repo cascade's repost-snapshot scrub (M-I15) 1:1.
+          .map((m) => {
+            if (m.repostAuthorId !== id) return m;
+            const { repostAuthorId: _drop, ...rest } = m;
+            return { ...rest, repostExcerpt: '原内容已删除' };
+          })
+          // …and its 可见范围 surgery (M-I18), or the open feed keeps showing
+          // 「部分可见·<死者>」until the next reload.
+          .map((m) => withoutContact(m, id) ?? m),
+        momentLikes,
+        momentComments,
+        activeConvId: s.activeConvId && deadIds.has(s.activeConvId) ? null : s.activeConvId,
+      };
+    });
+  },
+
+  /**
+   * Pull a page of the feed plus each post's likes and comments.
+   *
+   * `force` re-reads even when already loaded. Without it the feed was frozen
+   * for the life of the process: the guard below returned early forever, so
+   * anything an agent posted in the background only appeared if `addMoment`
+   * happened to run in this same session.
+   */
+  loadMoments: async (force = false) => {
+    if (get().momentsLoaded && !force) return;
     const moments = await repo.getMoments();
-    const momentLikes: Record<string, MomentLikeVM[]> = {};
-    const momentComments: Record<string, MomentCommentVM[]> = {};
-    await Promise.all(
-      moments.map(async (m) => {
-        momentLikes[m.id] = await repo.getLikes(m.id);
-        momentComments[m.id] = await repo.getComments(m.id);
-      }),
+    // Two queries for the page, not two per post: the old fan-out was 2N+1
+    // round trips, so the feed got slower the more you had posted.
+    const { likes: momentLikes, comments: momentComments } = await repo.getMomentSocial(
+      moments.map((m) => m.id),
     );
     set({ moments, momentLikes, momentComments, momentsLoaded: true });
   },
@@ -364,6 +609,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       momentLikes: { ...s.momentLikes, [m.id]: EMPTY_LIKES },
       momentComments: { ...s.momentComments, [m.id]: EMPTY_COMMENTS },
     }));
+    // A friend REPOSTING you is news the same way a like is (M-I15).
+    if (m.authorId !== 'self' && m.repostOf) void get().refreshMomentsNews().catch(() => {});
   },
 
   toggleLike: async (momentId, contactId, now) => {
@@ -396,6 +643,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (cur.some((l) => l.id === like.id)) return s;
       return { momentLikes: { ...s.momentLikes, [like.momentId]: [...cur, like] } };
     });
+    // A friend's like on one of YOUR posts is news (M-I15). Fire-and-forget:
+    // the badge is bookkeeping and must never delay the reaction itself.
+    if (like.contactId !== 'self') void get().refreshMomentsNews().catch(() => {});
   },
 
   addComment: async (c) => {
@@ -408,6 +658,30 @@ export const useAppStore = create<AppState>((set, get) => ({
         ),
       },
     }));
+    if (c.authorId !== 'self') void get().refreshMomentsNews().catch(() => {});
+  },
+
+  refreshMomentsNews: async () => {
+    // Newest feed page only: the badge is about the recent past, and anything
+    // older than a page of posts has scrolled out of "news" territory anyway.
+    const moments = await repo.getMoments({ limit: 60 });
+    const mine = moments.filter((m) => m.authorId === 'self');
+    if (mine.length === 0) {
+      if (get().momentsNews.count !== 0) set({ momentsNews: EMPTY_NEWS });
+      return;
+    }
+    const { likes, comments } = await repo.getMomentSocial(mine.map((m) => m.id));
+    const seenAt = (await repo.getSetting<number>('momentsSeenAt')) ?? 0;
+    // The FULL page rides in (not just `mine`): a friend's repost of your post
+    // is a new moment authored by them, and the collector spots it by repostOf.
+    const news = collectMomentsNews(moments, likes, comments, seenAt);
+    // Keep the stable EMPTY_NEWS reference for the common nothing-new case.
+    set({ momentsNews: news.count === 0 ? EMPTY_NEWS : news });
+  },
+
+  markMomentsSeen: async (now) => {
+    await repo.putSetting('momentsSeenAt', now);
+    if (get().momentsNews.count !== 0) set({ momentsNews: EMPTY_NEWS });
   },
 }));
 
@@ -448,6 +722,18 @@ export function previewOf(m: MessageVM, senderName?: string): string {
       return '[微信红包]';
     case 'transfer':
       return '[转账]';
+    case 'merged':
+      return '[聊天记录]';
+    case 'location':
+      return `[位置]${m.content ?? ''}`;
+    case 'contact_card':
+      return `[名片]${(m.meta?.name as string | undefined) ?? m.content ?? ''}`;
+    case 'file':
+      return `[文件]${(m.meta?.fileName as string | undefined) ?? m.content ?? ''}`;
+    case 'link':
+      return `[链接]${(m.meta?.title as string | undefined) ?? m.content ?? ''}`;
+    case 'game':
+      return '[动画表情]';
     default:
       return m.content ?? '';
   }

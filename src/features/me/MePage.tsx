@@ -57,6 +57,14 @@ function MIcon({ kind }: { kind: string }) {
           <path d="M9 15.5c1 1.4 2.4 2.2 4 2.2s3-.8 4-2.2" fill="none" stroke="var(--wx-dc-yellow)" strokeWidth={sw} strokeLinecap="round" />
         </svg>
       );
+    case 'report': // bar chart (annual report)
+      return (
+        <svg viewBox="0 0 26 26" className="me__svg" aria-hidden>
+          <rect x="4" y="14" width="4" height="7" rx="1" fill="none" stroke="var(--wx-dc-purple)" strokeWidth={sw} />
+          <rect x="11" y="9" width="4" height="12" rx="1" fill="none" stroke="var(--wx-dc-purple)" strokeWidth={sw} />
+          <rect x="18" y="5" width="4" height="16" rx="1" fill="none" stroke="var(--wx-dc-purple)" strokeWidth={sw} />
+        </svg>
+      );
     case 'settings': // gear
       return (
         <svg viewBox="0 0 26 26" className="me__svg" aria-hidden>
@@ -79,6 +87,7 @@ const GROUPS: Array<Array<{ key: string; label: string }>> = [
   [
     { key: 'fav', label: '收藏' },
     { key: 'album', label: '朋友圈' },
+    { key: 'report', label: '聊天年度报告' },
     { key: 'cards', label: '小店与卡包' },
     { key: 'sticker', label: '表情' },
   ],
@@ -137,6 +146,8 @@ export function MePage() {
                   if (e.key === 'settings') navigate('/settings');
                   else if (e.key === 'service') navigate('/wallet');
                   else if (e.key === 'album') navigate('/moments');
+                  else if (e.key === 'report') navigate('/report');
+                  else if (e.key === 'fav') navigate('/favorites');
                   else showToast('暂未开放');
                 }}
               >

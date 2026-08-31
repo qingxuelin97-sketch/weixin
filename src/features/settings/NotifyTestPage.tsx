@@ -16,6 +16,7 @@ import {
   type ScheduledNotification,
 } from '../../lib/notify';
 import './settings.css';
+import { Switch } from '../../components/Switch';
 
 /** Minutes after "开始测试" at which each round fires. */
 const ROUNDS = [1, 5, 15];
@@ -137,9 +138,7 @@ export function NotifyTestPage() {
                   <span className="settings__label">
                     第 {i + 1} 条 · {min} 分钟档（约 {fmtTime(record.fireAts[i])}）
                   </span>
-                  <span className={`switch${record.received[i] ? ' switch--on' : ''}`}>
-                    <span className="switch__knob" />
-                  </span>
+                  <Switch on={record.received[i]} onChange={() => toggleReceived(i)} />
                 </div>
               ))}
               <div className="field">

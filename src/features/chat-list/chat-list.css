@@ -1,3 +1,32 @@
+/* Swipe-to-reveal row (M-H3). The tray is UNDER the row: revealing it by
+   sliding the row keeps the row's text from reflowing on every drag frame. */
+.conv-swipe {
+  position: relative;
+  overflow: hidden;
+}
+.conv-swipe__tray {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+}
+.conv-swipe__action {
+  width: 75px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-on-brand);
+}
+.conv-swipe__action--read {
+  background: var(--color-swipe-neutral);
+}
+.conv-swipe__action--delete {
+  background: var(--color-swipe-danger);
+}
+.conv-swipe__action:active {
+  filter: brightness(0.9);
+}
+
 .chat-list {
   background: var(--color-cell-bg);
 }
@@ -38,6 +67,10 @@
   line-height: 18px;
   text-align: center;
   box-sizing: border-box;
+  /* Clips the rolling counter's outgoing digit to the pill (M-I8). The badge
+     owns this rather than <RollingNumber/>, because an inline-block with a
+     clipped overflow changes its own baseline — see rolling-number.css. */
+  overflow: hidden;
 }
 .conv-row__badge--dot {
   min-width: 10px;
@@ -99,11 +132,13 @@
   color: var(--color-text-placeholder);
 }
 
-/* M-D3: navbar ＋ dropdown & conversation long-press menu */
+/* M-D3: navbar ＋ dropdown. The conversation long-press menu moved to the
+   shared <LongPressMenu/> (.lp-menu) in I18 — it now wears the chat page's
+   dark capsule instead of its own light card. */
 .chatlist-overlay {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--z-list-overlay);
 }
 .plus-menu {
   position: absolute;
@@ -116,11 +151,6 @@
   min-width: 140px;
 }
 .plus-menu button {
-  color: var(--color-text-on-brand);
-  border-bottom-color: var(--color-menu-divider, var(--color-hairline));
-}
-.plus-menu button,
-.conv-menu button {
   display: block;
   width: 100%;
   padding: 13px 18px;
@@ -128,27 +158,9 @@
   border: none;
   background: none;
   font-size: var(--fs-cell-title);
-  color: var(--color-text-primary);
-  border-bottom: 0.5px solid var(--color-hairline);
+  color: var(--color-text-on-brand);
+  border-bottom: 0.5px solid var(--color-menu-divider, var(--color-hairline));
 }
-.plus-menu button:last-child,
-.conv-menu button:last-child {
+.plus-menu button:last-child {
   border-bottom: none;
-}
-.conv-menu {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--color-cell-bg);
-  border-radius: 10px;
-  box-shadow: 0 6px 32px var(--color-overlay);
-  overflow: hidden;
-  min-width: 180px;
-  text-align: center;
-}
-.conv-menu button {
-  text-align: center;
-}
-.conv-menu__danger {
-  color: var(--color-badge) !important;
 }

@@ -21,7 +21,15 @@ const chromiumPath = resolveChromium();
  * Screenshot golden pipeline. Renders the app in headless Chromium at a fixed
  * 390×844 @3x (the calibration device frame) so goldens are byte-stable. The
  * same engine ships in the Android WebView, so CI pixels ≈ device pixels —
- * PROVIDED the CI container has the same CJK font as the device (see specs).
+ * PROVIDED the renderer matches: same CJK font AND same Chromium build.
+ *
+ * That second half is why `resolveChromium()` above matters more than it looks.
+ * This container supplies its own Chromium under PLAYWRIGHT_BROWSERS_PATH, a
+ * different build from the one `playwright install` pins in CI, and two builds
+ * rasterize glyph edges differently. Baselines generated here therefore CANNOT
+ * match CI even with identical fonts — measured: 30 of 52 shots red. So the
+ * committed goldens are minted by CI's own `regen-goldens` job, and a local
+ * `test:screenshot` run is a fast smoke check, not the gate.
  *
  * These goldens are the AI's self-check filter; the final 1:1 verdict is the
  * user's real-device screenshot overlay.
@@ -31,7 +39,13 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,
-  reporter: process.env.CI ? 'github' : 'list',
+  // In CI the github reporter annotates the run, but it writes NO files — so the
+  // "upload playwright-report/" step silently uploaded nothing for the whole
+  // life of the job, and a red golden could not be looked at. The html reporter
+  // rides alongside it to make the artifact real (M-I11).
+  reporter: process.env.CI
+    ? [['github'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
+    : 'list',
   expect: {
     toHaveScreenshot: {
       // Tight on purpose. Goldens are saved CSS-scaled (390×844 ≈ 329k px), so the

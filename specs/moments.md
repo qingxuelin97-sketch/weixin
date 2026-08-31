@@ -63,3 +63,176 @@ SQLite 里 likes 是复合主键 `(momentId, contactId)`；IndexedDB keyPath 只
 `pickImages(seed, count, tags?)`：`tags` 来自 `PersonaVM.imageTags`，按标签过滤
 `idb:` 照片池（吃货人设不发健身照）；空标签或过滤后为空 → 回落全池（宁可跑题不可
 让人设永远无图）。优先级：运行时媒体库 > 构建期 assets > 渐变占位。同种子同图不变。
+
+**配图只有这一条路径。** M-I3 的聚会事后帖（`handleGroupEvent` 的 aftermath 相位）
+曾经写死 `imageRefs: []`——没人从火锅局回来一张照片都不发，那条帖子因此一眼是生成的。
+现在它和正常发帖一样走 `pickImages`：张数由 `aftermathImageCount(eventId)` 种子化
+（0/1/3，比日常帖更偏向有图），尊重发起人的 `imageTags`，素材池为空时返回空数组
+→ 优雅退化成纯文字，不报错。新增任何"AI 发帖"的入口，配图都接这里，不要另写。
+
+## M-I15 增补：朋友圈 v2
+
+### 转发/引用（转发卡片 + 泄漏铁律）
+
+- 数据：`MomentVM.repostOf`（**根**原帖 id，链条永远塌缩到根）+ 快照
+  `repostAuthorId` / `repostExcerpt`（原帖删除后卡片仍可渲染）。
+- **泄漏铁律**：引用内容只能来自「已入公开 feed 的 moment 行」。唯一构造器
+  `src/ai/moment-repost.ts`——`buildRepost` 只接受 `MomentVM` 并自行从
+  `source.text` 派生摘录（没有任何参数能注入任意文本）；服务层 `repostMoment`
+  只接受 **id** 并从存储重读，伪造的内存对象带不进任何内容。隐藏会话
+  （AI↔AI 私信）因此在结构上无法经转发链上屏。转红测试见
+  `tests/unit/moments-v2.test.ts`（repost leak rule）。
+- 删除联动：deleteContact 级联会抹掉引用了死者的快照
+  （`repostExcerpt: '原内容已删除'`），store 内存镜像 1:1 同步。
+- **悬空的「回复 X」**（M-I18）：回复目标可能先没（用户删自己的评论，或级联删掉了
+  死者的评论）。旧代码用 `?? c.authorId` 兜底，渲染成「我 回复 我：…」——微信不会
+  写出这句话。现在 `replyTargetAuthor()` 找不到目标就返回 undefined，卡片退化成
+  普通评论（微信本身的行为）。修在**渲染侧**而不是级联侧，因为「用户删自己评论」
+  这条路径级联根本碰不到。
+- 入口：卡片胶囊「转发」（仅他人的帖）→ `/moments/repost/:momentId`。
+- **AI 也会转发你**：`planRepost`（种子化，~8%，仅 `authorId==='self'` 的帖、
+  affinity ≥ 55 的密友，30min–6.5h 后落地）→ 新 kind `moment_repost`（已入
+  `SCHEDULED_ACTION_KINDS` + `registerHandler`，无第二计时器）→
+  `runMomentRepost` 经同一 `repostMoment` 存储重读路径发布，配文
+  `generateRepostText`（失败=无配文，不丢行为）。AI 的转发帖不会再被转发
+  （planner 只认用户帖），不成环。
+
+### 话题标签
+
+- 解析器 `src/lib/topics.ts`：`#…#`（1–12 字符），未配对 `#` 与空白标签不算；
+  `topicSegments` 对正文**无损**切分供渲染高亮。
+- 聚合页 `/moments/topic/:tag`：`hasTopic` 严格匹配（提到词 ≠ 参与话题），
+  扫描最近一页（200 条）。
+- AI 发帖带标签：`maybeTopicTag`（moments-engine，种子门控 ~18%）；目标期帖子
+  抽本 domain 的 `TOPIC_POOLS`，日常帖抽 `GENERIC_TOPICS`——话题页因此能攒出
+  真正的系列。
+
+### 连续剧式发帖（接 I14 goals）
+
+`goalSeriesLine(goalStateAt(...))`：goal 素材帖从第二个里程碑起附加「上一集」
+指令（引用上一里程碑文案），purely derived、零存储。只在 `goalMomentMaterial`
+非空时追加——feed 不许变成进度日志。
+
+### 封面 / 访客感 / 赞评通知（I6 遗留）
+
+- 封面：settings KV `momentsCoverRef`（`idb:` ref），点击封面从照片库选，
+  可恢复默认渐变。
+- 访客：`recentVisitor`（moments-visitors.ts）按小时桶种子化，~28% 桶有访客、
+  45min TTL，纯函数（铁律 4）。
+- 通知：moment_like/moment_comment/moment_repost 的 pending 行经 notify-service 上锁屏，
+  **只限用户自己帖子**（调用方用存储行构建 allowlist 传入）。分级：点赞正文是
+  「行为本身」→ 新档 `reaction` 可预生成预览（转发同理「转发了你的朋友圈」）；评论文本 fire 时才生成 → 保持
+  `followup` 无预览。红点：`momentsSeenAt` 水位 + `collectMomentsNews` 纯函数
+  派生（点赞/评论/转发三类都算），Discover 行显示最新 actor 头像 + 红点 +「有新消息」。
+- 个人相册页 `/moments/album/:contactId`：`repo.getMomentsByAuthor`（全扫描，
+  点按级频率不配 index），MomentCard 复用，交互走 store 保持 feed 一致。
+
+### 表情包 v2
+
+- 媒体库新 kind `'sticker'`（行内字段，**无需迁移**）；素材库页第三个分段。
+- composer 表情面板「我的表情」区：点击即发 `type:'sticker'` +
+  `content:'idb:<id>'`；MessageBubble 对 `idb:` ref 渲染 110px 图（材质化前
+  渐变占位）；render-msg 投影为 `[表情]`——内部 id 永不进模型上下文。
+- AI 收藏：`sticker-taste.ts`——`stickerSent` KV 记录你**发过**的表情（上限
+  30），每个 agent 按 (agent, ref) 种子收藏 ~55%；引擎在模型自己决定发表情的
+  回合按 ~30% 种子率把词表 glyph 换成收藏的自定义表情。
+- 斗图：`sticker-battle.ts`（voice-send 式门控）——单聊发表情后按
+  `${convId}:${msgId}` 种子掷骰：连发 2–4 条时概率峰值 0.65、长战衰减；命中
+  则 0.8–2.5s 后**零 LLM** 回一张（优先她收藏的、永不复读你刚发的）；未命中
+  走正常引擎回复。
+  **那 0.8–2.5s 走 `scheduled_actions`（M-I18）**：新 kind `sticker_reply`
+  （已入 `SCHEDULED_ACTION_KINDS` + `registerHandler`，并进 `FAST_KINDS`——
+  它是零成本的即时反应，排在回填的 LLM 批次后面会把唯一一个「秒回」变成
+  两分钟后的冷笑话）。原先是 ChatPage 里一个裸 `setTimeout`：这是**产生真实
+  消息**的第二条时间推进路径（违反铁律 5），窗口内退出会话就把这一回合吃掉，
+  而 `stickerStreak` 已经把它算进连击了。决策与随机仍在发送时一次算完，
+  排期行只搬运结论——所以 handler 不需要 rng、不需要人格、不需要 prompt。
+
+### 已知坑（v2 新增）
+
+- 转发链只塌缩不递归：`buildRepost` 读 source 的快照字段而非追链查库。
+- `toNotifiable` 不带 `selfMomentIds` 时 moment_* 一律静默——旧调用方行为不变。
+- **通知要带落点**（M-I18）：`toNotifiable` 早就为「只通知你自己的帖」读了
+  `momentId`，然后把它丢掉，而 `ScheduledNotification` 根本没有目的地字段——
+  于是「XX 赞了你的朋友圈」点进去只是打开 App，用户还得自己在 feed 里翻。
+  现在 moment_* 带 `aiwx://moments?at=<momentId>`、heartbeat 带
+  `aiwx://chat/<convId>`，随 `extra.route` 下发；点击回来经
+  `onNotificationTap` → **同一个** `parseDeepLink` 白名单（通知 payload 不比
+  任何别的 intent 更可信），`/moments` 已入白名单。落地端
+  `MomentsPage` 读 `?at=`，必要时把 `shown` 涨到目标下标、滚到居中、
+  `.moment-anchor-flash` 闪一下（复用聊天页 `msg-anchor-flash` 那套；
+  `backwards` 不是 `both`——卡片包装器留残余样式就是 I8 那个把全屏图片查看器
+  缩成 390px 的包含块陷阱）。
+- 自定义表情是 `idb:` ref，**收藏/斗图池要过 `startsWith('idb:')`**，词表
+  label 混进池子会被当 ref 渲染成裂图。
+
+## M-I18 增补：可见范围（公开 / 私密 / 部分可见 / 不给谁看）
+
+I6 把它列为「预列裁减位」并砍掉，M-I18 补上。微信的四档语义原样照搬。
+
+### 数据
+
+`MomentVM.visibility?: { mode, ids }`（`src/data/types.ts`），schema 侧是
+`moments.visibility_json`——**JSON 列演进，两个驱动都存整行 JSON，不需要
+`DB_VERSION` +1**（没有新 store）。**缺失 = 公开**：M-I18 之前的所有行、以及
+AI 发的每一条帖子都是这个状态，所以旧库零迁移。
+
+`ids` 只对 include/exclude 有意义，另两档存空数组——一列一个形状，解析侧不用
+分支。写入前一律过 `normalizeVisibility()`：
+- 空白名单 = **私密**，不是公开（"分享给谁"清空了不能反手公开发出去）；
+- 空黑名单 = 公开（塌缩成缺失态）；
+- 名单去重、剔掉 `self`（作者不是自己受众的成员）。
+
+### 过滤做在数据层，不在 UI
+
+规则函数在 `src/lib/moment-visibility.ts`，**调用点全在 lib/db/ai**：
+
+| 位置 | 作用 |
+|---|---|
+| `IdbRepo.getMoments` / `SqliteRepo.getMoments` | 出库即过滤，`viewer` 默认 `'self'` |
+| `getMomentsByAuthor(authorId, viewer?)` | 个人相册页同一条路 |
+| `planReactions` / `planRepost` | **排期前**就把看不见的人剔掉 |
+| `runMomentLike/Comment/Repost` | fire 时**再查一次**（同 `canForwardFrom` 的两次查） |
+| `simulate()` | `recentMoments` 带 `visibility` 进来，离线回填同样尊重 |
+
+仿 `search()` 内部过滤隐藏会话的先例：**UI 忘传也漏不出去**。
+`tests/unit/moment-visibility.test.ts` 有一条源码扫描守卫断言
+`src/features/**` 里**不出现** `canSeeMoment` / `visibleMoments`——规则一旦搬进
+组件，下一个新增的读取路径就会静默泄漏。
+
+两个 planner 因此改成收**整行** `PlannablePost`（不再是
+`(id, authorId, postedAt)` 三元组）：可见范围必须跟着帖子走，而第四个位置参数
+是会被忘掉的东西。
+
+### AI 侧（本条最重要的一点）
+
+**她看不到的帖，她不会赞、不会评、不会转。** 不可见的人在掷骰之前就被剔除，
+所以是"零条排期"而不是"排了再拦"——重放/回填也一致。转发更严：**任何非公开的
+帖一律不可转**（不只是查这个转发者），因为转发是把你的话搬到别人墙上，面对的是
+你从没选过的受众，且收不回来。
+
+漂移/亲密度等其它调节量都在可见范围之后才生效，顺序不能反。
+
+### 用户可见面
+
+- 发布页「谁可以看」行：ActionSheet 选档 → 两个名单档进 `Sheet` 联系人多选
+  （复用 I0 组件，没有新浮层）。候选人来自 **contacts**（`audienceCandidates`，
+  只留 `type === 'ai'`），**永远不是 conversations**——用会话行拼人选器正是隐藏
+  AI↔AI 私信泄漏到用户面的经典路径。
+- Feed / 相册卡片：自己的非公开帖在时间戳旁显示「私密 / 部分可见 / 不给谁看」灰标。
+  没有这个标，"到底存成私密了没有"在 App 里无处可查。
+- 赞评通知、搜索命中、年度报告都读同一批出库行，天然继承。
+
+### 删联系人
+
+`deleteContactCascade` 逐条手术：把死者从每个名单里摘掉，**不删整行**——那行里
+还有活人。白名单被摘空 → 退化成**私密**，不是公开。
+
+### 转红测试（`tests/unit/moment-visibility.test.ts`）
+
+- 不可见帖对该联系人的赞评规划为零；公开帖行为与 M-I18 前逐字节相同
+- 过滤在**驱动层**（IdbRepo + SqliteRepo 双跑，viewer 换人结果就换）
+- `visibleMoments` 只减不增（防止有人把过滤器改成取数器 = 泄漏）
+- 未知 mode **fail closed**
+- 人选器只出 AI 联系人；隐藏会话结构上进不来
+- 级联手术后活人仍在名单里；空白名单变私密不变公开

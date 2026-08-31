@@ -4,12 +4,22 @@
  *
  * The "··" button toggles a small dark capsule with 赞 / 评论 — WeChat slides it
  * out from the right of the button, anchored to the timestamp row.
+ *
+ * M-I15 additions:
+ *  - #话题# runs render as tappable links into the topic page;
+ *  - a repost renders the ROOT original as a grey quote card (snapshot fields,
+ *    so a deleted original degrades gracefully instead of breaking);
+ *  - the author name is tappable (→ 个人相册页) when the parent wires it;
+ *  - the capsule gains 转发 on posts the parent allows reposting.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Avatar } from '../../components/Avatar';
 import { ImageViewer } from '../../components/ImageViewer';
+import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { resolveImageRef } from '../../data/moments-images';
 import { momentTimestamp } from '../../lib/time';
+import { topicSegments } from '../../lib/topics';
+import { audienceLabel } from '../../lib/moment-visibility';
 import type { MomentVM, MomentLikeVM, MomentCommentVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -24,6 +34,89 @@ interface Props {
   now: number;
   onToggleLike: () => void;
   onComment: () => void;
+  /** Tap someone ELSE's comment → reply to it (M-I6). */
+  onReplyComment?: (c: MomentCommentVM) => void;
+  /** Tap one's OWN comment → offer deletion (M-I6). */
+  onDeleteComment?: (c: MomentCommentVM) => void;
+  /** 删除 link on one's own post (M-I6). Absent on others' posts. */
+  onDelete?: () => void;
+  /** 「刚刚活跃」绿点 (M-I16): seeded presence projection, computed by the page. */
+  activeDot?: boolean;
+  /** 转发 in the capsule (M-I15). Absent = not repostable from this surface. */
+  onRepost?: () => void;
+  /** Tap a #话题# run (M-I15). Absent = topics render as plain text. */
+  onTopicTap?: (tag: string) => void;
+  /** Tap the author's name (M-I15 → 个人相册页). */
+  onAuthorTap?: () => void;
+}
+
+/**
+ * One grid cell.
+ *
+ * Its own component because it needs two things a map callback cannot hold: a
+ * ref (the rect handed to the viewer's opening transition) and a loaded flag
+ * (the shimmer that covers a photo still coming out of IndexedDB). Before
+ * M-I8 the cell showed its flat placeholder colour until the blob landed, which
+ * on a cold feed reads as "these posts have no photos".
+ */
+function MomentImage({
+  imageRef,
+  onOpen,
+}: {
+  imageRef: string;
+  onOpen: (el: HTMLElement | null) => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const { url, background } = resolveImageRef(imageRef);
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <div
+      ref={ref}
+      className="moment__image"
+      style={background ? { background } : undefined}
+      onClick={() => onOpen(ref.current)}
+      role="button"
+    >
+      {/* Shimmer only for a REAL photo that has not decoded yet. A `ph:` ref
+          has no URL and never will — its gradient IS the content, not a
+          loading state, and shimmering over it would turn the whole seeded
+          feed grey. */}
+      {url && !loaded && <div className="moment__image-skeleton skeleton" aria-hidden />}
+      {url && (
+        <img
+          src={url}
+          alt=""
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          // A broken ref must not leave a shimmer running forever.
+          onError={() => setLoaded(true)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Who a comment is replying TO, or undefined when it isn't a reply — or when
+ * the comment it replied to is gone (M-I18).
+ *
+ * A reply can outlive its target two ways: the user deletes their own comment,
+ * or `deleteContact` cascades away every comment the deleted person wrote. The
+ * old code resolved the dangling id with `?? c.authorId`, which rendered the
+ * reply as 「我 回复 我：…」 — a sentence WeChat never produces. WeChat's own
+ * behaviour when the target is gone is to drop the 回复 clause and show the
+ * reply as a plain comment, which is also the only rendering that stays honest
+ * about a name it can no longer resolve.
+ *
+ * Fixed at RENDER time rather than in the cascade on purpose: it covers the
+ * user-deleted-their-own-comment path too, which no cascade ever touches.
+ */
+export function replyTargetAuthor(
+  comments: MomentCommentVM[],
+  c: MomentCommentVM,
+): string | undefined {
+  if (!c.replyToCommentId) return undefined;
+  return comments.find((x) => x.id === c.replyToCommentId)?.authorId;
 }
 
 /**
@@ -36,6 +129,36 @@ function gridClass(n: number): string {
   return 'moment__images moment__images--grid';
 }
 
+/** Post text with #话题# runs linked. Lossless for the prose in between. */
+function MomentText({ text, onTopicTap }: { text: string; onTopicTap?: (tag: string) => void }) {
+  const segs = topicSegments(text);
+  return (
+    <p className="moment__text">
+      {segs.map((s, i) =>
+        s.kind === 'topic' ? (
+          <span
+            key={i}
+            className="moment__topic"
+            role={onTopicTap ? 'link' : undefined}
+            onClick={
+              onTopicTap
+                ? (e) => {
+                    e.stopPropagation();
+                    onTopicTap(s.value);
+                  }
+                : undefined
+            }
+          >
+            #{s.value}#
+          </span>
+        ) : (
+          <span key={i}>{s.value}</span>
+        ),
+      )}
+    </p>
+  );
+}
+
 export function MomentCard({
   moment,
   author,
@@ -46,9 +169,20 @@ export function MomentCard({
   now,
   onToggleLike,
   onComment,
+  onReplyComment,
+  onDeleteComment,
+  onDelete,
+  activeDot,
+  onRepost,
+  onTopicTap,
+  onAuthorTap,
 }: Props) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  // Bumped on every like so the burst REPLAYS; a class that is merely present
+  // animates once and then never again, which is the commonest way a
+  // micro-interaction ships broken (M-H3).
+  const [likeBeat, setLikeBeat] = useState(0);
   const imgs = moment.imageRefs.slice(0, 9);
   const hasReactions = likes.length > 0 || comments.length > 0;
 
@@ -61,26 +195,51 @@ export function MomentCard({
         size={40}
       />
       <div className="moment__body">
-        <div className="moment__author">{author ? (author.remark ?? author.name) : '未知'}</div>
+        <div
+          className="moment__author"
+          role={onAuthorTap ? 'link' : undefined}
+          onClick={onAuthorTap}
+        >
+          {author ? (author.remark ?? author.name) : '未知'}
+          {activeDot && <span className="moment__active-dot" title="刚刚活跃" aria-label="刚刚活跃" />}
+        </div>
 
-        {moment.text && <p className="moment__text">{moment.text}</p>}
+        {moment.text && <MomentText text={moment.text} onTopicTap={onTopicTap} />}
+
+        {/* 转发卡片 (M-I15): the quoted ROOT original. Rendered from the row's
+            own snapshot fields — never from any conversation — so the card
+            keeps working after the original is deleted, and no hidden-surface
+            content can reach it (see moment-repost.ts). */}
+        {moment.repostOf && (
+          <div className="moment__repost">
+            {moment.repostAuthorId ? (
+              <>
+                <span className="moment__repost-author">{nameOf(moment.repostAuthorId)}</span>
+                <span>：{moment.repostExcerpt ?? '[动态]'}</span>
+              </>
+            ) : (
+              // Original author deleted — the cascade scrubbed the snapshot.
+              <span>{moment.repostExcerpt ?? '原内容已删除'}</span>
+            )}
+          </div>
+        )}
 
         {imgs.length > 0 && (
           <div className={gridClass(imgs.length)}>
-            {imgs.map((ref, i) => {
-              const { url, background } = resolveImageRef(ref);
-              return (
-                <div
-                  key={`${ref}-${i}`}
-                  className="moment__image"
-                  style={background ? { background } : undefined}
-                  onClick={() => setViewerIndex(i)}
-                  role="button"
-                >
-                  {url && <img src={url} alt="" loading="lazy" />}
-                </div>
-              );
-            })}
+            {imgs.map((ref, i) => (
+              <MomentImage
+                key={`${ref}-${i}`}
+                imageRef={ref}
+                onOpen={(el) => {
+                  // Hand the tapped cell's rect to the viewer so the photo
+                  // grows out of THIS cell (M-I8, lib/flip.ts). Measured at the
+                  // moment of the tap: the grid can scroll before the viewer
+                  // mounts, and a stale rect flies in from the wrong place.
+                  captureFlipSource(FLIP_KEYS.imageViewer, el);
+                  setViewerIndex(i);
+                }}
+              />
+            ))}
           </div>
         )}
         {viewerIndex != null && (
@@ -88,7 +247,21 @@ export function MomentCard({
         )}
 
         <div className="moment__meta">
-          <span className="moment__time">{momentTimestamp(moment.createdAt, now)}</span>
+          <span className="moment__time">
+            {momentTimestamp(moment.createdAt, now)}
+            {/* 可见范围 tag (M-I18). WeChat shows it beside the timestamp on the
+                author's own restricted posts — without it, "did that actually
+                save as 私密?" has no answer anywhere in the app. Absent
+                visibility (公开, and every AI post) renders nothing. */}
+            {moment.visibility && moment.visibility.mode !== 'public' && (
+              <span className="moment__audience">{audienceLabel(moment.visibility)}</span>
+            )}
+            {onDelete && (
+              <button className="moment__delete" onClick={onDelete}>
+                删除
+              </button>
+            )}
+          </span>
           <div className="moment__actions">
             {actionsOpen && (
               <div className="moment__capsule" role="group">
@@ -96,6 +269,7 @@ export function MomentCard({
                   onClick={() => {
                     onToggleLike();
                     setActionsOpen(false);
+                    setLikeBeat((n) => n + 1);
                   }}
                 >
                   {selfLiked ? '取消' : '赞'}
@@ -109,6 +283,19 @@ export function MomentCard({
                 >
                   评论
                 </button>
+                {onRepost && (
+                  <>
+                    <span className="moment__capsule-div" />
+                    <button
+                      onClick={() => {
+                        onRepost();
+                        setActionsOpen(false);
+                      }}
+                    >
+                      转发
+                    </button>
+                  </>
+                )}
               </div>
             )}
             <button
@@ -126,7 +313,10 @@ export function MomentCard({
         {hasReactions && (
           <div className="moment__reactions">
             {likes.length > 0 && (
-              <div className="moment__likes">
+              <div
+                className={`moment__likes${likeBeat > 0 ? ' like-burst' : ''}`}
+                key={`likes-${likeBeat}`}
+              >
                 <span className="moment__heart" aria-hidden="true">
                   ♥
                 </span>
@@ -134,22 +324,30 @@ export function MomentCard({
               </div>
             )}
             {likes.length > 0 && comments.length > 0 && <div className="moment__reaction-div" />}
-            {comments.map((c) => (
-              <div key={c.id} className="moment__comment">
-                <span className="moment__comment-author">{nameOf(c.authorId)}</span>
-                {c.replyToCommentId && (
-                  <>
-                    <span className="moment__comment-reply">回复</span>
-                    <span className="moment__comment-author">
-                      {nameOf(
-                        comments.find((x) => x.id === c.replyToCommentId)?.authorId ?? c.authorId,
-                      )}
-                    </span>
-                  </>
-                )}
-                <span>：{c.text}</span>
-              </div>
-            ))}
+            {comments.map((c) => {
+              const replyToId = replyTargetAuthor(comments, c);
+              return (
+                <div
+                  key={c.id}
+                  className="moment__comment"
+                  role="button"
+                  // Own comment → delete; someone else's → reply. Same tap, the
+                  // ownership decides — exactly the device behavior.
+                  onClick={() =>
+                    c.authorId === 'self' ? onDeleteComment?.(c) : onReplyComment?.(c)
+                  }
+                >
+                  <span className="moment__comment-author">{nameOf(c.authorId)}</span>
+                  {replyToId && (
+                    <>
+                      <span className="moment__comment-reply">回复</span>
+                      <span className="moment__comment-author">{nameOf(replyToId)}</span>
+                    </>
+                  )}
+                  <span>：{c.text}</span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

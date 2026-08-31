@@ -15,6 +15,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "lint": "eslint . && node scripts/check-no-hardcoded-colors.mjs",
+    "check:size": "node scripts/check-bundle-size.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:screenshot": "playwright test",
@@ -25,6 +26,7 @@
     "cap:apk": "pnpm build && cap sync android && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
+    "@capacitor-community/sqlite": "^7.0.3",
     "@capacitor/app": "^7.0.0",
     "@capacitor/core": "^7.0.0",
     "@capacitor/filesystem": "^7.1.8",

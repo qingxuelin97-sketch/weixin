@@ -12,6 +12,13 @@
  * are chained like heartbeats with an 8–20h seeded gap — that spacing alone
  * bounds them to ≈≤2/day, with no counter to maintain. Offline backfill never
  * fabricates DMs (each would be a paid call).
+ *
+ * BOUNDED THREE-WAY (M-I3): a session sometimes has a third participant, and
+ * never a fourth (`MAX_DM_PARTICIPANTS`). The cost gate is what makes that safe:
+ * a trio is still `DM_LLM_CALLS_PER_SESSION` = 1 call — the director-style
+ * single dispatch writes every speaker's lines in one pass, exactly as the RSVP
+ * round does. Three participants must never mean three calls, and the constant
+ * is unit-locked so a refactor cannot quietly make it so.
  */
 import type {
   ContactVM,
@@ -23,6 +30,7 @@ import type {
   NsfwTierVM,
 } from '../data/types';
 import { seededRng } from '../lib/money';
+import { canSeeMoment } from '../lib/moment-visibility';
 import { beginRecordingSuppression, endRecordingSuppression } from '../lib/llm-recorder';
 import { recordRelEvent } from './relationship';
 import { maxTier, globalTier } from '../lib/nsfw-tier';
@@ -32,18 +40,50 @@ import { isActiveAt } from './heartbeat';
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
 
-/** Stable conversation id for a pair, order-independent. */
-export function dmConvId(a: string, b: string): string {
-  const [x, y] = [a, b].sort();
-  return `dm_${x}_${y}`;
+/**
+ * Hard ceiling on a session's cast. Three is a conversation; four is a group
+ * chat the user cannot see, which is a different (and much more expensive)
+ * feature. The bound is enforced at planning time and again when a payload is
+ * read back off the queue.
+ */
+export const MAX_DM_PARTICIPANTS = 3;
+
+/** Seeded chance that a planned session takes a third participant. */
+export const TRIO_CHANCE = 0.22;
+
+/**
+ * LLM calls one session costs, whatever its size. THE cost gate: a trio is one
+ * dispatch that writes all three voices, never one call per speaker.
+ */
+export const DM_LLM_CALLS_PER_SESSION = 1;
+
+/** Speaker slots, in order. Index i of a session's participants is SPEAKERS[i]. */
+export const SPEAKERS = ['a', 'b', 'c'] as const;
+export type Speaker = (typeof SPEAKERS)[number];
+
+/** Stable conversation id for a session, order-independent (2 or 3 people). */
+export function dmConvId(...ids: string[]): string {
+  return `dm_${[...ids].sort().join('_')}`;
 }
 
 export interface DmPlan {
   a: string;
   b: string;
+  /** Third participant (M-I3 bounded trio). Absent = the ordinary pair. */
+  c?: string;
   /** The shared group whose chatter this DM may spill into. */
   groupId: string;
   fireAt: number;
+}
+
+/**
+ * A plan's cast, in speaker order and bounded. The ONE place that turns
+ * `{a, b, c?}` into a list — a call site that spreads the fields by hand is how
+ * a fourth participant would eventually sneak in.
+ */
+export function participantsOf(plan: DmPlan): string[] {
+  const ids = [plan.a, plan.b, plan.c].filter((id): id is string => Boolean(id));
+  return [...new Set(ids)].slice(0, MAX_DM_PARTICIPANTS);
 }
 
 export interface DmRosterEntry {
@@ -52,11 +92,15 @@ export interface DmRosterEntry {
 }
 
 /**
- * Pick the next DM session: which pair, which shared group, and when.
+ * Pick the next DM session: who, which shared group, and when.
  *
  * Returns null when no two persona-backed agents share a group — without a
  * shared group there is no surface for the chemistry to land on, so a DM would
  * be a paid LLM call with no observable effect.
+ *
+ * The cast is a pair by default and, on a seeded minority of rolls, a trio
+ * drawn from the SAME group (a third person who was not in that room has no
+ * business in the exchange). Never more than `MAX_DM_PARTICIPANTS`.
  */
 export function planNextDm(
   roster: DmRosterEntry[],
@@ -65,13 +109,19 @@ export function planNextDm(
   seed: string,
 ): DmPlan | null {
   const byId = new Map(roster.map((r) => [r.contactId, r]));
-  // All unordered pairs that share at least one group.
-  const pairs: Array<{ a: DmRosterEntry; b: DmRosterEntry; groupId: string }> = [];
+  // All unordered pairs that share at least one group, remembering the room so
+  // a third participant can be drawn from the same roster.
+  const pairs: Array<{ a: DmRosterEntry; b: DmRosterEntry; groupId: string; members: string[] }> = [];
   for (const g of groups) {
     const members = g.memberIds.filter((id) => byId.has(id));
     for (let i = 0; i < members.length; i++) {
       for (let j = i + 1; j < members.length; j++) {
-        pairs.push({ a: byId.get(members[i])!, b: byId.get(members[j])!, groupId: g.convId });
+        pairs.push({
+          a: byId.get(members[i])!,
+          b: byId.get(members[j])!,
+          groupId: g.convId,
+          members,
+        });
       }
     }
   }
@@ -80,18 +130,30 @@ export function planNextDm(
   const rng = seededRng(`dmplan:${seed}:${Math.floor(from / HOUR)}`);
   const pick = pairs[Math.floor(rng() * pairs.length)];
 
+  // Sometimes a third person from the same room is in on it. Rolled BEFORE the
+  // timing so the active-hours walk below can honour everyone who is coming.
+  const cast: DmRosterEntry[] = [pick.a, pick.b];
+  if (rng() < TRIO_CHANCE) {
+    const others = pick.members.filter((id) => id !== pick.a.contactId && id !== pick.b.contactId);
+    if (others.length > 0) {
+      const third = byId.get(others[Math.floor(rng() * others.length)]);
+      if (third) cast.push(third);
+    }
+  }
+
   // 8–20h out — the spacing itself enforces the ≈2/day budget.
   let fireAt = from + (8 + rng() * 12) * HOUR;
-  // Walk forward until BOTH participants are awake (≤48 hourly steps).
-  for (
-    let i = 0;
-    i < 48 &&
-    !(isActiveAt(pick.a.persona, fireAt) && isActiveAt(pick.b.persona, fireAt));
-    i++
-  ) {
+  // Walk forward until EVERY participant is awake (≤48 hourly steps).
+  for (let i = 0; i < 48 && !cast.every((p) => isActiveAt(p.persona, fireAt)); i++) {
     fireAt += HOUR;
   }
-  return { a: pick.a.contactId, b: pick.b.contactId, groupId: pick.groupId, fireAt: Math.round(fireAt) };
+  return {
+    a: cast[0].contactId,
+    b: cast[1].contactId,
+    ...(cast[2] ? { c: cast[2].contactId } : {}),
+    groupId: pick.groupId,
+    fireAt: Math.round(fireAt),
+  };
 }
 
 /** Candidate topics, seeded-picked. Pure so the choice is replayable. */
@@ -102,17 +164,26 @@ export function pickDmTopic(candidates: string[], seed: string): string | null {
 }
 
 export interface DmScript {
-  /** Alternating-ish lines; who is 'a' or 'b'. */
-  lines: Array<{ who: 'a' | 'b'; text: string }>;
+  /** Lines in order; `who` is the participant's speaker slot. */
+  lines: Array<{ who: Speaker; text: string }>;
   gossip?: { about: string; fact: string };
+}
+
+/** Line ceiling per session size — a trio needs a little more room, not much. */
+export function dmLineCap(participantCount: number): number {
+  return participantCount >= 3 ? 10 : 8;
 }
 
 /**
  * Parse the model's NDJSON exchange. Tolerant per line, strict overall: fewer
  * than 2 usable lines voids the whole session (a half-materialized private chat
  * is worse than none). Junk lines and markdown fences are skipped.
+ *
+ * `participantCount` is the whitelist: a "C" line in a two-person session is a
+ * hallucinated third party and is dropped, never guessed into an existing id.
  */
-export function parseDmScript(raw: string): DmScript | null {
+export function parseDmScript(raw: string, participantCount = 2): DmScript | null {
+  const allowed = SPEAKERS.slice(0, Math.min(participantCount, MAX_DM_PARTICIPANTS)) as readonly Speaker[];
   const lines: DmScript['lines'] = [];
   let gossip: DmScript['gossip'];
   for (const lineRaw of raw.split('\n')) {
@@ -127,42 +198,74 @@ export function parseDmScript(raw: string): DmScript | null {
         }
         continue;
       }
-      const speaker = String(obj.speaker ?? '').toUpperCase();
+      const speaker = String(obj.speaker ?? '')
+        .trim()
+        .toLowerCase() as Speaker;
       const text = typeof obj.text === 'string' ? obj.text.trim() : '';
       if (!text) continue;
-      if (speaker === 'A') lines.push({ who: 'a', text });
-      else if (speaker === 'B') lines.push({ who: 'b', text });
+      if (allowed.includes(speaker)) lines.push({ who: speaker, text });
     } catch {
       /* junk line — skip */
     }
   }
   if (lines.length < 2) return null;
-  return { lines: lines.slice(0, 8), gossip };
+  return { lines: lines.slice(0, dmLineCap(allowed.length)), gossip };
 }
 
-/** The single-call prompt that produces the whole exchange. */
+export interface DmCastMember {
+  name: string;
+  persona: PersonaVM;
+}
+
+/**
+ * The single-call prompt that produces the WHOLE exchange — two voices or
+ * three, one dispatch either way (see `DM_LLM_CALLS_PER_SESSION`).
+ */
 export function buildDmPrompt(
-  aName: string,
-  aPersona: PersonaVM,
-  bName: string,
-  bPersona: PersonaVM,
+  cast: DmCastMember[],
   topic: string,
 ): Array<{ role: 'system' | 'user'; content: string }> {
-  const system = `你要写一段两个真实朋友之间的微信私聊，共 4 到 8 条消息，两人交替发言。
+  const members = cast.slice(0, MAX_DM_PARTICIPANTS);
+  const slots = SPEAKERS.slice(0, members.length).map((s) => s.toUpperCase());
+  const trio = members.length >= 3;
 
-A 是「${aName}」：${aPersona.core}${aPersona.speechStyle ? `（说话风格：${aPersona.speechStyle}）` : ''}
-B 是「${bName}」：${bPersona.core}${bPersona.speechStyle ? `（说话风格：${bPersona.speechStyle}）` : ''}
-${aPersona.relations[bPersona.contactId] ? `A 眼里的 B：${aPersona.relations[bPersona.contactId]}` : ''}
-${bPersona.relations[aPersona.contactId] ? `B 眼里的 A：${bPersona.relations[aPersona.contactId]}` : ''}
+  const cards = members
+    .map(
+      (m, i) =>
+        `${slots[i]} 是「${m.name}」：${m.persona.core}${
+          m.persona.speechStyle ? `（说话风格：${m.persona.speechStyle}）` : ''
+        }`,
+    )
+    .join('\n');
+  // Every directed edge that actually exists — "C 眼里的 A" matters as much in a
+  // trio as "A 眼里的 B" does in a pair.
+  const edges = members
+    .flatMap((from, i) =>
+      members.flatMap((to, j) => {
+        if (i === j) return [];
+        const text = from.persona.relations[to.persona.contactId];
+        return text ? [`${slots[i]} 眼里的 ${slots[j]}：${text}`] : [];
+      }),
+    )
+    .join('\n');
+
+  const system = `你要写一段${trio ? '三个' : '两个'}真实朋友之间的微信${
+    trio ? '小群聊' : '私聊'
+  }，共 ${trio ? '6 到 10' : '4 到 8'} 条消息，${trio ? '三个人轮流出声' : '两人交替发言'}。
+
+${cards}
+${edges}
 
 这次他们聊到：${topic}
 
 要求：
 - 像真人发微信：短句、口语，别写小作文，别用列表。
 - 内容必须全年龄向。
-- 逐行输出 NDJSON，每行 {"speaker":"A"或"B","text":"..."}。
+- 逐行输出 NDJSON，每行 {"speaker":"${slots.join('"或"')}","text":"..."}。${
+    trio ? '\n- 三个人都要说话，别让谁从头到尾不出声。' : ''
+  }
 - 最后额外输出一行 {"gossip":{"about":"user","fact":"不超过30字的一句话，概括这次聊天里关于用户或彼此的一个可被之后提起的信息"}}；
-  about 只能是 "user" 或 "A" 或 "B"。
+  about 只能是 "user" 或 ${slots.map((s) => `"${s}"`).join(' 或 ')}。
 - 除这些 JSON 行外不要输出任何东西。`;
   return [
     { role: 'system', content: system },
@@ -191,19 +294,23 @@ export function dmTimestamps(
   return out;
 }
 
-/** The hidden conversation row for a pair, created on first exchange. */
-export function makeDmConversation(
-  a: ContactVM,
-  b: ContactVM,
-  now: number,
-): ConversationVM {
+/**
+ * The hidden conversation row for a session (2 or 3 people), created on first
+ * exchange. `isHidden` is the ONE thing standing between this row and every
+ * user-visible surface (list, badge, search, forward picker, favorites,
+ * notifications, year report) — all of them filter on it, none of them on the
+ * `dm_` id shape, which is why a three-person row needs no new wall.
+ */
+export function makeDmConversation(participants: ContactVM[], now: number): ConversationVM {
+  const cast = participants.slice(0, MAX_DM_PARTICIPANTS);
+  const [head] = cast;
   return {
-    id: dmConvId(a.id, b.id),
+    id: dmConvId(...cast.map((c) => c.id)),
     type: 'single',
-    title: `${a.remark ?? a.name}、${b.remark ?? b.name}`,
-    avatarColor: a.avatarColor,
-    avatarText: a.avatarText,
-    memberIds: [a.id, b.id],
+    title: cast.map((c) => c.remark ?? c.name).join('、'),
+    avatarColor: head.avatarColor,
+    avatarText: head.avatarText,
+    memberIds: cast.map((c) => c.id),
     isPinned: false,
     isMuted: true,
     isHidden: true,
@@ -219,47 +326,50 @@ export function shouldSpillToGroup(dmId: string, fireAt: number): boolean {
   return seededRng(`dmspill:${dmId}:${fireAt}`)() < 0.5;
 }
 
-/** Assemble gossip memory rows for both participants. Pure. */
+/**
+ * Assemble gossip memory rows — one per participant, speaker/listener framed.
+ * Pure. Works for a pair and for a trio (the head is the teller; everyone else
+ * heard it from them).
+ */
 export function gossipFacts(
-  plan: { a: string; b: string },
-  aName: string,
-  bName: string,
+  participants: Array<{ id: string; name: string }>,
   gossip: { about: string; fact: string },
   contactExists: (id: string) => boolean,
   now: number,
 ): MemoryFactVM[] {
+  const cast = participants.slice(0, MAX_DM_PARTICIPANTS);
+  if (cast.length < 2) return [];
   // `about` referring to a contact that no longer exists is dropped upstream;
-  // 'user'/'A'/'B' are the only values the prompt permits anyway.
-  if (gossip.about !== 'user' && gossip.about !== 'A' && gossip.about !== 'B') return [];
-  if (!contactExists(plan.a) || !contactExists(plan.b)) return [];
-  const stamp = `${dmConvId(plan.a, plan.b)}_${now}`;
+  // 'user' and this session's OWN speaker slots are the only permitted values —
+  // a "C" in a two-person exchange is a hallucinated party.
+  const slots = SPEAKERS.slice(0, cast.length).map((s) => s.toUpperCase());
+  if (gossip.about !== 'user' && !slots.includes(gossip.about)) return [];
+  if (!cast.every((p) => contactExists(p.id))) return [];
+  const stamp = `${dmConvId(...cast.map((p) => p.id))}_${now}`;
+  const [teller, ...listeners] = cast;
+  const base = {
+    importance: 2 as const,
+    sensitivity: 'normal' as const,
+    evidenceMsgIds: [] as number[],
+    status: 'confirmed' as const,
+    source: 'hearsay' as const,
+    confidence: 0.4,
+    isPinned: false,
+    createdAt: now,
+  };
   return [
     {
+      ...base,
       id: `gossip_${stamp}_a`,
-      subjectId: plan.a,
-      fact: `和${bName}聊到：${gossip.fact}`,
-      importance: 2,
-      sensitivity: 'normal',
-      evidenceMsgIds: [],
-      status: 'confirmed',
-      source: 'hearsay' as const,
-      confidence: 0.4,
-      isPinned: false,
-      createdAt: now,
+      subjectId: teller.id,
+      fact: `和${listeners.map((p) => p.name).join('、')}聊到：${gossip.fact}`,
     },
-    {
-      id: `gossip_${stamp}_b`,
-      subjectId: plan.b,
-      fact: `听${aName}说：${gossip.fact}`,
-      importance: 2,
-      sensitivity: 'normal',
-      evidenceMsgIds: [],
-      status: 'confirmed',
-      source: 'hearsay' as const,
-      confidence: 0.4,
-      isPinned: false,
-      createdAt: now,
-    },
+    ...listeners.map((p, i) => ({
+      ...base,
+      id: `gossip_${stamp}_${SPEAKERS[i + 1]}`,
+      subjectId: p.id,
+      fact: `听${teller.name}说：${gossip.fact}`,
+    })),
   ];
 }
 
@@ -300,35 +410,55 @@ export interface DmDeps {
  * a missing private exchange is invisible, a half-materialized one is not.
  */
 export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
-  const pa = deps.getPersona(plan.a);
-  const pb = deps.getPersona(plan.b);
-  const ca = deps.getContact(plan.a);
-  const cb = deps.getContact(plan.b);
-  if (!pa || !pb || !ca || !cb) return false;
-  const aName = ca.remark ?? ca.name;
-  const bName = cb.remark ?? cb.name;
+  const ids = participantsOf(plan);
+  if (ids.length < 2) return false;
+  const cast = ids.map((id) => ({
+    id,
+    persona: deps.getPersona(id),
+    contact: deps.getContact(id),
+  }));
+  // One missing participant voids the session: a trio silently degrading to a
+  // pair would materialize an exchange nobody planned.
+  if (!cast.every((p) => p.persona && p.contact)) return false;
+  const named = cast.map((p) => ({
+    id: p.id,
+    name: p.contact!.remark ?? p.contact!.name,
+    persona: p.persona!,
+    contact: p.contact!,
+  }));
 
   // Topic: their memories, the shared group's recent chatter, their moments.
-  const [famem, fbmem, groupMsgs, moments] = await Promise.all([
-    deps.getMemoryFacts(plan.a),
-    deps.getMemoryFacts(plan.b),
+  const [memories, groupMsgs, moments] = await Promise.all([
+    Promise.all(named.map((p) => deps.getMemoryFacts(p.id))),
     deps.getGroupMessages(plan.groupId),
     deps.getMoments(),
   ]);
   const candidates = [
-    ...famem.slice(0, 2).map((f) => f.fact),
-    ...fbmem.slice(0, 2).map((f) => f.fact),
+    ...memories.flatMap((facts) => facts.slice(0, 2).map((f) => f.fact)),
     ...groupMsgs
       .filter((m) => m.type === 'text' && m.content && !m.isRecalled)
       .slice(-3)
       .map((m) => `群里刚聊过：${m.content}`),
     ...moments
-      .filter((m) => (m.authorId === plan.a || m.authorId === plan.b) && m.text)
+      // 可见范围 (M-I18): the read behind `deps.getMoments` uses the default
+      // viewer ('self'), because there is no single viewer for a DM — so the
+      // audience check belongs HERE, and it must hold for EVERY participant.
+      // Quoting a post one speaker cannot see is not a private slip: hidden
+      // DMs are the source of hearsay, and hearsay surfaces in group chat, so
+      // it would come back to the user as 「她怎么知道这条」.
+      //
+      // Today this is belt-and-braces — the filter already keeps only posts
+      // authored by the participants, and an agent's own post is always
+      // public. It is written anyway because the day an agent can post
+      // 部分可见 (the plan's AI 连续剧式发帖 heads that way), the leak would
+      // open silently, with no test failing.
+      .filter((m) => ids.includes(m.authorId) && m.text)
+      .filter((m) => ids.every((viewer) => canSeeMoment(m, viewer)))
       .slice(0, 2)
       .map((m) => `朋友圈那条「${m.text}」`),
     '最近各自在忙什么',
   ];
-  const dmId = dmConvId(plan.a, plan.b);
+  const dmId = dmConvId(...ids);
   const topic = pickDmTopic(candidates, `${dmId}:${plan.fireAt}`);
   if (!topic) return false;
 
@@ -337,10 +467,21 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
   // prompt/reply — the export surface would leak the gossip verbatim.
   beginRecordingSuppression();
   try {
-    // Both participants' permits gate the material either of them may quote.
-    const dmTier = maxTier(await (deps.getGlobalTier ?? globalTier)(), [pa, pb]);
-    const raw = await deps.complete(buildDmPrompt(aName, pa, bName, pb, topic), `dm:${dmId}`, dmTier);
-    script = parseDmScript(raw);
+    // Every participant's permit gates the material any of them may quote.
+    const dmTier = maxTier(
+      await (deps.getGlobalTier ?? globalTier)(),
+      named.map((p) => p.persona),
+    );
+    // ONE call, whatever the cast size (DM_LLM_CALLS_PER_SESSION).
+    const raw = await deps.complete(
+      buildDmPrompt(
+        named.map((p) => ({ name: p.name, persona: p.persona })),
+        topic,
+      ),
+      `dm:${dmId}`,
+      dmTier,
+    );
+    script = parseDmScript(raw, named.length);
   } catch {
     return false;
   } finally {
@@ -351,15 +492,20 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
   // Materialize into the hidden conversation.
   let conv = await deps.getConversation(dmId);
   if (!conv) {
-    conv = makeDmConversation(ca, cb, plan.fireAt);
+    conv = makeDmConversation(
+      named.map((p) => p.contact),
+      plan.fireAt,
+    );
     await deps.addConversation(conv);
   }
   const stamps = dmTimestamps(script.lines.length, plan.fireAt, conv.lastMsgAt, `${dmId}:${plan.fireAt}`);
   for (let i = 0; i < script.lines.length; i++) {
     const line = script.lines[i];
+    const senderId = ids[SPEAKERS.indexOf(line.who)];
+    if (!senderId) continue; // parser already whitelists, belt and braces
     await deps.appendMessage({
       convId: dmId,
-      senderId: line.who === 'a' ? plan.a : plan.b,
+      senderId,
       type: 'text',
       content: line.text,
       status: 'sent',
@@ -367,12 +513,11 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
     });
   }
 
-  // Gossip → both memories, through the same rows every other memory uses.
+  // Gossip → every participant's memory, through the same rows every other
+  // memory uses.
   if (script.gossip) {
     for (const f of gossipFacts(
-      plan,
-      aName,
-      bName,
+      named.map((p) => ({ id: p.id, name: p.name })),
       script.gossip,
       (id) => Boolean(deps.getContact(id)),
       deps.now(),
@@ -381,13 +526,18 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
     }
   }
 
-  // A shared DM session builds the pair's own bond.
-  void recordRelEvent(plan.a, plan.b, 'dm_gossip', deps.now()).catch(() => {});
+  // A shared session builds each pair's own bond — including the two who only
+  // met because a third person pulled them into the same thread.
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      void recordRelEvent(ids[i], ids[j], 'dm_gossip', deps.now()).catch(() => {});
+    }
+  }
 
   // Maybe spill a starter into the shared group, minutes-to-an-hour later.
   if (shouldSpillToGroup(dmId, plan.fireAt)) {
     const rng = seededRng(`dmspeak:${dmId}:${plan.fireAt}`);
-    const speaker = rng() < 0.5 ? plan.a : plan.b;
+    const speaker = ids[Math.floor(rng() * ids.length)];
     const at = deps.now() + (10 + rng() * 30) * MINUTE;
     await deps.enqueueGroupSpill(plan.groupId, speaker, topic.slice(0, 20), at);
   }

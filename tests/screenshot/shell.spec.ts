@@ -6,18 +6,8 @@ import { test, expect } from '@playwright/test';
  * real-device WeChat screenshots, then commit as the regression baseline.
  */
 
-async function settle(page: import('@playwright/test').Page) {
-  // Wait for fonts + layout to settle so pixels are stable.
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(150);
-}
+import { settle, SEED_EPOCH } from './helpers';
 
-/**
- * The app renders real wall-clock time (M-B fixed the frozen-clock bug), so
- * golden determinism now lives here: pin Date at the seed-data epoch. Timers
- * keep running — only Date.now()/new Date() are fixed.
- */
-const SEED_EPOCH = 1_754_500_000_000; // ~2025-08-06, same base as src/data/seed.ts
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(SEED_EPOCH);
 });
@@ -160,6 +150,28 @@ test('persona edit page', async ({ page }) => {
   await page.goto('/#/persona/ai_lin');
   await settle(page);
   await expect(page).toHaveScreenshot('persona-edit.png', { fullPage: false });
+});
+
+/**
+ * The 行为 section, scrolled into view (M-I18).
+ *
+ * `fullPage: false` means every shot is one 390×844 viewport, and this page is
+ * long — so the ENTIRE behaviour section (proactivity, typing speed, heartbeat,
+ * 抢红包, and now 表情使用率) has never been in a golden. Adding a slider there
+ * moved no pixels in `persona-edit.png`, which is how I noticed: the page was
+ * "covered" while the half of it made of knobs was not.
+ */
+test('persona edit page — 行为 knobs', async ({ page }) => {
+  await page.goto('/#/chats');
+  await page.waitForTimeout(600);
+  await page.goto('/#/persona/ai_lin');
+  await settle(page);
+  // Anchor on the section heading rather than a pixel offset: a row added
+  // above it would silently slide a fixed scrollTop off target, and the shot
+  // would keep passing while framing something else.
+  await page.locator('.settings__group-title', { hasText: '行为' }).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(250);
+  await expect(page).toHaveScreenshot('persona-edit-behavior.png', { fullPage: false });
 });
 
 test('red packet detail (手气榜)', async ({ page }) => {

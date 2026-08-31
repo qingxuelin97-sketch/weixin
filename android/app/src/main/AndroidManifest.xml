@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- AIWX deep links: aiwx://chat/<convId>, aiwx://call/<convId>?incoming=1 …
+                 Every native surface (bubble tap, notification tap, RemoteInput
+                 confirmation, call full-screen, widget) funnels through this one
+                 filter; the JS side allowlists routes in src/native/deep-link.ts. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aiwx" />
+            </intent-filter>
+
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+
+        <!-- AIWX (M-I10): floating message bubble drawn over other apps.
+             Plain (non-foreground) service: it only lives while the app process
+             does, which matches the JS producer — a WebView that is already dead
+             cannot ask for a bubble anyway. -->
+        <service
+            android:name=".aiwx.BubbleService"
+            android:exported="false" />
+
+        <!-- AIWX: receives RemoteInput results + call-decline taps. Not exported —
+             only our own PendingIntents (carrying the system's RemoteInput
+             results) target it. -->
+        <receiver
+            android:name=".aiwx.ReplyReceiver"
+            android:exported="false" />
+
+        <!-- AIWX: home-screen widget (unread count + latest preview). -->
+        <receiver
+            android:name=".aiwx.AiwxWidgetProvider"
+            android:exported="true"
+            android:label="@string/aiwx_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/aiwx_widget_info" />
+        </receiver>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- AIWX (M-I10) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+</manifest>

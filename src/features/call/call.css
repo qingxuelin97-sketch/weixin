@@ -50,3 +50,159 @@
   font-size: var(--fs-small-gray);
   opacity: 0.7;
 }
+
+/* Incoming call (M-H1): same shell, two controls instead of one. It sits over
+   whatever the user was doing — that is what makes it a call and not a page. */
+.call-page--incoming {
+  position: fixed;
+  z-index: var(--z-call);
+}
+.call-page__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 280px;
+}
+.call-page__btn--accept {
+  background: var(--color-call-accept);
+}
+/* ---- 通话中实时对话 (M-I16) ---- */
+/* Middle band between the identity block and the hangup control: subtitles
+   grow upward from the talk button, newest pinned at the bottom. */
+.call-live {
+  flex: 1;
+  align-self: stretch;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 12px 0;
+}
+.call-live__mode {
+  text-align: center;
+  font-size: var(--fs-small-gray);
+  opacity: 0.55;
+}
+.call-subs {
+  overflow-y: auto;
+  max-height: 38vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 2px;
+}
+.call-subs__line {
+  align-self: flex-start;
+  max-width: 86%;
+  background: var(--color-on-color-fill);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: var(--fs-cell-sub);
+  line-height: var(--lh-body);
+  word-break: break-word;
+}
+.call-subs__line--self {
+  align-self: flex-end;
+  opacity: 0.75;
+}
+.call-subs__line--speaking {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 20px;
+}
+.call-subs__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-text-on-brand);
+  opacity: 0.7;
+  animation: call-dot 1.2s ease-in-out infinite;
+}
+.call-subs__dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.call-subs__dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes call-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+.call-talk {
+  align-self: center;
+  min-width: 190px;
+  padding: 13px 30px;
+  border-radius: 26px;
+  background: var(--color-on-color-fill);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-sub);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.call-talk--held {
+  background: var(--color-brand);
+}
+.call-talk:disabled {
+  opacity: 0.6;
+}
+.call-talk-input {
+  align-self: stretch;
+  display: flex;
+  gap: 8px;
+}
+.call-talk-input input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: var(--color-on-color-fill);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-sub);
+}
+.call-talk-input input::placeholder {
+  color: var(--color-voice-text);
+}
+.call-talk-input button {
+  padding: 9px 18px;
+  border-radius: 6px;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-sub);
+}
+
+/* M-I10: incoming-call layout — decline left, accept right, like WeChat. */
+.call-page__controls--incoming {
+  flex-direction: row;
+  justify-content: space-between;
+  align-self: stretch;
+  padding: 0 36px;
+}
+.call-page__ctrl {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.call-page__btn--accept {
+  background: var(--color-brand);
+}
+
+/* Accessibility (M-I8): every animating stylesheet must say how it stops.
+   The breathing dots under 「正在说话」 were the one animation in this file and
+   they had no switch — an infinite loop is exactly what someone who turns
+   reduced motion on is turning off. */
+@media (prefers-reduced-motion: reduce) {
+  .call-subs__dot {
+    animation: none !important;
+    opacity: 0.7;
+  }
+}

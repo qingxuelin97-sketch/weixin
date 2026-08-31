@@ -70,6 +70,13 @@
   padding: 20px 16px;
   background: var(--color-cell-bg);
 }
+/* Flip target for the row→card shared-element transition (M-I8). Sized by the
+   avatar it holds, so the card's layout is byte-identical to before it existed. */
+.contact-card__avatar {
+  flex: none;
+  display: flex;
+  align-self: flex-start;
+}
 .contact-card__id {
   display: flex;
   flex-direction: column;
@@ -115,4 +122,25 @@
 .group-pick--on {
   background: var(--color-brand);
   border-color: var(--color-brand);
+}
+
+/* AI-written persona card preview (M-H2). */
+.persona-gen__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.persona-gen__colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.persona-gen__color {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--avatar-radius);
+}
+.persona-gen__color--on {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
 }

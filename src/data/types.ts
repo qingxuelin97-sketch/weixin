@@ -16,6 +16,8 @@ export interface ContactVM {
   signature?: string;
   wxid?: string;
   pinyinInitial?: string;
+  /** 星标朋友 (M-I6). Schema had the flag since M1; this is its first writer path. */
+  isStarred?: boolean;
 }
 
 /**
@@ -24,8 +26,12 @@ export interface ContactVM {
  */
 export interface MediaItemVM {
   id: string;
-  /** 'avatar' items feed the avatar picker; 'photo' items feed聊天/朋友圈配图. */
-  kind: 'avatar' | 'photo';
+  /**
+   * 'avatar' items feed the avatar picker; 'photo' items feed聊天/朋友圈配图;
+   * 'sticker' items (M-I15) feed the composer's「我的表情」panel. Row-level
+   * field — adding a kind needs NO idb migration, only UI awareness.
+   */
+  kind: 'avatar' | 'photo' | 'sticker';
   /** Free-form persona tags (风景/美食/自拍…). Empty = usable by everyone. */
   tags: string[];
   mime: string;
@@ -33,7 +39,27 @@ export interface MediaItemVM {
   createdAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'voice' | 'sticker' | 'rp' | 'transfer' | 'call' | 'system';
+export type MessageType =
+  | 'text'
+  | 'image'
+  | 'voice'
+  | 'sticker'
+  | 'rp'
+  | 'transfer'
+  | 'call'
+  | 'system'
+  /** 合并转发 card (M-I6). meta: { title, items: Array<{ name, body, at }> } */
+  | 'merged'
+  /** 位置卡片 (M-I13). content = 地名; meta: { name, address? }. 静态 SVG 简图，无外网瓦片。 */
+  | 'location'
+  /** 名片 (M-I13). meta: { contactId, name, wxid?, avatarColor?, avatarText? }; 点开进 /contact/:id。 */
+  | 'contact_card'
+  /** 假文件卡片 (M-I13). content = 文件名; meta: { fileName, sizeBytes, ext? }. 道具，不可下载。 */
+  | 'file'
+  /** 链接分享卡 (M-I13). content = 标题; meta: { title, summary? }. 缩略图为占位色块。 */
+  | 'link'
+  /** 表情游戏 (M-I13). meta: { game: 'dice' | 'rps', result }. 结果 seeded，落地即定，永不重掷。 */
+  | 'game';
 
 export interface MessageVM {
   id: number;
@@ -46,6 +72,16 @@ export interface MessageVM {
   status: 'sending' | 'sent' | 'failed';
   isRecalled?: boolean;
   createdAt: number;
+  /**
+   * Story mode (V3): which script's run produced this message. The schema
+   * columns (`story_script_id`, `story_seq`) existed since M1 with zero
+   * writers; M-I7 finally writes them — every message appended while a story
+   * beat is playing carries the run's script id and the beat's seq, so a
+   * transcript line can be traced to the exact幕 that caused it.
+   */
+  storyScriptId?: string;
+  /** Beat counter at the moment this message landed. See storyScriptId. */
+  storySeq?: number;
 }
 
 export interface ConversationVM {
@@ -104,8 +140,23 @@ export interface PersonaVM {
   likeRate: number;
   /** Base probability this persona comments on a given post. */
   commentRate: number;
+  /**
+   * 表情使用率 (M-I18), 0..1 — how sticker-happy this character is.
+   *
+   * A persona trait exactly like `momentsPerDay` / `likeRate` / `commentRate`,
+   * and for the same reason: 话痨爱斗图的 and 高冷的 must not share one global
+   * constant. `STICKER_RATE_BASELINE` (0.35) is the neutral point — the rate
+   * scales every seeded sticker gate (斗图 urge, custom-sticker swap) and tells
+   * the prompt layer whether to say anything about stickers at all.
+   */
+  stickerRate: number;
   /** Starting closeness, 0..100. Scales like/comment rates and heartbeat warmth. */
   affinityInit: number;
+  /**
+   * How open-handed, 0..1. Scales both the odds of her sending money at all and
+   * which rung of the amount ladder she picks. 0 = never sends any.
+   */
+  generosity: number;
   /**
    * Media-library tags this persona draws配图 from (吃货人设发健身照=秒穿帮).
    * Empty = draws from the whole photo pool.
@@ -210,6 +261,31 @@ export interface MemoryFactVM {
   storyTag?: string;
 }
 
+/**
+ * A favorited message (收藏, M-I13). A SNAPSHOT, not a reference: WeChat keeps
+ * a favorite alive after the source message is deleted or its thread is gone,
+ * so the row copies everything the favorites page renders. `msgId`/`convId`
+ * remain for provenance (and for the hidden-conversation filter in the repo).
+ */
+export interface FavoriteVM {
+  /** `fav_${convId}_${msgId}` — favoriting the same message twice is idempotent. */
+  id: string;
+  msgId: number;
+  convId: string;
+  senderId: string;
+  /** Display name at favoriting time (remark-aware). */
+  senderName: string;
+  /** Conversation title at favoriting time. */
+  convTitle: string;
+  type: MessageType;
+  content?: string;
+  meta?: Record<string, unknown>;
+  /** When the original message was sent. */
+  createdAt: number;
+  /** When the user favorited it (sort key of the favorites page). */
+  favedAt: number;
+}
+
 /** One rolling summary per conversation (conv_summaries store). */
 export interface ConvSummaryVM {
   convId: string;
@@ -234,6 +310,29 @@ export interface ProviderVM {
 /* ---- Moments (朋友圈) ---- */
 
 /**
+ * WeChat's four audiences for a post (M-I18).
+ *
+ * `public`   公开        — everyone
+ * `private`  私密        — the author only
+ * `include`  部分可见    — `ids` is a WHITELIST
+ * `exclude`  不给谁看    — `ids` is a BLACKLIST
+ */
+export type MomentAudience = 'public' | 'private' | 'include' | 'exclude';
+
+/**
+ * Who may see one post. Absent on a row = 公开 (every pre-M-I18 post, and every
+ * post an AI writes — agents post to everyone).
+ *
+ * `ids` are contactIds and are only meaningful for include/exclude; the other
+ * two modes carry an empty list rather than an absent one so the JSON column
+ * has exactly one shape.
+ */
+export interface MomentVisibility {
+  mode: MomentAudience;
+  ids: string[];
+}
+
+/**
  * A Moments post. Authored by 'self' or an AI contact.
  *
  * `imageRefs` are keys into the image pool (see src/lib/moments-assets.ts), not
@@ -254,6 +353,25 @@ export interface MomentVM {
   storySaveId?: string;
   /** `scriptId#seq` — see MemoryFactVM.storyTag. Rollback finds posts by this. */
   storyTag?: string;
+  /**
+   * 转发 (M-I15): ROOT original's id — chains collapse, a repost of a repost
+   * still points at the first post. Quote content may ONLY be derived from a
+   * stored feed row (src/ai/moment-repost.ts is the sole builder); that is the
+   * structural guarantee that hidden-conversation content can never ride a
+   * repost chain onto the feed.
+   */
+  repostOf?: string;
+  /** Snapshot of the original author, so a deleted original still renders. */
+  repostAuthorId?: string;
+  /** Snapshot excerpt of the original's text (built by repostExcerpt, capped). */
+  repostExcerpt?: string;
+  /**
+   * 可见范围 (M-I18). Absent = 公开. Enforced in the DATA layer
+   * (`src/lib/moment-visibility.ts`, applied inside the Repo drivers and inside
+   * the reaction planner) rather than by whoever renders the feed — the whole
+   * point is that a caller who forgets cannot leak the post.
+   */
+  visibility?: MomentVisibility;
 }
 
 /** A like. `id` is `${momentId}:${contactId}` — one like per person per moment. */

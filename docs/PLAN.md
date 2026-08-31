@@ -68,7 +68,7 @@ NSFW 全开=宽松通道。降级链：软化重试+prefix → 宽松链粘性 1
 ### M4 完成情况（2026-08）
 
 已交付：朋友圈（发布 / feed / 错峰赞评 / 配图槽位）、离线回填（`simulate()` 纯函数 + 单队列
-物化）、通知抽象层与内容分级、备份恢复 `.aiwx`。详见 `specs/moments.md` 与 `specs/backfill.md`。
+物化）、通知抽象层与内容分级、备份恢复 `.aiwx`。详见 `specs/moments.md`、`specs/backfill.md` 与 `specs/backup.md`。
 
 顺带修掉一处 M2 遗留缺陷：**L0 主动消息自 M2 起从未触发**——`scheduleHeartbeat()` 有定义无
 调用方，`heartbeat` handler 也从未注册。本轮接上（commit 4b7b3e5）。

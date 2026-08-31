@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Floating bubble chip: near-opaque white rounded card. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/aiwx_bubble_scrim" />
+    <corners android:radius="14dp" />
+    <stroke android:width="1dp" android:color="#14000000" />
+</shape>

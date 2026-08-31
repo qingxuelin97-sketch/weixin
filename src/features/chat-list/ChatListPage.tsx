@@ -3,31 +3,78 @@ import { useNavigate } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
+import { Badge } from '../../components/Badge';
 import { IconPlus, IconSearch } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
 import { listTimestamp } from '../../lib/time';
+import { totalUnread as totalUnreadOf } from '../../lib/unread';
 import type { ConversationVM } from '../../data/types';
 import './chat-list.css';
 import { useNow } from '../../lib/useNow';
-
-const LONG_PRESS_MS = 500;
+import { useSwipeRow } from '../../components/useSwipeRow';
+import { useLongPress } from '../../components/useLongPress';
+import { LongPressMenu } from '../../components/LongPressMenu';
+import { useDismissable } from '../../app/useDismissable';
+import { showConfirm } from '../../components/dialog';
+import { usePullRefresh } from '../../components/usePullRefresh';
+import { PullRefresh } from '../../components/PullRefresh';
+import { useStagger, type StaggerRowProps } from '../../lib/useStagger';
 
 export function ChatListPage() {
   const all = useAppStore((s) => s.conversations);
   const showToast = useAppStore((s) => s.showToast);
   const patchConversation = useAppStore((s) => s.patchConversation);
   const deleteConversation = useAppStore((s) => s.deleteConversation);
+  const refreshConversations = useAppStore((s) => s.refreshConversations);
   // Hidden (AI↔AI DM) conversations must never surface here.
   const conversations = useMemo(() => all.filter((c) => !c.isHidden), [all]);
   const navigate = useNavigate();
-  const totalUnread = conversations.reduce((n, c) => n + (c.isMuted ? 0 : c.unreadCount), 0);
+  // Over `all`, not the filtered list: the exclusion rule (muted AND hidden)
+  // belongs to lib/unread.ts, so this surface cannot drift from the tab badge
+  // by relying on a filter that happens to have run first.
+  const totalUnread = totalUnreadOf(all);
+
+  /**
+   * 下拉刷新 (M-I8).
+   *
+   * The list is virtualized, so the element the gesture translates is the host
+   * around Virtuoso and the scroll position it consults is Virtuoso's own
+   * scroller — handed over through `scrollerRef`, because Virtuoso owns that
+   * node and there is no ref of ours on it.
+   */
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
+  const pull = usePullRefresh({
+    ref: listRef,
+    scroller: () => scrollerRef.current,
+    onRefresh: () => refreshConversations().catch(() => showToast('刷新失败')),
+  });
+  // First paint only: rows recycled by Virtuoso as you scroll must NOT replay
+  // the entrance (see lib/stagger.ts).
+  const stagger = useStagger();
 
   const [plusOpen, setPlusOpen] = useState(false);
-  const [menu, setMenu] = useState<{ conv: ConversationVM; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ conv: ConversationVM; x: number; y: number } | null>(null);
+  // Hardware back closes the ＋ dropdown before popping the page. The row menu
+  // registers itself — <LongPressMenu/> owns that now, in both places it is used.
+  useDismissable(plusOpen, () => setPlusOpen(false));
 
   const act = (fn: () => Promise<void>) => {
     setMenu(null);
     void fn().catch(() => showToast('操作失败'));
+  };
+
+  /** Deleting a thread destroys its history — the one list action that gets a confirm. */
+  const confirmDelete = (conv: ConversationVM) => {
+    setMenu(null);
+    void showConfirm({
+      title: '删除该聊天',
+      body: `与「${conv.title}」的聊天记录将被删除，且无法恢复。`,
+      confirmText: '删除',
+      danger: true,
+    }).then((ok) => {
+      if (ok) void deleteConversation(conv.id).catch(() => showToast('操作失败'));
+    });
   };
 
   return (
@@ -63,41 +110,59 @@ export function ChatListPage() {
           </div>
         </div>
       )}
-      <div className="page-body chat-list">
-        <Virtuoso
-          data={conversations}
-          itemContent={(_i, conv) => (
-            <ConversationRow
-              conv={conv}
-              onOpen={() => navigate(`/chat/${conv.id}`)}
-              onLongPress={(y) => setMenu({ conv, y })}
-            />
-          )}
-        />
+      <div className="page-body chat-list pull-clip">
+        {/* The clip is the page body (which does not move); the host inside it
+            is what the gesture translates. Swapping those two is the classic
+            way to build a pull-to-refresh that never shows its indicator. */}
+        <div className="pull-host" ref={listRef} {...pull.handlers}>
+          <PullRefresh phase={pull.phase} progress={pull.progress} />
+          <Virtuoso
+            data={conversations}
+            scrollerRef={(el) => {
+              scrollerRef.current = el as HTMLElement | null;
+            }}
+            itemContent={(i, conv) => (
+              <ConversationRow
+                conv={conv}
+                stagger={stagger(i)}
+                onOpen={() => navigate(`/chat/${conv.id}`)}
+                onLongPress={(x, y) => setMenu({ conv, x, y })}
+                onRead={() =>
+                  act(() =>
+                    patchConversation(
+                      conv.id,
+                      conv.unreadCount > 0
+                        ? { unreadCount: 0, mentionMe: false }
+                        : { unreadCount: 1 },
+                    ),
+                  )
+                }
+                onDelete={() => confirmDelete(conv)}
+              />
+            )}
+          />
+        </div>
       </div>
       {menu && (
-        <div className="chatlist-overlay" onClick={() => setMenu(null)}>
-          <div
-            className="conv-menu"
-            role="menu"
-            style={{ top: Math.min(menu.y, window.innerHeight - 230) }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              role="menuitem"
-              onClick={() => act(() => patchConversation(menu.conv.id, { isPinned: !menu.conv.isPinned }))}
-            >
-              {menu.conv.isPinned ? '取消置顶' : '置顶'}
-            </button>
-            <button
-              role="menuitem"
-              onClick={() => act(() => patchConversation(menu.conv.id, { isMuted: !menu.conv.isMuted }))}
-            >
-              {menu.conv.isMuted ? '开启新消息通知' : '消息免打扰'}
-            </button>
-            <button
-              role="menuitem"
-              onClick={() =>
+        <LongPressMenu
+          layout="column"
+          at={{ x: menu.x, y: menu.y }}
+          label="会话操作"
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: menu.conv.isPinned ? '取消置顶' : '置顶',
+              onSelect: () =>
+                act(() => patchConversation(menu.conv.id, { isPinned: !menu.conv.isPinned })),
+            },
+            {
+              label: menu.conv.isMuted ? '开启新消息通知' : '消息免打扰',
+              onSelect: () =>
+                act(() => patchConversation(menu.conv.id, { isMuted: !menu.conv.isMuted })),
+            },
+            {
+              label: menu.conv.unreadCount > 0 ? '标为已读' : '标为未读',
+              onSelect: () =>
                 act(() =>
                   patchConversation(
                     menu.conv.id,
@@ -105,33 +170,34 @@ export function ChatListPage() {
                       ? { unreadCount: 0, mentionMe: false }
                       : { unreadCount: 1 },
                   ),
-                )
-              }
-            >
-              {menu.conv.unreadCount > 0 ? '标为已读' : '标为未读'}
-            </button>
-            <button
-              role="menuitem"
-              className="conv-menu__danger"
-              onClick={() => act(() => deleteConversation(menu.conv.id))}
-            >
-              删除该聊天
-            </button>
-          </div>
-        </div>
+                ),
+            },
+            { label: '删除该聊天', onSelect: () => confirmDelete(menu.conv) },
+          ]}
+        />
       )}
     </>
   );
 }
 
+/** Width of the revealed action tray. Two buttons, WeChat's proportions. */
+const TRAY_WIDTH = 150;
+
 function ConversationRow({
   conv,
+  stagger,
   onOpen,
   onLongPress,
+  onRead,
+  onDelete,
 }: {
   conv: ConversationVM;
+  /** First-paint entrance props, or undefined for a row arriving later (M-I8). */
+  stagger?: StaggerRowProps;
   onOpen: () => void;
-  onLongPress: (y: number) => void;
+  onLongPress: (x: number, y: number) => void;
+  onRead: () => void;
+  onDelete: () => void;
 }) {
   const NOW = useNow();
   const contactById = useAppStore((s) => s.contactById);
@@ -146,45 +212,91 @@ function ConversationRow({
     imageRef: conv.memberIds?.[i] ? contactById(conv.memberIds[i])?.avatarRef : undefined,
   }));
 
-  // Long-press via pointer timer; movement/release cancels so scrolling stays natural.
-  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fired = useRef(false);
-  const cancelPress = () => {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-    pressTimer.current = null;
-  };
+  // Shared long-press physics (M-I0) — this copy used to cancel on ANY pointer
+  // movement, which made the press nearly impossible to land on a touchscreen.
+  const lp = useLongPress((x, y) => onLongPress(x, y));
+  // A completed horizontal swipe must not ALSO open the chat on release.
+  const swipeDragged = useRef(false);
+  // The gesture WeChat actually uses for these two actions (M-H3). The long
+  // press stays: it carries 置顶 / 免打扰 too, and muscle memory is cheap to
+  // honour.
+  const swipe = useSwipeRow(TRAY_WIDTH);
 
   return (
     <div
+      className={`conv-swipe${stagger?.className ? ` ${stagger.className}` : ''}`}
+      style={stagger?.style}
+    >
+      {/* The tray sits UNDER the row and is revealed by sliding it; rendering
+          it above and animating width would reflow the row's text on every
+          frame of the drag. */}
+      <div className="conv-swipe__tray" aria-hidden={!swipe.open || undefined}>
+        <button
+          className="conv-swipe__action conv-swipe__action--read"
+          onClick={() => {
+            swipe.close();
+            onRead();
+          }}
+        >
+          {conv.unreadCount > 0 ? '标为已读' : '标为未读'}
+        </button>
+        <button
+          className="conv-swipe__action conv-swipe__action--delete"
+          onClick={() => {
+            swipe.close();
+            onDelete();
+          }}
+        >
+          删除
+        </button>
+      </div>
+    <div
+      ref={swipe.ref}
       className={`conv-row hairline-bottom${conv.isPinned ? ' conv-row--pinned' : ''}`}
       onClick={() => {
-        if (!fired.current) onOpen();
-        fired.current = false;
+        // A swipe that ends on the row must not also open the chat, and a tap
+        // on an open row closes the tray instead of navigating — both are what
+        // every native list does, and both are invisible until they are wrong.
+        if (swipe.open) {
+          swipe.close();
+        } else if (!lp.fired() && !swipeDragged.current) {
+          onOpen();
+        }
+        lp.consume();
+        swipeDragged.current = false;
       }}
       onPointerDown={(e) => {
-        fired.current = false;
-        const y = e.clientY;
-        pressTimer.current = setTimeout(() => {
-          fired.current = true;
-          onLongPress(y);
-        }, LONG_PRESS_MS);
+        swipeDragged.current = false;
+        swipe.handlers.onPointerDown(e);
+        lp.handlers.onPointerDown(e);
       }}
-      onPointerUp={cancelPress}
-      onPointerMove={cancelPress}
-      onPointerLeave={cancelPress}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        fired.current = true;
-        onLongPress(e.clientY);
+      onPointerUp={() => {
+        lp.handlers.onPointerUp();
+        swipe.handlers.onPointerUp();
       }}
+      onPointerMove={(e) => {
+        lp.handlers.onPointerMove(e);
+        swipe.handlers.onPointerMove(e);
+        if (swipe.dragging()) swipeDragged.current = true;
+      }}
+      onPointerLeave={lp.handlers.onPointerLeave}
+      onPointerCancel={(e) => {
+        lp.handlers.onPointerUp();
+        swipe.handlers.onPointerCancel(e);
+      }}
+      onContextMenu={lp.handlers.onContextMenu}
       role="button"
     >
       <div className="conv-row__avatar">
         <Avatar color={conv.avatarColor} text={conv.avatarText} size={48} imageRef={peerRef} members={memberAvatars} />
         {badge && (
-          <span className={`conv-row__badge${dotOnly ? ' conv-row__badge--dot' : ''}`}>
-            {dotOnly ? '' : conv.unreadCount > 99 ? '99+' : conv.unreadCount}
-          </span>
+          // One badge component; the roll lives inside it (M-I0 × M-I8), so
+          // there is no `key` remount trick and no per-site `badge-roll`.
+          <Badge
+            className={`conv-row__badge${dotOnly ? ' conv-row__badge--dot' : ''}`}
+            count={conv.unreadCount}
+            dot={dotOnly}
+          />
         )}
       </div>
       <div className="conv-row__main">
@@ -201,6 +313,7 @@ function ConversationRow({
           {conv.isMuted && <MuteIcon />}
         </div>
       </div>
+    </div>
     </div>
   );
 }

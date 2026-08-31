@@ -3,10 +3,15 @@
  * straight into an editor, and now neither do we: this card fronts every AI
  * contact with the actions that matter (发消息 / 通话 / 编辑人设 / 记忆).
  */
+import { useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
+import { FLIP_KEYS } from '../../lib/flip';
+import { useFlipEnter } from '../../lib/useFlipEnter';
 import { useAppStore } from '../../store/appStore';
+import { showConfirm, showPrompt } from '../../components/dialog';
+import { Switch } from '../../components/Switch';
 import type { ConversationVM } from '../../data/types';
 import { useGuard } from '../../app/useGuard';
 import './contacts.css';
@@ -15,10 +20,42 @@ export function ContactProfilePage() {
   const guard = useGuard();
   const { contactId = '' } = useParams();
   const navigate = useNavigate();
+  /**
+   * 共享元素转场 (M-I8): the 64px avatar here grows out of the 40px avatar in
+   * the row that was tapped. `useFlipEnter` claims the rect the contacts list
+   * left behind; arriving any other way (search, a 名片 bubble, a deep link)
+   * finds nothing parked and the card simply appears.
+   */
+  const avatarRef = useRef<HTMLDivElement>(null);
+  useFlipEnter(FLIP_KEYS.contactAvatar(contactId), avatarRef);
   const contact = useAppStore((s) => s.contactById(contactId));
   const persona = useAppStore((s) => s.personaFor(contactId));
   const conversations = useAppStore((s) => s.conversations);
   const addConversation = useAppStore((s) => s.addConversation);
+  const deleteContact = useAppStore((s) => s.deleteContact);
+  const showToast = useAppStore((s) => s.showToast);
+
+  // 星标 (M-I6): the schema carried isStarred since M1 with zero writers, so
+  // the 星标朋友 section could never appear. This is the writer.
+  const putContact = useAppStore((s) => s.putContact);
+  const toggleStar = async () => {
+    if (!contact) return;
+    await putContact({ ...contact, isStarred: !contact.isStarred });
+  };
+
+  /** The one irreversible action on this card — spells out how much goes. */
+  const removeContact = async () => {
+    const ok = await showConfirm({
+      title: '删除联系人',
+      body: '将同时删除与 TA 的聊天记录、朋友圈动态和相关记忆，且无法恢复。',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
+    await deleteContact(contactId);
+    showToast('已删除');
+    navigate('/contacts', { replace: true });
+  };
 
   if (!contact) {
     return (
@@ -59,7 +96,12 @@ export function ContactProfilePage() {
       <SubNav title="" />
       <div className="page-body contacts contact-card">
         <div className="contact-card__head">
-          <Avatar color={contact.avatarColor} text={contact.avatarText} imageRef={contact.avatarRef} size={64} />
+          {/* The wrapper is the flip target: it is what the row's avatar rect
+              is measured against, and putting the ref on <Avatar/> would mean
+              threading one through a component every other call site shares. */}
+          <div className="contact-card__avatar" ref={avatarRef}>
+            <Avatar color={contact.avatarColor} text={contact.avatarText} imageRef={contact.avatarRef} size={64} />
+          </div>
           <div className="contact-card__id">
             <div className="contact-card__name">{contact.remark ?? contact.name}</div>
             {contact.wxid && <div className="contact-card__meta">微信号：{contact.wxid}</div>}
@@ -93,6 +135,53 @@ export function ContactProfilePage() {
         </div>
 
         <div className="settings__group">
+          {/* 设置备注 (M-I18): `remark` was read in a dozen places — the chat
+              title, the contacts list, moments, group nicknames — and written
+              by nothing. WeChat puts this on the profile page and so do we. */}
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() =>
+              guard('contact.remark', async () => {
+                const next = await showPrompt({
+                  title: '设置备注',
+                  initial: contact.remark ?? '',
+                  placeholder: contact.name,
+                  maxLength: 24,
+                  // Clearing the remark is a real intent (fall back to 本名).
+                  allowEmpty: true,
+                });
+                if (next === null) return; // cancelled — leave it alone
+                const remark = next.trim();
+                await putContact({ ...contact, remark: remark || undefined });
+              })
+            }
+          >
+            <span className="settings__label">备注名</span>
+            <span className="settings__value">{contact.remark ?? '未设置'}</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          {/* 个人相册 (M-I18): the album page existed since I15 but was only
+              reachable by tapping an avatar inside the feed. */}
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate(`/moments/album/${contactId}`)}
+          >
+            <span className="settings__label">朋友圈</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => guard('contact.star', toggleStar)}
+          >
+            <span className="settings__label">星标朋友</span>
+            <Switch on={Boolean(contact.isStarred)} onChange={() => guard('contact.star', toggleStar)} />
+          </div>
+          {persona && (
+            <div className="settings__row settings__row--divided" onClick={() => navigate(`/status/${contactId}`)}>
+              <span className="settings__label">她的状态</span>
+              <span className="settings__chevron">›</span>
+            </div>
+          )}
           <div className="settings__row settings__row--divided" onClick={() => navigate(`/persona/${contactId}`)}>
             <span className="settings__label">编辑人设</span>
             <span className="settings__chevron">›</span>
@@ -102,6 +191,12 @@ export function ContactProfilePage() {
             <span className="settings__chevron">›</span>
           </div>
         </div>
+
+        {contact.type === 'ai' && (
+          <button className="btn-ghost" onClick={() => guard('contact.delete', removeContact)}>
+            删除联系人
+          </button>
+        )}
       </div>
     </>
   );

@@ -1,0 +1,79 @@
+/**
+ * Pull-to-refresh indicator (M-I8).
+ *
+ * The strip lives ABOVE the list's first row, inside the element that the
+ * gesture translates — so at rest it is simply scrolled/translated out of
+ * sight, and no state has to hide it. Pulling reveals it because the list
+ * moved, which is the same reason it never needs an exit animation.
+ */
+.pull-refresh {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Sits one indicator-height above the content it belongs to. Absolute, so it
+     costs the list no layout at rest — a strip in the flow would push every
+     row down by 64px and every scroll offset with it. */
+  top: 0;
+  transform: translateY(-100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.pull-refresh__ring {
+  display: block;
+}
+
+/* The work is running: the quarter-arc rotates. CSS animation, never rAF —
+   Playwright's `animations: 'disabled'` lands this on its end state, so a
+   golden captured mid-refresh is still deterministic (lib/spring.ts). */
+.pull-refresh__ring--spin {
+  animation: pull-spin 720ms linear infinite;
+  transform-origin: 50% 50%;
+}
+@keyframes pull-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The clip. MUST be a separate element from the host, and must not move:
+   the indicator is parked above the host's top edge, so whatever hides it has
+   to stay put while the host slides down. Putting `overflow: hidden` on the
+   host itself would carry the clip along with the translate and the indicator
+   would never appear at all. */
+.pull-clip {
+  position: relative;
+  overflow: hidden;
+}
+
+/* The host list: the gesture writes `transform` onto this element, so it must
+   own a containing block for the absolutely-positioned strip above.
+   Sized BOTH ways (height + flex) so it drops into a plain block `.page-body`
+   and into a flex column without the caller having to know which — a host that
+   collapses to zero height silently takes a virtualized list with it. */
+.pull-host {
+  position: relative;
+  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Whatever the host wraps takes the remaining space (the Virtuoso scroller,
+   the moments scroll pane). */
+.pull-host > *:not(.pull-refresh) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pull-refresh__ring--spin {
+    animation: none !important;
+  }
+}

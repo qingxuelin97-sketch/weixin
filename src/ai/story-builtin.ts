@@ -149,4 +149,115 @@ const WEEKEND_PLAN: Script = {
   ],
 };
 
-export const BUILTIN_SCRIPTS: Script[] = [RAINY_NIGHT, WEEKEND_PLAN];
+/**
+ * The V3 showcase (M-I7): three roles, a real diamond, three endings, and a
+ * legal cycle-with-exit — the smallest script on which every new surface has
+ * something to do. The casting sheet has three parts to hand out (two carry
+ * secrets), the branch graph draws a fork AND a loop, the 结局画廊 starts at
+ * 0/3, and a second 周目 down the other fork is the intended way to play it.
+ */
+const OLD_FRIENDS: Script = {
+  scriptId: 'builtin_reunion',
+  title: '同学会前夜',
+  genre: '群像',
+  nsfwLevel: 0,
+  cast: [
+    { charId: 'organizer', role: '张罗的人', secret: '你办同学会是为了见一个人' },
+    { charId: 'reluctant', role: '不想去的人', secret: '你欠了当年班长一笔没还的钱' },
+    { charId: 'peacemaker', role: '和事佬' },
+  ],
+  vars: { momentum: 0, debt_out: false, quarrel: false },
+  entry: 'propose',
+  nodes: [
+    {
+      id: 'propose',
+      goal: '有人提议办同学会，另一个人在推脱',
+      onEnter: { narrate: '毕业十年，群里突然有人冒了个泡。' },
+      directives: [
+        { charId: 'organizer', instruction: '热情张罗，定日子定地方，语气不容拒绝' },
+        {
+          charId: 'reluctant',
+          instruction: '找各种理由推脱，但别把话说死',
+          forbid: '不要说出你真正不想去的原因',
+        },
+        { charId: 'peacemaker', instruction: '两边打圆场，顺便回忆一件当年的趣事' },
+      ],
+      triggers: [
+        { when: 'llm:不想去的人松口答应了', to: 'planning', effects: { vars: { momentum: 1 } } },
+      ],
+      timeout: { turns: 8, to: 'fizzle' },
+    },
+    {
+      id: 'planning',
+      goal: '定细节的过程中旧事被翻出来',
+      onEnter: { narrate: '日子定下了。可话越聊越深。' },
+      directives: [
+        { charId: 'organizer', instruction: '状似无意地打听当年那个人的近况' },
+        { charId: 'reluctant', instruction: '被问到当年的事，开始闪烁其词' },
+        { charId: 'peacemaker', instruction: '察觉气氛不对，试着岔开话题' },
+      ],
+      triggers: [
+        // The reconciliation effect (below) sets momentum to 5, so a group
+        // that has already quarreled and made up sails straight through here —
+        // the expr track reading a var an earlier effect wrote.
+        { when: 'expr:vars.momentum >= 5', to: 'reunion_eve' },
+        {
+          when: 'llm:欠钱的事被说破了',
+          to: 'quarrel',
+          effects: { vars: { debt_out: true, quarrel: true } },
+        },
+      ],
+      timeout: { turns: 10, to: 'reunion_eve' },
+    },
+    {
+      id: 'quarrel',
+      goal: '翻旧账，谁也不肯先低头',
+      onEnter: { narrate: '有些账，十年利息比本金重。' },
+      directives: [
+        { charId: 'reluctant', instruction: '恼羞成怒，说出这些年不来往的真正委屈' },
+        { charId: 'organizer', instruction: '话赶话说重了，但心里已经后悔' },
+        { charId: 'peacemaker', instruction: '硬把两人的话往回拉，提当年互相帮过的事' },
+      ],
+      triggers: [
+        // Back edge: a patched-up quarrel returns to planning — the legal
+        // cycle-with-exit the validator allows and the graph draws as an arc.
+        // momentum 5 is what fast-tracks the second visit to planning.
+        {
+          when: 'llm:两个人都服软了',
+          to: 'planning',
+          effects: { vars: { quarrel: false, momentum: 5 } },
+        },
+        { when: 'llm:彻底撕破脸，有人退群或说出绝交的话', to: 'blowup' },
+      ],
+      timeout: { turns: 8, to: 'blowup' },
+    },
+    {
+      id: 'reunion_eve',
+      goal: '收束：前夜，各怀心事地道晚安',
+      onEnter: { narrate: '明晚见。谁都没把最想说的那句发出去。' },
+      directives: [
+        { charId: 'organizer', instruction: '发一条正式的集合通知，末尾带一句只有你自己懂的话' },
+      ],
+      triggers: [],
+      ending: true,
+    },
+    {
+      id: 'blowup',
+      goal: '收束：同学会没办成，群安静了下去',
+      onEnter: { narrate: '那个周末，谁也没再说话。' },
+      directives: [{ charId: 'peacemaker', instruction: '发最后一条消息，给以后留一扇门' }],
+      triggers: [],
+      ending: true,
+    },
+    {
+      id: 'fizzle',
+      goal: '收束：提议无疾而终',
+      onEnter: { narrate: '话题就这么沉下去了，像从来没人提过。' },
+      directives: [{ charId: 'organizer', instruction: '自嘲一句，把这页翻过去' }],
+      triggers: [],
+      ending: true,
+    },
+  ],
+};
+
+export const BUILTIN_SCRIPTS: Script[] = [RAINY_NIGHT, WEEKEND_PLAN, OLD_FRIENDS];

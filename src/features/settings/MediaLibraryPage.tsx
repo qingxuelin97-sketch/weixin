@@ -7,9 +7,12 @@
 import { useRef, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
 import { repo } from '../../db/repo';
+import { showConfirm, showPrompt } from '../../components/dialog';
+import { useMedia } from '../../components/useMedia';
 import {
   listRegisteredMedia,
   registerMedia,
+  registerMediaMeta,
   unregisterMedia,
 } from '../../data/media-registry';
 import { useAppStore } from '../../store/appStore';
@@ -17,6 +20,8 @@ import type { MediaItemVM } from '../../data/types';
 import './settings.css';
 
 type Kind = MediaItemVM['kind'];
+
+const KIND_LABEL: Record<Kind, string> = { avatar: '头像', photo: '照片', sticker: '表情' };
 
 export function MediaLibraryPage() {
   const [kind, setKind] = useState<Kind>('avatar');
@@ -26,6 +31,10 @@ export function MediaLibraryPage() {
   const showToast = useAppStore((s) => s.showToast);
 
   const items = listRegisteredMedia(kind);
+  // The grid is the one screen that deliberately shows the WHOLE library, so
+  // it is also the one that must prime what it draws — the registry keeps only
+  // a bounded number of object URLs live.
+  useMedia(items.map((m) => `idb:${m.id}`));
   const parseTags = (s: string) =>
     s
       .split(/[,，]/)
@@ -55,6 +64,13 @@ export function MediaLibraryPage() {
   };
 
   const remove = async (id: string) => {
+    const ok = await showConfirm({
+      title: '删除这张素材',
+      body: '引用它的头像与历史消息会退回占位图。',
+      confirmText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
     await repo.deleteMedia(id);
     unregisterMedia(id);
     bump((n) => n + 1);
@@ -62,13 +78,20 @@ export function MediaLibraryPage() {
 
   const editTags = async (id: string, current: string[]) => {
     if (kind !== 'photo') return;
-    const next = window.prompt('标签（逗号分隔，留空=全员可用）', current.join(', '));
+    const next = await showPrompt({
+      title: '素材标签',
+      body: '逗号分隔；留空 = 全员可用',
+      initial: current.join(', '),
+      allowEmpty: true,
+    });
     if (next == null) return;
     const item = await repo.getMediaItem(id);
     if (!item) return;
     const tags = parseTags(next);
     await repo.putMedia({ ...item, tags });
-    registerMedia(id, { url: listRegisteredMedia().find((m) => m.id === id)!.url, kind, tags });
+    // Metadata-only update (retagging): must not touch the URL, which may not
+    // be materialized right now — passing '' would blank a live image.
+    registerMediaMeta(id, { kind, tags });
     bump((n) => n + 1);
   };
 
@@ -78,13 +101,13 @@ export function MediaLibraryPage() {
       <div className="page-body settings">
         <div className="settings__group">
           <div className="segmented">
-            {(['avatar', 'photo'] as Kind[]).map((k) => (
+            {(['avatar', 'photo', 'sticker'] as Kind[]).map((k) => (
               <div
                 key={k}
                 className={`segmented__item${kind === k ? ' segmented__item--active' : ''}`}
                 onClick={() => setKind(k)}
               >
-                {k === 'avatar' ? `头像（${listRegisteredMedia('avatar').length}）` : `照片（${listRegisteredMedia('photo').length}）`}
+                {`${KIND_LABEL[k]}（${listRegisteredMedia(k).length}）`}
               </div>
             ))}
           </div>
@@ -104,7 +127,9 @@ export function MediaLibraryPage() {
             <span className="field__hint">
               {kind === 'avatar'
                 ? '头像库：在人设编辑页/个人资料页里选用。建议方图。'
-                : '照片池：AI 发朋友圈/聊天配图从这里抽取；标签对应人设编辑页的「配图标签」。'}
+                : kind === 'photo'
+                  ? '照片池：AI 发朋友圈/聊天配图从这里抽取；标签对应人设编辑页的「配图标签」。'
+                  : '自定义表情（M-I15）：聊天表情面板「我的表情」区从这里读取。你发过的表情，AI 会偷偷收藏并偶尔用回给你。'}
             </span>
           </div>
           <button className="btn-primary" onClick={() => fileRef.current?.click()}>

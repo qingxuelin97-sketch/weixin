@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { DEVICE_LOCAL_SETTINGS, BACKUP_HISTORY_KEY } from '../../src/lib/device-local';
 
 /**
  * Export → wipe → restore, driven through the real UI against a real IndexedDB.
@@ -50,24 +51,70 @@ const CLEAR_ALL = `
   })
 `;
 
+/**
+ * Settings rows excluded from the round-trip comparison.
+ *
+ * Read from `DEVICE_LOCAL_SETTINGS` rather than listed here (M-I18). This file
+ * used to keep its own three-name copy, and when the ledger grew to eleven the
+ * copy silently went stale: `backupHistory` — which the export itself writes,
+ * and which a restore now deliberately PRESERVES from this device — showed up
+ * as a round-trip difference and failed the test. A second hand-written copy of
+ * a ledger is the exact thing the ledger exists to prevent, so the fix is to
+ * read it, not to append one more name.
+ */
+const NON_PORTABLE = new Set<string>([
+  ...DEVICE_LOCAL_SETTINGS.map((s) => s.key),
+  // NOT device-local (it travels in the package), but restore re-arms the
+  // backfill barrier at restore time, so its value legitimately differs.
+  'lastForegroundAt',
+]);
+
 /** Rows the backup deliberately does not carry, excluded from the comparison. */
 function comparable(dump: Record<string, unknown[]>): Record<string, unknown[]> {
   const { tts_cache: _omitted, settings = [], ...rest } = dump;
-  // Device-local settings rows are non-portable BY DESIGN (H3): the crypto
-  // master key never travels, and restore re-arms the backfill barrier at
-  // restore time. Everything else must round-trip exactly.
   return {
     ...rest,
-    settings: (settings as Array<{ key?: string }>).filter(
-      // Device-local runtime state, not user data: the crypto key, the backfill
-      // barrier, and the in-flight-restore marker a restore necessarily writes.
-      (r) =>
-        r.key !== '__crypto_master' &&
-        r.key !== 'lastForegroundAt' &&
-        r.key !== 'restoreInProgress',
-    ),
+    settings: (settings as Array<{ key?: string }>).filter((r) => !NON_PORTABLE.has(r.key ?? '')),
   };
 }
+
+/** One settings row, straight out of a dump. */
+const settingRow = (dump: Record<string, unknown[]>, key: string) =>
+  (dump.settings as Array<{ key?: string; value?: unknown }> | undefined)?.find(
+    (r) => r.key === key,
+  );
+
+/**
+ * Plant a marker shelf row straight into IndexedDB.
+ *
+ * It has to be planted AFTER the wipe. The obvious version of this check —
+ * "the entry the export wrote is still there afterwards" — is a race, because
+ * `CLEAR_ALL` nukes every store including that very row, and whether it
+ * survives depends on whether `recordBackup`'s async write landed before or
+ * after the wipe. (It usually lands after, which is why that version passed
+ * locally and on one CI run before failing on the next.) Planting the row
+ * ourselves makes the question exact: does the RESTORE overwrite this device's
+ * shelf with the package's?
+ */
+const plantShelf = (key: string, marker: string) => `
+  new Promise((resolve, reject) => {
+    const req = indexedDB.open('weixin-ai');
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('settings', 'readwrite');
+      tx.objectStore('settings').put({
+        key: ${JSON.stringify(key)},
+        value: [{ id: ${JSON.stringify(marker)}, name: ${JSON.stringify(marker)} + '.aiwx',
+                  createdAt: 1, mode: 'full', source: 'manual', counts: {} }],
+      });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    };
+  })
+`;
+
+const SHELF_MARKER = 'mb_planted_by_e2e';
 
 test('export → wipe → restore round-trips the real database', async ({ page }) => {
   await page.goto('/#/chats');
@@ -95,6 +142,9 @@ test('export → wipe → restore round-trips the real database', async ({ page 
   expect(wiped.messages).toEqual([]);
   expect(wiped.conversations).toEqual([]);
 
+  // Stand in for "this device already had a backup shelf" — see plantShelf.
+  await page.evaluate(plantShelf(BACKUP_HISTORY_KEY, SHELF_MARKER));
+
   // Restore through the UI: pick the file, then confirm.
   await page.goto('/#/settings/backup');
   await page.waitForTimeout(200);
@@ -106,10 +156,21 @@ test('export → wipe → restore round-trips the real database', async ({ page 
   await page.getByRole('button', { name: '确认恢复' }).click();
   await expect(page.getByText(/恢复完成/)).toBeVisible({ timeout: 10_000 });
 
-  const after = comparable(await page.evaluate(DUMP));
+  const afterRaw = (await page.evaluate(DUMP)) as Record<string, unknown[]>;
+  const after = comparable(afterRaw);
   // Zero difference: same stores, same rows, same ids — including the
   // autoincrement message ids, which must survive so rowid order is preserved.
   expect(after).toEqual(before);
+
+  // …and the other half of the contract (M-I18): the rows excluded above are
+  // excluded because the restore PRESERVES this device's copy, not because
+  // nobody checks them. The shelf planted before the restore must survive it —
+  // if a restore rewound the shelf, it would list files that no longer exist
+  // and would have lost the very entry the restore came from.
+  const shelf = settingRow(afterRaw, BACKUP_HISTORY_KEY)?.value as
+    | Array<{ id?: string }>
+    | undefined;
+  expect(shelf?.map((e) => e.id)).toEqual([SHELF_MARKER]);
 });
 
 test('a restore confirmation states what it is about to replace', async ({ page }) => {
@@ -127,10 +188,12 @@ test('a restore confirmation states what it is about to replace', async ({ page 
     mimeType: 'application/json',
     buffer: Buffer.from(backupJson),
   });
-  // The user confirms against real row counts, not a bare yes/no.
+  // The user confirms against real row counts, not a bare yes/no. Since M-I17
+  // the export summary ("已导出：…会话 N…") stays on the page behind the
+  // dialog, so the counts assertion must not be ambiguous across both.
   await expect(page.getByText(/该备份创建于/)).toBeVisible();
   await expect(page.getByText(/整库替换/)).toBeVisible();
-  await expect(page.getByText(/会话 \d+/)).toBeVisible();
+  await expect(page.getByText(/会话 \d+/).first()).toBeVisible();
 });
 
 test('a corrupt backup file is rejected with a readable reason', async ({ page }) => {

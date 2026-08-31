@@ -9,8 +9,11 @@ import {
 } from '../../lib/sound';
 import { requestPermission } from '../../lib/notify';
 import { repo } from '../../db/repo';
+import { visionEnabled, VISION_SETTING } from '../../ai/vision-context';
+import { isAsrReady } from '../../llm/asr';
 import type { NsfwTierVM } from '../../data/types';
 import './settings.css';
+import { Switch } from '../../components/Switch';
 
 const NSFW_LABEL: Record<NsfwTierVM, string> = { off: '关闭', ambiguous: '暧昧', full: '全开' };
 
@@ -22,11 +25,15 @@ export function SettingsPage() {
   const [providerCount, setProviderCount] = useState(0);
   const [notifyOn, setNotifyOn] = useState<boolean | null>(null);
   const [backupHint, setBackupHint] = useState('');
+  const [asrHint, setAsrHint] = useState('');
 
   useEffect(() => {
     void repo.getSetting<NsfwTierVM>('nsfwGlobalTier').then((t) => setNsfw(t ?? 'off'));
     void repo.getProviders().then((p) => setProviderCount(p.filter((x) => x.enabled).length));
     void repo.getSetting<boolean>('notifyGranted').then((v) => setNotifyOn(v ?? false));
+    void isAsrReady()
+      .then((ok) => setAsrHint(ok ? '已配置' : '未配置'))
+      .catch(() => setAsrHint('未配置'));
     // Freshness nudge: data is the only asset this app has, and .aiwx is its
     // only escape hatch — surface staleness where the user will see it.
     void repo.getSetting<number>('lastBackupAt').then((t) => {
@@ -45,6 +52,30 @@ export function SettingsPage() {
     const next = !sound;
     setSound(next);
     setMessageSoundEnabled(next);
+  };
+
+  const [vision, setVision] = useState(true);
+  useEffect(() => {
+    void visionEnabled().then(setVision).catch(() => {});
+  }, []);
+  const toggleVision = async () => {
+    const next = !vision;
+    setVision(next);
+    await repo.putSetting(VISION_SETTING, next);
+  };
+
+  // 已读回执 (M-I16): WeChat has none, so it ships OFF as an opt-in拟真项.
+  const [readReceipts, setReadReceipts] = useState(false);
+  useEffect(() => {
+    void repo
+      .getSetting<boolean>('readReceipts')
+      .then((v) => setReadReceipts(Boolean(v)))
+      .catch(() => {});
+  }, []);
+  const toggleReadReceipts = () => {
+    const next = !readReceipts;
+    setReadReceipts(next);
+    void repo.putSetting('readReceipts', next);
   };
 
   const toggleVibrate = () => {
@@ -77,26 +108,41 @@ export function SettingsPage() {
             <span className="settings__value">{providerCount > 0 ? `${providerCount} 个已启用` : '未配置'}</span>
             <span className="settings__chevron">›</span>
           </div>
+          <div className="settings__row settings__row--divided" onClick={() => navigate('/settings/asr')}>
+            <span className="settings__label">语音输入（按住说话）</span>
+            <span className="settings__value">{asrHint}</span>
+            <span className="settings__chevron">›</span>
+          </div>
           <div className="settings__row settings__row--divided" onClick={toggleSound}>
             <span className="settings__label">新消息提示音</span>
-            <span className={`switch${sound ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={sound} onChange={toggleSound} />
           </div>
           <div className="settings__row settings__row--divided" onClick={toggleVibrate}>
             <span className="settings__label">新消息振动</span>
-            <span className={`switch${vibrate ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={vibrate} onChange={toggleVibrate} />
           </div>
+          <div className="settings__row settings__row--divided" onClick={() => void toggleVision()}>
+            <span className="settings__label">让 TA 看得见图片</span>
+            <Switch on={vision} onChange={() => void toggleVision()} />
+          </div>
+          <p className="settings__hint">
+            开启后你发的照片会随消息一起交给模型，TA 能真的看懂内容而不只是知道「你发了张图」。
+            需要所选模型支持看图；每张图的费用大约相当于一千字，所以只带最近几条里的图。
+          </p>
+          <div className="settings__row settings__row--divided" onClick={toggleReadReceipts}>
+            <span className="settings__label">已读回执</span>
+            <Switch on={readReceipts} onChange={toggleReadReceipts} />
+          </div>
+          <p className="settings__hint">
+            微信本体没有已读回执——这是本应用的可选拟真项：开启后，你发出的最后一条消息在
+            TA 看过（开始回复）后会标一个小小的「已读」。默认关闭。
+          </p>
           <div
             className="settings__row settings__row--divided"
             onClick={() => void toggleNotify()}
           >
             <span className="settings__label">锁屏通知</span>
-            <span className={`switch${notifyOn ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch on={Boolean(notifyOn)} onChange={() => void toggleNotify()} />
           </div>
           <div
             className="settings__row settings__row--divided"
@@ -114,6 +160,13 @@ export function SettingsPage() {
           </div>
           <div
             className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/worldbook')}
+          >
+            <span className="settings__label">世界书</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
             onClick={() => navigate('/settings/env')}
           >
             <span className="settings__label">环境自检与日志</span>
@@ -124,6 +177,14 @@ export function SettingsPage() {
             onClick={() => navigate('/settings/notify-test')}
           >
             <span className="settings__label">后台通知测试</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/native')}
+          >
+            <span className="settings__label">原生增强</span>
+            <span className="settings__value">气泡 · 回复 · 来电 · 小组件</span>
             <span className="settings__chevron">›</span>
           </div>
           <div className="settings__row" onClick={() => navigate('/settings/backup')}>

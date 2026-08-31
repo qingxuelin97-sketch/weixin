@@ -266,3 +266,63 @@ export function threadsFromFacts(facts: MemoryFactVM[], subjectId: string): Thre
   }
   return out;
 }
+
+/* ==================================================================== */
+/* Threads in ordinary conversation                                      */
+/* ==================================================================== */
+
+/** A reply this short carries no topic — the moment a person reaches for one. */
+const FILLER_CHARS = 6;
+/** Long enough away that "对了，上次那个事" is natural rather than abrupt. */
+const REUNION_GAP_MS = 6 * 3_600_000;
+
+/**
+ * Is this a moment where circling back to an old thread would feel natural?
+ *
+ * Threads have existed since M-E3 but entered the prompt from exactly ONE
+ * place — `sendProactiveMessage`. So "上次你说要去看牙，去了吗" could only ever
+ * arrive as an unprompted message hours later; while you were actually
+ * talking to her, the whole system was switched off.
+ *
+ * Turning it on for every reply is the obvious wrong fix: a friend who works
+ * through a backlog of your old topics on every turn is a checklist, not a
+ * person. So it opens only where a real person reaches for something to say —
+ * a filler turn with no topic in it ("嗯", "在吗"), or a conversation resuming
+ * after a real gap.
+ *
+ * Pure, so the judgement is testable without a model or a clock.
+ */
+export function shouldSurfaceThread(messages: MessageVM[], now: number): boolean {
+  const last = messages.at(-1);
+  if (!last) return false;
+  // Only ever off the back of something the user said — surfacing an old
+  // thread while she is mid-answer of her own would be her talking to herself.
+  if (last.senderId !== 'self') return false;
+
+  if (now - last.createdAt >= REUNION_GAP_MS) return true;
+  const prev = messages.at(-2);
+  if (prev && last.createdAt - prev.createdAt >= REUNION_GAP_MS) return true;
+
+  const body = (last.content ?? '').trim();
+  return last.type === 'text' && body.length > 0 && body.length <= FILLER_CHARS;
+}
+
+/**
+ * The background form of a thread, for the ordinary reply path.
+ *
+ * Deliberately NOT `threadDirective`: that one instructs her to ask, which is
+ * right for a message she opens herself and wrong for a reply, where the
+ * user's actual message must stay the subject. This is phrased the way
+ * `lifelineDirective` is — context she may use, not a task she must complete.
+ */
+export function threadAwareness(thread: Thread, now: number): string {
+  const days = Math.max(1, Math.round((now - thread.saidAt) / DAY));
+  const ago = days === 1 ? '昨天' : `${days}天前`;
+  const mine = thread.speakerId === 'self';
+  const whose = mine ? '对方' : '你';
+  return [
+    '【你还惦记着的事】',
+    `- ${ago}${whose}提过「${thread.text}」，还没有下文。`,
+    '这是背景不是任务：接得上就顺口问一句，接不上就别硬提，也不要连着追问。',
+  ].join('\n');
+}

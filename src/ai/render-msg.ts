@@ -18,6 +18,8 @@
  * "what does the model actually see" question unit-testable, which it was not.
  */
 import type { MessageVM } from '../data/types';
+import { describeGame, type GameKind } from '../lib/game';
+import { humanSize } from './bubble-materialize';
 
 /** Integer fen → 人民币 string. Money is never rounded on the way to the model. */
 function yuan(fen: number): string {
@@ -32,6 +34,12 @@ function num(v: unknown): number | undefined {
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+/** Quoted text is context, not content: enough to identify the line, no more. */
+function clipQuote(q: string): string {
+  const t = q.trim();
+  return t.length > 24 ? `${t.slice(0, 24)}…` : t;
 }
 
 /** "3分12秒" / "45秒" — how a person would say a duration out loud. */
@@ -69,12 +77,40 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
 
   const meta = m.meta ?? {};
   switch (m.type) {
-    case 'text':
-      return m.content ?? '';
+    case 'text': {
+      const body = m.content ?? '';
+      // 拉群提议 (M-I3): the roster rides in `meta.suggestGroup` as CONTACT IDS,
+      // and the screen shows it as a card. The model must see that a proposal
+      // is pending — otherwise the next turn cannot mean "所以到底建不建" — but
+      // it must NOT see the ids: an echoed `ai_ada` in dialogue is the same
+      // fourth-wall break as a leaked media handle. The names are already in
+      // `content` (inviteLine wrote them), so the marker carries no roster.
+      const proposal = Array.isArray(meta.suggestGroup) && meta.suggestGroup.length >= 2;
+      // A quoted reply only means something if the model can see WHAT was
+      // quoted. The quote has been stored in `meta.quote` since M-D, and this
+      // projection never read it — so "回复上面那条" arrived as a bare sentence
+      // and she answered the wrong thing. The chat UI showed the quote block
+      // the whole time, which is why it read as a model failure rather than a
+      // missing field.
+      const quoted = str(meta.quote);
+      const head = quoted ? `[回复「${clipQuote(quoted)}」] ` : '';
+      return proposal ? `${head}${body}[附了一张拉群邀请卡片，等用户决定]` : `${head}${body}`;
+    }
 
     case 'image': {
       // `content` is an `idb:` media handle — an internal id the model must
       // never see (it would echo it back into dialogue).
+      //
+      // `meta.caption` is what SHE said the photo was when she sent it, so a
+      // later turn can refer back to "那张饼干的照片". The old `meta.tags`
+      // branch here was dead code: nothing ever wrote tags, so every picture
+      // in every transcript read as a bare "[发了一张图片]".
+      // `meta.caption` is what SHE said the photo was when she sent it.
+      // `meta.tags` are the library tags of a photo the USER sent. Either way
+      // the model gets something better than "a picture exists" — which is all
+      // it used to get, since nothing wrote tags and captions did not exist.
+      const caption = str(meta.caption);
+      if (caption) return `[发了一张图片：${caption}]`;
       const tags = Array.isArray(meta.tags) ? meta.tags.filter((t) => typeof t === 'string') : [];
       return tags.length ? `[发了一张图片：${tags.join('、')}]` : '[发了一张图片]';
     }
@@ -87,7 +123,9 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
     }
 
     case 'sticker':
-      return str(m.content) ? `[表情：${m.content}]` : '[表情]';
+      // Custom stickers (M-I15) carry an opaque `idb:` ref — the model must
+      // never see internal ids, so those project as a bare tag.
+      return str(m.content) && !m.content?.startsWith('idb:') ? `[表情：${m.content}]` : '[表情]';
 
     case 'rp': {
       const greeting = str(meta.greeting);
@@ -102,7 +140,16 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
       const fen = num(meta.amountFen);
       const note = str(meta.note);
       const status = str(meta.status);
-      const state = status === 'accepted' ? '，已收下' : status === 'refunded' ? '，已退回' : '';
+      // The status strings are the ones `TransferVM` actually carries. This
+      // used to test for `'refunded'`, which nothing in the codebase ever
+      // writes — so the "she knows you didn't take it" half of the projection
+      // was unreachable text sitting next to a live branch.
+      const state =
+        status === 'accepted'
+          ? '，已收下'
+          : status === 'returned' || status === 'expired'
+            ? '，超过24小时未接收已退还'
+            : '';
       // Unlike a red packet, a transfer's amount IS visible to both sides in
       // WeChat — and it is exactly what "刚给你转了多少" asks about.
       return `[转账 ¥${fen != null ? yuan(fen) : '?'}${note ? `，附言「${note}」` : ''}${state}]`;
@@ -112,12 +159,68 @@ function renderRaw(m: MessageVM, opts: RenderOptions): string {
       const ms = num(meta.durationMs);
       const incoming = meta.direction === 'in';
       if (ms == null) return incoming ? '[对方打来语音通话，未接通]' : '[发起了语音通话，未接通]';
-      return `[语音通话 ${humanDuration(ms)}]`;
+      // 通话纪要 (M-I16): the call turns themselves never become messages, so
+      // this one line is all a later turn can know about what was said on the
+      // phone — "电话里说好了周五见" has to survive here to be referenceable.
+      const summary = str(meta.summary);
+      return `[语音通话 ${humanDuration(ms)}${summary ? `，${summary}` : ''}]`;
     }
 
     case 'system':
       // System lines are stage directions, not speech.
       return str(m.content) ? `（${m.content}）` : '';
+
+    case 'merged': {
+      // The model sees the card's identity and its first lines — enough to
+      // react to ("你转给我的那段聊天记录"), never the raw object.
+      const items = Array.isArray(meta.items) ? (meta.items as Array<Record<string, unknown>>) : [];
+      const title = str(meta.title) || '聊天记录';
+      const preview = items
+        .slice(0, 2)
+        .map((raw) => {
+          const it = (raw ?? {}) as Record<string, unknown>;
+          return `${str(it.name) ?? ''}: ${(str(it.body) ?? '').slice(0, 20)}`;
+        })
+        .filter((s) => s !== ': ')
+        .join('；');
+      return `[转发了「${title}」共 ${items.length} 条${preview ? `，开头是：${preview}` : ''}]`;
+    }
+
+    case 'location': {
+      // The pin's NAME is the content; the address is detail. The model needs
+      // both to react like a person ("那家店我知道，在二楼").
+      const name = str(m.content) ?? str(meta.name) ?? '';
+      const address = str(meta.address);
+      return `[发了一个位置：${name || '未知地点'}${address ? `（${address}）` : ''}]`;
+    }
+
+    case 'contact_card': {
+      // The DISPLAY NAME only — `meta.contactId` is an internal id and leaking
+      // it invites the model to echo "ai_ada" into dialogue.
+      const name = str(meta.name) ?? str(m.content) ?? '';
+      return `[发了一张名片：${name || '某人'}]`;
+    }
+
+    case 'file': {
+      const fileName = str(meta.fileName) ?? str(m.content) ?? '';
+      const size = num(meta.sizeBytes);
+      return `[发了一个文件：${fileName || '未命名'}${size != null ? `，${humanSize(size)}` : ''}]`;
+    }
+
+    case 'link': {
+      const title = str(meta.title) ?? str(m.content) ?? '';
+      const summary = str(meta.summary);
+      return `[分享了一个链接：《${title || '无标题'}》${summary ? `，摘要：${summary}` : ''}]`;
+    }
+
+    case 'game': {
+      // The throw's RESULT is the whole point — "对方掷了骰子 3 点" is what lets
+      // her gloat or groan. The result is in meta (seeded at send time), never
+      // re-rolled here: this projection must agree with what the screen shows.
+      const game: GameKind = meta.game === 'rps' ? 'rps' : 'dice';
+      const result = num(meta.result) ?? 0;
+      return `[${describeGame(game, result)}]`;
+    }
 
     default:
       return m.content ?? '';

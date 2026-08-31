@@ -6,8 +6,10 @@
 1. 用户消息**立即入库上屏**（永不因为等 AI 而卡住输入）。
 2. 组装上下文：`assembleSystemPrompt`（人设 + **记忆注入** + NSFW 边界层）+ 近 30 条消息窗口。
 3. 标题切「对方正在输入…」→ `LlmRouter.generate`（role=chat，convKey=convId，带三级降级）。
-4. 多气泡逐条播放：每条按 `typingDelay(bubble, persona.typingCpm)`（上限 6s）延迟后入库 + 播提示音；
-   最后一条落地前先撤下「正在输入」。
+4. 多气泡**边收边播**（M-I5，见 `specs/streaming.md`）：气泡一到就按
+   `typingDelay(bubble, persona.typingCpm)`（上限 6s）延迟后入库 + 播提示音，不再等
+   整轮收完；「最后一条」由 `playbackFeed.finished` 判定（源排空且缓冲为空），
+   落地前先撤下「正在输入」。首气泡之后流断了 → 追加人设化收尾（不是拒答话术）。
 5. `recall` 气泡 = 先发后撤（发出 → 1.5s → `is_recalled=true`）。
 
 ## 硬规则

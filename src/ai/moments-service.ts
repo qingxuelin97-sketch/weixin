@@ -10,11 +10,15 @@ import type { MomentVM, MomentLikeVM, MomentCommentVM, ContactVM, PersonaVM } fr
 import { enqueue } from './scheduler';
 import {
   planReactions,
+  planRepost,
   collectReactors,
   nextMomentAt,
   generateMomentPost,
   generateMomentComment,
+  generateRepostText,
 } from './moments-engine';
+import { repostMoment } from './moment-repost';
+import { canSeeMoment } from '../lib/moment-visibility';
 import { repo } from '../db/repo';
 
 export interface MomentsHooks {
@@ -37,7 +41,9 @@ export async function scheduleReactionsFor(
   now: number,
 ): Promise<void> {
   const reactors = await collectReactors(contacts, personaFor, now);
-  const planned = planReactions(moment.id, moment.authorId, moment.createdAt, reactors, 'react');
+  // The whole row goes in, so the post's 可见范围 (M-I18) is inside the planner's
+  // reach and cannot be dropped on the way.
+  const planned = planReactions(moment, reactors, 'react');
   for (const p of planned) {
     await enqueue({
       kind: p.kind,
@@ -46,6 +52,18 @@ export async function scheduleReactionsFor(
       now,
       // Stable id: re-running the planner for the same post can't double-queue.
       id: `${p.kind}_${moment.id}_${p.contactId}`,
+    });
+  }
+  // 转发 (M-I15): rarely, one close friend reposts a USER post. The planner
+  // refuses everything else, so no queue row exists to go wrong for AI posts.
+  const rp = planRepost(moment, reactors, 'react');
+  if (rp) {
+    await enqueue({
+      kind: 'moment_repost',
+      fireAt: rp.at,
+      payload: { momentId: moment.id, contactId: rp.contactId },
+      now,
+      id: `moment_repost_${moment.id}_${rp.contactId}`,
     });
   }
 }
@@ -79,9 +97,23 @@ export async function runMomentPost(
 ): Promise<void> {
   const stamp = at ?? hooks.now();
   const generated = await generateMomentPost(persona, peer, stamp);
-  // Chain the next post even when generation failed, or this persona goes
-  // permanently silent after one network blip.
-  await scheduleNextMoment(persona, hooks.now());
+  // NO `scheduleNextMoment` here (M-I18). There used to be one, with the note
+  // "chain the next post even when generation failed" — a concern that stopped
+  // being this function's business in M-E1, when `moment_post` became a
+  // registerChainedHandler kind: the chain step runs BEFORE the work and has
+  // already queued the next post by the time generation is even attempted.
+  //
+  // Keeping both made TWO owners of "queue the next one", and their ids differ:
+  // `mpost_<id>_<at>` where `at = from + gap`, chain's `from` taken before the
+  // LLM round-trip and this one's after it. `enqueue` upserts by id, so two
+  // different ids meant two pending rows — and each of those forked again next
+  // cycle. On a device with a provider configured, an AI's moments double every
+  // period until the feed is nothing else, each row a paid call.
+  //
+  // It survived four rounds because it is invisible offline: with no provider
+  // `generateMomentPost` returns in well under a millisecond, both `from`s land
+  // on the same `Date.now()`, the ids collide, and the upsert silently folds
+  // them back into one. Every test in this repo runs in exactly that condition.
   if (!generated) return;
 
   const moment: MomentVM = {
@@ -105,6 +137,10 @@ export async function runMomentLike(
 ): Promise<void> {
   const moment = await repo.getMoment(momentId);
   if (!moment) return; // post was deleted before the like landed
+  // 可见范围 checked AGAIN at fire time (M-I18), the same two-checks rule
+  // `canForwardFrom` follows: the row was queued hours ago, and what lands on
+  // screen cannot be taken back.
+  if (!canSeeMoment(moment, contactId)) return;
   // Route through the store so an open feed updates without a reload; the store
   // writes through to the Repo and ignores a like that already exists.
   await hooks.applyLike({
@@ -113,6 +149,43 @@ export async function runMomentLike(
     contactId,
     createdAt: at ?? hooks.now(),
   });
+}
+
+/**
+ * Execute a due `moment_repost` (M-I15): an AI puts the user's post on her own
+ * wall with a one-line caption.
+ *
+ * The quote goes through `repostMoment`, which re-reads the source from
+ * storage by id — the same leak rule as the user path, enforced twice. A
+ * source deleted since planning publishes nothing, silently. The new post
+ * draws its own likes/comments; it can never draw another repost, because
+ * `planRepost` only ever fires on posts authored by 'self'.
+ */
+export async function runMomentRepost(
+  momentId: string,
+  reposter: ContactVM,
+  persona: PersonaVM,
+  contacts: ContactVM[],
+  personaFor: (id: string) => PersonaVM | undefined,
+  hooks: MomentsHooks,
+  at?: number,
+): Promise<void> {
+  const source = await repo.getMoment(momentId);
+  if (!source) return; // post deleted before the repost landed
+  // Re-check the audience at fire time (M-I18). A repost is republication —
+  // the strictest of the three reactions, so it refuses anything restricted
+  // outright rather than merely checking this reposter.
+  if (source.visibility && source.visibility.mode !== 'public') return;
+  if (!canSeeMoment(source, reposter.id)) return;
+  const stamp = at ?? hooks.now();
+  const text = await generateRepostText(persona, reposter, source, stamp);
+  const posted = await repostMoment(
+    momentId,
+    { authorId: reposter.id, text, now: stamp },
+    { getMoment: (id) => repo.getMoment(id), addMoment: hooks.addMoment },
+  );
+  if (!posted) return;
+  await scheduleReactionsFor(posted, contacts, personaFor, hooks.now());
 }
 
 /** Execute a due `moment_comment`. */
@@ -126,6 +199,7 @@ export async function runMomentComment(
 ): Promise<void> {
   const moment = await repo.getMoment(momentId);
   if (!moment) return;
+  if (!canSeeMoment(moment, commenter.id)) return; // M-I18, checked twice
   const stamp = at ?? hooks.now();
   const text = await generateMomentComment(persona, commenter, moment, authorName, stamp);
   if (!text) return;

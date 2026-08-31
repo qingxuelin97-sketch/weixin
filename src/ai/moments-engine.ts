@@ -13,12 +13,16 @@
  */
 import type { PersonaVM, ContactVM, MomentVM } from '../data/types';
 import { seededRng } from '../lib/money';
+import { canSeeMoment } from '../lib/moment-visibility';
 import { assembleSystemPrompt } from './prompt';
-import { toPersonaView } from './engine';
+import { toPersonaView, peersOf } from './engine';
+import { freshArc, arcMomentDirective, aboutYouDirective } from './rel-arcs';
+import { driftedPersona } from './drift';
 import { selectFactsForInjection } from './memory';
 import { getRouter } from '../llm/service';
 import { pickImages } from '../data/moments-images';
 import { isActiveAt } from './heartbeat';
+import { agentEpoch, goalStateAt, goalMomentMaterial, type GoalDomain, type GoalState } from './goals';
 import { getAllEdges, pairKey, effectiveAffinity } from './relationship';
 import { repo } from '../db/repo';
 
@@ -32,6 +36,17 @@ export interface PlannedReaction {
   momentId: string;
   at: number;
 }
+
+/**
+ * The slice of a post the planners read.
+ *
+ * Deliberately an OBJECT rather than the loose `(id, authorId, postedAt)` triple
+ * these functions used to take: `visibility` has to travel with the post to
+ * every planner, and a fourth positional argument is a thing callers forget.
+ * With the row itself as the parameter, the type system carries the audience in
+ * and「她评论了一条你设置成不给她看的动态」stops being reachable by omission.
+ */
+export type PlannablePost = Pick<MomentVM, 'id' | 'authorId' | 'createdAt' | 'visibility'>;
 
 /** What the planner needs to know about a potential reactor. */
 export interface ReactorInfo {
@@ -56,19 +71,21 @@ const MIN_COMMENT_DELAY = 3 * MINUTE;
  * A commenter always likes first if they were also going to like, and their
  * comment lands after that like, which is what real ordering looks like.
  *
- * @param authorId who posted (never reacts to their own post)
- * @param postedAt when the moment was published
+ * 可见范围 (M-I18): anyone the post is not visible to is dropped BEFORE the dice
+ * are rolled, so a restricted post plans exactly zero reactions for them. This
+ * is the single most important consequence of the whole audience feature — a
+ * like from someone you excluded is an instant, irreversible tell.
  */
 export function planReactions(
-  momentId: string,
-  authorId: string,
-  postedAt: number,
+  post: PlannablePost,
   reactors: ReactorInfo[],
   seed: string,
 ): PlannedReaction[] {
+  const { id: momentId, authorId, createdAt: postedAt } = post;
   const out: PlannedReaction[] = [];
   for (const r of reactors) {
     if (r.contactId === authorId) continue;
+    if (!canSeeMoment(post, r.contactId)) continue;
     const rng = seededRng(`${seed}:${momentId}:${r.contactId}`);
     // Affinity 0→0.6x, 50→1.0x, 100→1.4x of the persona's base rate.
     const affinityScale = 0.6 + (r.affinity / 100) * 0.8;
@@ -144,8 +161,11 @@ export async function collectReactors(
   const out: ReactorInfo[] = [];
   for (const c of contacts) {
     if (c.type !== 'ai') continue;
-    const p = personaFor(c.id);
-    if (!p) continue;
+    const base = personaFor(c.id);
+    if (!base) continue;
+    // As she is NOW, not as the card was written (M-H1): months of being
+    // ignored make someone engage less, and the rates are where that shows.
+    const p = now != null ? await driftedPersona(base, now) : base;
     out.push({
       contactId: c.id,
       likeRate: p.likeRate,
@@ -155,6 +175,154 @@ export async function collectReactors(
     });
   }
   return out;
+}
+
+/* --------------------------- AI reposts (M-I15) --------------------------- */
+
+/** A planned repost of a USER post — materialized as a `moment_repost` action. */
+export interface PlannedRepost {
+  contactId: string;
+  at: number;
+}
+
+/**
+ * How often a user post attracts a repost at all. A repost is a much bigger
+ * gesture than a like — someone putting YOUR words on THEIR wall — so it must
+ * stay rare enough that each one lands as an event.
+ */
+export const REPOST_RATE = 0.08;
+
+/** Only genuinely close friends repost; casual ones like and move on. */
+export const REPOST_MIN_AFFINITY = 55;
+
+/**
+ * At most one friend reposts this post, seeded and rare. USER posts only:
+ * agents boosting each other is feed noise, while a friend amplifying *you*
+ * is the moment the 转发 feature exists for. The reposter's text and quote
+ * are produced later through `moment-repost.ts`'s storage-re-read path, so
+ * this planner decides WHO and WHEN, never WHAT.
+ *
+ * 可见范围 (M-I18): a repost puts your words on SOMEONE ELSE's wall, in front of
+ * an audience you never chose — so a restricted post is not merely unlikely to
+ * be reposted, it is ineligible. Both the "can she see it" filter on candidates
+ * and the outright refusal below matter: the second is what stops a 部分可见
+ * post from being republished to everyone by the one person who could see it.
+ */
+export function planRepost(
+  post: PlannablePost,
+  reactors: ReactorInfo[],
+  seed: string,
+): PlannedRepost | null {
+  const { id: momentId, authorId, createdAt: postedAt } = post;
+  if (authorId !== 'self') return null;
+  // Anything with an audience stays where the user put it. Republishing is the
+  // one reaction that cannot be un-seen.
+  if (post.visibility && post.visibility.mode !== 'public') return null;
+  const rng = seededRng(`${seed}:repost:${momentId}`);
+  if (rng() >= REPOST_RATE) return null;
+  const eligible = reactors.filter(
+    (r) =>
+      r.contactId !== authorId &&
+      r.affinity >= REPOST_MIN_AFFINITY &&
+      canSeeMoment(post, r.contactId),
+  );
+  if (eligible.length === 0) return null;
+  const who = eligible[Math.floor(rng() * eligible.length)];
+  // Later than a like would land: sharing takes deciding it's worth sharing.
+  const at = settle(postedAt + 30 * MINUTE + rng() * 6 * HOUR, who.activeHours);
+  return { contactId: who.contactId, at };
+}
+
+/**
+ * The reposter's own line above the quote card. One short LLM call; empty
+ * string on failure — a wordless repost is a perfectly normal repost, so this
+ * degrades to silence rather than to a lost action.
+ */
+export async function generateRepostText(
+  persona: PersonaVM,
+  reposter: ContactVM,
+  moment: MomentVM,
+  now: number,
+): Promise<string> {
+  const system = assembleSystemPrompt({
+    persona: toPersonaView(persona, reposter.remark ?? reposter.name),
+    nsfwTier: 'off', // constitution #6: Moments are never NSFW
+    scene: { kind: 'single', now: new Date(now) },
+  });
+  try {
+    const router = await getRouter();
+    const res = await router.complete(
+      { role: 'chat', nsfwTier: 'off' },
+      {
+        messages: [
+          { role: 'system', content: system },
+          {
+            role: 'user',
+            content:
+              `你朋友发了条朋友圈：「${moment.text ?? '[图片]'}」，你想转发到自己的朋友圈。\n` +
+              '写一句你转发时的配文。要求：15 字以内、你的语气、' +
+              '不复述原文、只输出配文本身。',
+          },
+        ],
+      },
+    );
+    return cleanPostText(res.text ?? '').slice(0, 40);
+  } catch {
+    return '';
+  }
+}
+
+/* ---------------------- topic tags & goal series (M-I15) ---------------------- */
+
+/**
+ * Tags a persona might plausibly hang on a post. Small on purpose: a topic
+ * page needs REPEAT hits to feel like a topic, and a hundred-tag pool would
+ * scatter every post into its own bucket. Goal-domain tags come first so a
+ * study-arc post tends to tag its own storyline.
+ */
+export const TOPIC_POOLS: Record<GoalDomain, string[]> = {
+  study: ['备考日记', '学习打卡'],
+  money: ['攒钱计划', '旅行基金'],
+  romance: ['恋爱脑', '心动瞬间'],
+  health: ['减肥日常', '自律打卡'],
+  career: ['打工人', '搞钱要紧'],
+  skill: ['厨房翻车现场', '今日份手艺'],
+};
+
+/** Everyday tags for posts with no goal storyline behind them. */
+export const GENERIC_TOPICS = ['日常', '碎碎念', '深夜emo', '干饭日记', '周末愉快'];
+
+/** Fraction of AI posts that carry a tag at all. A feed of hashtags reads as marketing. */
+export const TOPIC_TAG_RATE = 0.18;
+
+/**
+ * Should this post carry a #话题#, and which? Seeded per post so backfill and
+ * replay agree. Goal-flavored posts pull from their domain's pool — that is
+ * what turns three posts a month into a legible series.
+ */
+export function maybeTopicTag(domain: GoalDomain | undefined, seed: string): string | null {
+  const rng = seededRng(`mtopic:${seed}`);
+  if (rng() >= TOPIC_TAG_RATE) return null;
+  const pool = domain ? TOPIC_POOLS[domain] : GENERIC_TOPICS;
+  return pool[Math.floor(rng() * pool.length)];
+}
+
+/**
+ * 连续剧感 (M-I15): the extra prompt line that makes goal posts read as
+ * installments of ONE story instead of isolated updates. Only meaningful from
+ * the second reached milestone on — episode one has nothing to call back to.
+ * Pure; the caller appends it to `goalMomentMaterial`'s output.
+ */
+export function goalSeriesLine(g: GoalState): string {
+  if (g.status !== 'active' || g.milestoneIndex < 1) return '';
+  const prev = g.milestones.filter((m) => m.reached).at(-2);
+  if (!prev?.text) return '';
+  const episode = g.milestoneIndex + 1;
+  return (
+    `这不是你第一次围绕「${g.title}」发朋友圈了（这大概是第 ${episode} 篇，` +
+    `上一篇时你还在「${prev.text}」的阶段）。写出一点"连载下一集"的感觉——` +
+    '可以轻轻呼应之前的状态，让常看你朋友圈的人看得出进展，但别写成汇报。'
+  );
 }
 
 /** Strip model formatting habits that would look wrong in a feed post. */
@@ -191,6 +359,44 @@ export async function generateMomentPost(
   });
   const rng = seededRng(`mp:${peer.id}:${now}`);
   const imgCount = rng() < 0.45 ? 0 : rng() < 0.6 ? 1 : rng() < 0.85 ? 3 : 4;
+  // Something that just happened with a mutual friend, sometimes (M-H1). This
+  // is the surface where the social graph is most legible to the user: an
+  // unexplained, unnamed post right after a falling-out is how you find out
+  // there WAS one. Seeded and minority-weighted — a feed of subtweets is a
+  // different and much worse character than one that occasionally has a bad day.
+  const arc = rng() < 0.4 ? await freshArc(peer.id, await peersOf(persona), now) : null;
+  // …or something that happened with the USER today (M-H1). Until now the feed
+  // was her life with the user entirely absent from it, which is a strange
+  // sort of friendship: you talk every day and never appear in anything she
+  // posts. A same-day memory is exactly the material a person would use.
+  const shared = arc
+    ? null
+    : rng() < 0.35
+      ? facts.find((f) => f.status === 'confirmed' && now - f.createdAt < 24 * 3_600_000)
+      : null;
+  const material = arc
+    ? arcMomentDirective(arc.marker.kind)
+    : shared
+      ? aboutYouDirective(shared.fact)
+      : '';
+
+  // Goal-arc material (M-I14): a fresh milestone or a completed goal sometimes
+  // becomes the post. Seeded gate inside — the feed must not turn into a
+  // progress log, so this is empty most of the time.
+  const goal = goalStateAt(peer.id, now, agentEpoch(peer.id));
+  let goalBg = goalMomentMaterial(goal, now, `${peer.id}:${now}`);
+  // 连续剧式发帖 (M-I15): when the post IS goal material and this is not the
+  // first installment, ask for continuity with the previous one.
+  if (goalBg) {
+    const series = goalSeriesLine(goal);
+    if (series) goalBg += `\n${series}`;
+  }
+  // 偶尔带话题标签 (M-I15): seeded minority. Goal-flavored posts tag their own
+  // storyline's pool so the topic page accumulates a real series.
+  const topic = maybeTopicTag(
+    goalBg && goal.status === 'active' ? goal.domain : undefined,
+    `${peer.id}:${now}`,
+  );
 
   try {
     const router = await getRouter();
@@ -202,11 +408,16 @@ export async function generateMomentPost(
           {
             role: 'user',
             content:
+              (material ? `${material}\n` : '') +
               '写一条你现在会发的朋友圈。要求：' +
               '1) 第一人称，像真人随手发的，不是作文；' +
               '2) 40 字以内，可以只有一句话，允许口语和不完整句；' +
-              '3) 不要话题标签、不要 emoji 堆砌、不要"分享一下"这类开场白；' +
-              '4) 只输出正文，不要引号、不要解释。',
+              (topic
+                ? `3) 在正文里自然带上话题标签 #${topic}#（只这一个，别再加别的标签）、` +
+                  '不要 emoji 堆砌、不要"分享一下"这类开场白；'
+                : '3) 不要话题标签、不要 emoji 堆砌、不要"分享一下"这类开场白；') +
+              '4) 只输出正文，不要引号、不要解释。' +
+              (goalBg ? `\n背景（不要照抄原句）：${goalBg}` : ''),
           },
         ],
       },

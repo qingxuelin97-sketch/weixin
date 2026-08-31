@@ -12,13 +12,13 @@ import type { Bubble } from '../llm/types';
 import { typingDelay } from '../llm/bubbles';
 import { getEdge, effectiveAffinity, relationTier, tierDirective, recordRelEvent } from './relationship';
 import { noteUserReplied } from './agent-state';
-import { assembleSystemPrompt, relationsForPrompt, type PersonaView } from './prompt';
-import { selectFactsForInjection, touchFacts } from './memory';
+import { assembleSystemPrompt, promptStats, relationsForPrompt, type PersonaView } from './prompt';
+import { selectFactsForInjection, touchFacts, withConvSummary } from './memory';
 import { getRouter } from '../llm/service';
 import type { GenerateContext, NsfwTier } from '../llm/router';
 import { playMessageSound } from '../lib/sound';
 import { ensureVoiceAudio } from '../lib/voice';
-import { DEFAULT_VOICE } from '../llm/tts';
+import { DEFAULT_VOICE, isTtsAvailable } from '../llm/tts';
 import { repo } from '../db/repo';
 import { enqueue } from './scheduler';
 import { moodOf, moodParams } from '../lib/mood';
@@ -26,14 +26,35 @@ import { logError } from '../lib/errlog';
 import { pickOpener } from './heartbeat';
 import { seededRng } from '../lib/money';
 import { renderTurns } from './render-msg';
+import { collectTurnImages } from './vision-context';
+import { resolvePhotoBubble, photoDirective } from './photo-send';
+import { materializeBubble, type CardContact } from './bubble-materialize';
+import { gameDirective } from './game-react';
+import { occasionsFor, occasionDirective, firstSpokeAt } from './occasions';
 import { affectFor, affectLine, recordAffect, classifyUserMessage } from '../lib/affect';
-import { lifelineAt, lifelineDirective } from './lifeline';
+import { lifelineAt, lifelineDirective, personaEpoch } from './lifeline';
+import { arcAwareness, freshArc, arcOpener, type PeerRef } from './rel-arcs';
+import { ownLines, styleNote, makeScrubber } from './anti-ai';
+import { playbackFeed } from './bubble-feed';
+import { noteDrift } from './drift';
+import { voiceDirective } from './voice-send';
+import { agentStickerPool, maybeAgentSticker } from './sticker-taste';
 import { refreshConvState, convStateDirective } from './conv-state';
+import { worldLinesFor } from './worldbook';
+import {
+  agentEpoch,
+  goalStateAt,
+  goalDirective,
+  latestTerminalEvent,
+  goalShareDirective,
+} from './goals';
 import {
   detectThreads,
   threadsFromFacts,
   pickThread,
   threadDirective,
+  shouldSurfaceThread,
+  threadAwareness,
 } from './threads';
 
 export interface EngineHooks {
@@ -64,18 +85,33 @@ function releaseInFlight(convId: string, ctrl: AbortController): void {
   if (inFlight.get(convId) === ctrl) inFlight.delete(convId);
 }
 
+/**
+ * Hard-stop whatever this conversation is generating (M-I1).
+ *
+ * Exists for the deleteContact cascade: a reply that lands AFTER its thread
+ * was deleted re-creates message rows for a conversation that no longer has a
+ * contact. The map slot is cleared too — this abort is deliberate teardown,
+ * not a takeover by a newer send.
+ */
+export function abortConversation(convId: string): void {
+  inFlight.get(convId)?.abort();
+  inFlight.delete(convId);
+}
+
 const RECENT_WINDOW = 30; // messages of context sent to the model
 
-/**
- * When this agent's life "started", for the lifeline walk. A contact added
- * today must not begin mid-arc as if it had a past it never had — so the epoch
- * is derived from the id, giving each agent a stable but distinct phase.
- */
-function personaEpoch(persona: PersonaVM, peer: ContactVM): number {
-  const seeded = seededRng(`epoch:${persona.contactId}:${peer.id}`)();
-  // Anchored to a fixed date, offset by up to 60 days — deterministic forever,
-  // and never dependent on when the app happened to be installed.
-  return 1_735_689_600_000 + Math.floor(seeded * 60 * 86_400_000);
+/** Goal endings already announced — once-ever, ledger written BEFORE generation. */
+async function goalEventTold(contactId: string, eventId: string): Promise<boolean> {
+  const rows = (await repo.getSetting<string[]>(`goal_told:${contactId}`)) ?? [];
+  return Array.isArray(rows) && rows.includes(eventId);
+}
+
+async function markGoalEventTold(contactId: string, eventId: string): Promise<void> {
+  const rows = (await repo.getSetting<string[]>(`goal_told:${contactId}`)) ?? [];
+  const next = Array.isArray(rows) ? rows : [];
+  if (!next.includes(eventId)) next.push(eventId);
+  // A lifetime of goals is a few dozen endings; 50 is years of margin.
+  await repo.putSetting(`goal_told:${contactId}`, next.slice(-50));
 }
 
 /** Threads already followed up on. One question per thread, ever. */
@@ -92,6 +128,27 @@ async function markThreadUsed(contactId: string, threadId: string): Promise<void
   await repo.putSetting(`threads:${contactId}`, [...used].slice(-200));
 }
 
+/**
+ * The other people this persona knows, for the relationship-arc layer.
+ *
+ * Sourced from her own `relations` card rather than from the contact list: an
+ * arc with someone she has never heard of is not an arc, and feeding every
+ * contact in the app into a social briefing would both cost tokens and invent
+ * a friendship out of nothing. Capped — this runs on every turn.
+ */
+export async function peersOf(persona: PersonaVM, max = 5): Promise<PeerRef[]> {
+  const ids = Object.keys(persona.relations ?? {}).filter(
+    (id) => id !== 'user' && id !== 'self' && id !== persona.contactId,
+  );
+  if (ids.length === 0) return [];
+  const contacts = await repo.getContacts();
+  const byId = new Map(contacts.map((c) => [c.id, c]));
+  return ids.slice(0, max).flatMap((id) => {
+    const c = byId.get(id);
+    return c ? [{ contactId: id, name: c.remark ?? c.name }] : [];
+  });
+}
+
 /** Persona row → the prompt layer's view. Shared with the Moments engine. */
 export function toPersonaView(p: PersonaVM, name: string): PersonaView {
   return {
@@ -101,6 +158,9 @@ export function toPersonaView(p: PersonaVM, name: string): PersonaView {
     fewShots: p.fewShots,
     catchphrases: p.catchphrases,
     nsfwStyleSamples: p.nsfwStyleSamples,
+    // 表情使用率 (M-I18). The single funnel every prompt goes through, so the
+    // group engine and the Moments generators inherit it for free.
+    stickerRate: p.stickerRate,
   };
 }
 
@@ -116,6 +176,23 @@ function personaRefusalBubbles(persona: PersonaVM): Bubble[] {
   return [{ type: 'text', content: line }];
 }
 
+/** 收尾的几种说法；具体选哪句由种子决定。 */
+const TRUNCATION_LINES = ['先不说了，这边有点事', '我这边有点事，回头说', '先这样，我一会儿再说'];
+
+/**
+ * 被打断时的收尾话（M-I5）——和 `personaRefusalBubbles` 同源，语气不同。
+ *
+ * 拒答是「我现在不想聊这个」，截断是「说到一半这边有事」：她本来正说得好好的，
+ * 流断了。用拒答那套文案会读成「说到一半突然翻脸」，比没有还糟。
+ *
+ * 种子化（铁律 4）：同一轮重放选到同一句，不用 Math.random。
+ */
+function personaTruncationBubbles(persona: PersonaVM, seed: string): Bubble[] {
+  const pick = TRUNCATION_LINES[Math.floor(seededRng(`cutoff:${seed}`)() * TRUNCATION_LINES.length)];
+  const head = persona.catchphrases[0] ?? '…';
+  return [{ type: 'text', content: `${head}…${pick}` }];
+}
+
 /**
  * Send a user message and generate the AI reply for a single chat.
  * @param convId conversation id
@@ -125,6 +202,53 @@ function personaRefusalBubbles(persona: PersonaVM): Bubble[] {
  * @param globalTier global NSFW tier setting
  * @param hooks persistence/UI callbacks
  */
+/**
+ * Flag the newest outgoing message as undelivered.
+ *
+ * Reads the row back from storage rather than trusting a captured object: the
+ * append happened earlier in this turn and the id is assigned by the store.
+ */
+async function markLastUserMessageFailed(convId: string, hooks: EngineHooks): Promise<void> {
+  const recent = await repo.getMessages(convId, { limit: 5 });
+  const mine = [...recent].reverse().find((m) => m.senderId === 'self');
+  if (!mine || mine.status === 'failed') return;
+  await hooks.updateMessage({ ...mine, status: 'failed' });
+}
+
+export interface SendOptions {
+  /**
+   * The caller has already written the user's row(s).
+   *
+   * Photos are the reason this exists: `sendImages` persists one message per
+   * file through the media library, then needs ONE reply to the batch. Without
+   * it the only way to get a reply was to append a second, fake text message.
+   */
+  alreadyPersisted?: boolean;
+}
+
+/**
+ * Ask for a reply to the conversation as it now stands, appending nothing.
+ *
+ * The gap this closes: sending a photo used to call `appendMessage` and stop
+ * there — no code path anywhere started a generation, so **she never answered
+ * a picture**. Every richer plan for images (captions, real vision) was
+ * downstream of a reply that was never requested.
+ *
+ * The transcript already carries the photo through the projection layer, so
+ * the model sees it in context; nothing extra is invented on the user's behalf.
+ */
+export async function replyToLatest(
+  convId: string,
+  peer: ContactVM,
+  persona: PersonaVM,
+  globalTier: NsfwTierVM,
+  hooks: EngineHooks,
+): Promise<void> {
+  await sendUserMessage(convId, '', peer, persona, globalTier, hooks, undefined, {
+    alreadyPersisted: true,
+  });
+}
+
 export async function sendUserMessage(
   convId: string,
   text: string,
@@ -133,6 +257,7 @@ export async function sendUserMessage(
   globalTier: NsfwTierVM,
   hooks: EngineHooks,
   meta?: Record<string, unknown>,
+  opts: SendOptions = {},
 ): Promise<void> {
   // Hard-interrupt any in-flight reply for this conversation.
   inFlight.get(convId)?.abort();
@@ -140,16 +265,20 @@ export async function sendUserMessage(
   inFlight.set(convId, ctrl);
 
   // 1) Persist the user's message immediately (meta carries e.g. a quote).
+  //    Skipped when the caller already wrote the row — sending photos persists
+  //    one message per file and then asks for a single reply to all of them.
   try {
-    await hooks.appendMessage({
-      convId,
-      senderId: 'self',
-      type: 'text',
-      content: text,
-      ...(meta ? { meta } : {}),
-      status: 'sent',
-      createdAt: hooks.now(),
-    });
+    if (!opts.alreadyPersisted) {
+      await hooks.appendMessage({
+        convId,
+        senderId: 'self',
+        type: 'text',
+        content: text,
+        ...(meta ? { meta } : {}),
+        status: 'sent',
+        createdAt: hooks.now(),
+      });
+    }
   } catch (e) {
     // A failed write must not keep the slot: the user would see their message
     // vanish AND the AI would go quiet forever.
@@ -165,7 +294,13 @@ export async function sendUserMessage(
   void noteUserReplied(peer.id).catch(() => {});
   // How she FEELS about it, not just how close you are. `user_reply` is the
   // small baseline good thing; an apology or an insult is classified separately.
-  void recordAffect(peer.id, classifyUserMessage(text) ?? 'user_reply', hooks.now()).catch(() => {});
+  const affectEvent = classifyUserMessage(text) ?? 'user_reply';
+  void recordAffect(peer.id, affectEvent, hooks.now()).catch(() => {});
+  // …and what it does to WHO SHE IS over months (M-H1). Affect is a pulse that
+  // decays in hours; drift is the slow, capped residue of the same events —
+  // the difference between a bad evening and someone who has learned that
+  // reaching out to you works.
+  void noteDrift(peer.id, affectEvent, hooks.now());
 
   // 2) Build context, 3) generate and play.
   await generateAndPlay(convId, peer, persona, globalTier, hooks, ctrl);
@@ -200,16 +335,15 @@ async function generateAndPlay(
     logError('chat.generate', e);
     if (ctrl.signal.aborted) return;
     hooks.setTyping(convId, false);
-    await hooks
-      .appendMessage({
-        convId,
-        senderId: peer.id,
-        type: 'system',
-        content: `消息没能送达：${e instanceof Error ? e.message : String(e)}`,
-        status: 'sent',
-        createdAt: hooks.now(),
-      })
-      .catch(() => {});
+    // Mark the USER's message failed rather than appending a system bubble.
+    //
+    // A system line stated the problem but could not act on it: there was no
+    // retry, and it sat in the transcript permanently (and in the model's
+    // context) narrating a network error. WeChat's answer — and now ours — is
+    // the red mark on the message you sent, which is also the retry button.
+    // `status: 'failed'` has been in the schema since M1 with zero producers;
+    // this is the producer.
+    await markLastUserMessageFailed(convId, hooks).catch(() => {});
   } finally {
     // Belt and braces: the inner generator releases the slot on its own paths,
     // but only this finally covers a throw from the context-loading awaits that
@@ -241,15 +375,19 @@ async function generateAndPlayInner(
     .map((m) => m.content ?? '')
     .join(' ')
     .slice(0, 200);
-  const memory = selectFactsForInjection(facts, hooks.now(), {
-    surface: 'single',
-    tier,
-    query,
-  });
+  const memory: ReturnType<typeof selectFactsForInjection> & { world?: string[] } =
+    selectFactsForInjection(facts, hooks.now(), {
+      surface: 'single',
+      tier,
+      query,
+    });
   // Rolling summary from the memory loop — "上次聊到哪" survives the 30-message
   // context window. (Was a settings read that nothing ever wrote, M2–M-D1.)
   const summaryRow = await repo.getConvSummary(convId);
-  if (summaryRow?.summary) memory.topK = [`上次你们聊到：${summaryRow.summary}`, ...memory.topK];
+  memory.topK = withConvSummary(memory.topK, summaryRow?.summary, 'single');
+  // Worldbook (M-I4): user-decreed lore, matched on the same query, capped by
+  // its own budget, injected inside the memory layer.
+  memory.world = await worldLinesFor({ query, contactId: persona.contactId, convId, tier });
 
   // Relations keyed by contactId are translated to display names — the model
   // must never see internal ids, or it will echo them into dialogue.
@@ -274,7 +412,7 @@ async function generateAndPlayInner(
     persona: toPersonaView(persona, peer.remark ?? peer.name),
     relations: relationsRec,
     nsfwTier: tier,
-    memory: memory.pinned.length || memory.topK.length ? memory : undefined,
+    memory: memory.pinned.length || memory.topK.length || memory.world?.length ? memory : undefined,
     scene: {
       kind: 'single',
       now: new Date(hooks.now()),
@@ -283,16 +421,99 @@ async function generateAndPlayInner(
   });
   // Appended AFTER scene — the six-layer order is fixed (constitution §2), and
   // new content only ever goes on the end so the prompt prefix stays cacheable.
-  const arcs = lifelineAt(persona, hooks.now(), personaEpoch(persona, peer));
+  const arcs = lifelineAt(persona, hooks.now(), personaEpoch(persona.contactId));
   const arcLine = lifelineDirective(arcs);
   if (arcLine) system += `\n\n${arcLine}`;
+  // The long arc on top of the weekly texture (M-I14): what she is working
+  // toward. One line, appended after the lifeline for the same reason the
+  // lifeline is appended after the scene — the prefix stays cacheable.
+  const goalLine = goalDirective(
+    goalStateAt(peer.id, hooks.now(), agentEpoch(peer.id)),
+    hooks.now(),
+  );
+  if (goalLine) system += `\n\n${goalLine}`;
   // What this conversation is still in the middle of (M-E6). Channel 1: this
   // refresh runs on EVERY turn, so an unanswered question is actionable during
   // the same conversation rather than minutes after you have left it.
   const convState = await refreshConvState(convId, recent, hooks.now());
   const stateLine = convStateDirective(convState, hooks.now());
   if (stateLine) system += `\n\n${stateLine}`;
+  // A loose thread she still remembers (M-G0). Threads shipped in M-E3 wired
+  // to `sendProactiveMessage` and nowhere else, so "上次你说要去看牙" could only
+  // arrive hours later as an unprompted message — while you were actually
+  // talking to her the whole system was off. Gated by `shouldSurfaceThread` so
+  // it opens at the moments a person reaches for a topic, not every turn, and
+  // phrased as background rather than an instruction to interrogate.
+  if (shouldSurfaceThread(recent, hooks.now())) {
+    const openThread = pickThread(
+      [...detectThreads(recent, convId), ...threadsFromFacts(facts, peer.id)],
+      recent,
+      hooks.now(),
+      { used: await usedThreadIds(peer.id), seed: `reply:${convId}:${recent.at(-1)?.id ?? 0}` },
+    );
+    // Deliberately NOT marked used: she may or may not take the opening, and
+    // burning the once-ever quota on a thread she never actually mentioned is
+    // how a thread disappears without ever being asked about.
+    if (openThread) system += `\n\n${threadAwareness(openThread, hooks.now())}`;
+  }
   if (extraDirective) system += `\n\n# 本次说话的由头\n${extraDirective}`;
+  // Only advertised when a pool actually exists — offering a capability she
+  // cannot exercise just produces image bubbles that all degrade to text.
+  const photoLine = photoDirective(persona);
+  if (photoLine) system += `\n\n${photoLine}`;
+  // What day it is (M-H1). Pure, and free: no call, no timer, no new kind —
+  // it rides whatever turn is already happening. She has had a mood and a life
+  // since M-E but no sense of the DATE, and knowing it is the single cheapest
+  // "this is a person" signal there is.
+  const occasionLine = occasionDirective(
+    occasionsFor({
+      now: hooks.now(),
+      facts,
+      firstMsgAt: await firstSpokeAt(convId),
+    }),
+  );
+  if (occasionLine) system += `\n\n${occasionLine}`;
+  // Where she currently stands with the people you BOTH know (M-H1). The
+  // social graph has been moving since M-E4 with no way for you to perceive
+  // it; this is the line that lets a falling-out come up when the subject
+  // does. Peers come from her own relations card — arcs with people she has
+  // never heard of are not arcs.
+  const arcAware = await arcAwareness(peer.id, await peersOf(persona), hooks.now());
+  if (arcAware) system += `\n\n${arcAware}`;
+  // Anti-AI-tone v2 (M-H1): what her OWN last few lines look like. The v1
+  // rules ("don't write essays") are static — nothing ever looked at the
+  // output, so a catchphrase could open six replies in a row and every rule
+  // was still satisfied. The model varies well when told what it just did; it
+  // simply has no memory of it.
+  const ownRecent = ownLines(recent, peer.id);
+  const habit = styleNote(ownRecent, persona.catchphrases);
+  if (habit) system += `\n\n${habit}`;
+  // Reaching for the mic instead of the keyboard (M-H1). `voice` has been a
+  // legal bubble since M2 and essentially never happened: the base rules list
+  // it as available but cannot say WHEN a person would use one, because that
+  // depends on the hour, her mood and what was just said.
+  const voiceLine = voiceDirective(
+    persona,
+    {
+      now: hooks.now(),
+      mood: mood.key,
+      lastUserText: [...recent].reverse().find((m) => m.senderId === 'self' && m.type === 'text')
+        ?.content,
+      seed: `${convId}:${recent.at(-1)?.id ?? 0}`,
+    },
+    await isTtsAvailable().catch(() => false),
+  );
+  if (voiceLine) system += `\n\n${voiceLine}`;
+  // A live game at the tail (M-I13): when to throw back, when the results are
+  // in, and — for rps — that her own hand is unknown until it lands, so this
+  // turn must not comment on an outcome she cannot see.
+  const gameLine = gameDirective(recent, peer.id);
+  if (gameLine) system += `\n\n${gameLine}`;
+
+  // Measured AFTER every append (M-G0). Prompt growth is otherwise invisible:
+  // it has no symptom except a bigger bill and a persona diluted by context.
+  const size = promptStats(system);
+  if (size.overBudget) logError('prompt.oversize', new Error(`单聊系统 prompt ${size.chars} 字`));
 
   const messages = [
     { role: 'system' as const, content: system },
@@ -317,31 +538,64 @@ async function generateAndPlayInner(
   const tGenStart = hooks.now();
   const ctx: GenerateContext = {
     personaRefusal: () => personaRefusalBubbles(persona),
+    // 首气泡已上屏后流断了：不重试、不换链，但也不能就这么没了下文。
+    personaTruncation: () => personaTruncationBubbles(persona, `${convId}:${recent.at(-1)?.id ?? 0}`),
     prefixPrefill: tier !== 'off' ? '嗯' : undefined,
   };
 
+  // Bubbles actually put on screen this turn. Hoisted out of the try because
+  // the catch below has to know whether the user already saw something: after
+  // M-I5 a turn can fail HALFWAY, and appending the persona's "信号不太好" on
+  // top of three bubbles she already sent reads as her having a stroke.
+  let played = 0;
   try {
     const router = await getRouter();
-    const bubbles: Bubble[] = [];
-    for await (const b of router.generate(
-      { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
-      { messages, signal: ctrl.signal },
-      ctx,
-      convId,
-    )) {
-      bubbles.push(b);
-    }
-    if (ctrl.signal.aborted) return;
+    // What she can actually SEE this turn. Rides the same message list, the
+    // same router and the same tier — a photo is conversation content, and
+    // constitution rule #6 covers it exactly as it covers text.
+    const images = await collectTurnImages(recent);
 
-    // Prefetch voice synthesis in parallel while earlier bubbles play — the
-    // awaited voiceMeta at append time then hits the content-addressed cache
-    // instead of serializing a TTS round-trip into every gap.
-    for (const b of bubbles) {
-      if (b.type === 'voice') void voiceMeta(b.content, persona, b.emotion, tier).catch(() => {});
-    }
+    // 渐进上屏 (M-I5): every bubble is played as it ARRIVES, not after the whole
+    // turn has been drained. On a streaming provider the first line lands while
+    // the model is still writing the third; on a non-streaming one the whole set
+    // is already queued before the first typing delay elapses, so the pacing is
+    // byte-for-byte what it was.
+    //
+    // The scrub still runs on WHOLE bubbles, one at a time and in playback
+    // order — same decisions as the batch form, never half a sentence.
+    const scrubber = makeScrubber<Bubble>(ownRecent);
+    const prefetch: { stickers?: Promise<string[]> } = {};
+    const feed = playbackFeed(
+      router.generate(
+        { role: 'chat', nsfwTier: tier, ...preferredRoute(persona.modelChat) },
+        { messages, signal: ctrl.signal, ...(images.length ? { images } : {}) },
+        ctx,
+        convId,
+      ),
+      {
+        signal: ctrl.signal,
+        keepLast: true, // scrubBubbles' "never empty" invariant
+        accept: (b) => {
+          if (!scrubber.accept(b)) return false;
+          // Voice synthesis starts the moment the bubble arrives, so it overlaps
+          // the earlier bubbles' playback; the awaited voiceMeta at append time
+          // then hits the content-addressed cache instead of serializing a TTS
+          // round-trip into the gap.
+          if (b.type === 'voice') void voiceMeta(b.content, persona, tier, b.emotion).catch(() => {});
+          // 她也用你的表情包 (M-I15): one storage read, started on the first
+          // sticker of the turn and awaited only where it is used.
+          if (b.type === 'sticker') {
+            prefetch.stickers ??= agentStickerPool(peer.id).catch(() => [] as string[]);
+          }
+          return true;
+        },
+      },
+    );
 
-    for (let i = 0; i < bubbles.length; i++) {
-      const b = bubbles[i];
+    for (;;) {
+      const b = await feed.next();
+      if (b === null) break;
+      const i = played;
       // Budgeted pacing: the LLM's real latency (2-8s on free reasoning models)
       // already elapsed behind the typing indicator. The first bubble only pays
       // the REMAINDER of its typing delay, so total wait ≈ max(real, simulated)
@@ -353,6 +607,7 @@ async function generateAndPlayInner(
       const delay = i === 0 ? Math.max(250, full - (hooks.now() - tGenStart)) : full;
       await sleep(delay, ctrl.signal);
       if (ctrl.signal.aborted) return;
+      played++;
 
       if (b.type === 'recall') {
         // Send-then-recall for a human touch: post it, then queue the flip.
@@ -378,15 +633,79 @@ async function generateAndPlayInner(
         continue;
       }
 
-      // Hide typing just before the last bubble lands.
-      if (i === bubbles.length - 1) hooks.setTyping(convId, false);
+      // Hide typing just before the last bubble lands. "Last" is now a question
+      // the feed answers (nothing buffered, source exhausted) instead of an
+      // index into a finished array — and while more is still streaming in, the
+      // indicator staying up is not a leftover, it is the truth.
+      if (feed.finished) hooks.setTyping(convId, false);
+
+      // M-I13 rich types (location / contact / file / link / dice / rps) ride
+      // ONE shared materializer with the group engine. Everything seeded in it
+      // derives from (convId, at, i) — `at` is read once so the game seed and
+      // the stored createdAt are the same number (rule #4: replayable).
+      const at = hooks.now();
+      const rich = materializeBubble(b, {
+        convId,
+        at,
+        index: i,
+        resolveContact: cardResolver(contacts, peer.id),
+      });
+      if (rich) {
+        await hooks.appendMessage({
+          convId,
+          senderId: peer.id,
+          type: rich.type,
+          content: rich.content,
+          ...(rich.meta ? { meta: rich.meta } : {}),
+          status: 'sent',
+          createdAt: at,
+        });
+        playMessageSound(hooks.now());
+        continue;
+      }
+
+      // A photo bubble names what she wants to show, not a file — resolve it
+      // against the user's own pool. With no pool it becomes text: a broken
+      // image reads as a bug, while saying it in words reads as her not having
+      // a picture to hand.
+      const photo =
+        b.type === 'image'
+          ? resolvePhotoBubble(b, persona, convId, `${convId}:${hooks.now()}:${i}`)
+          : null;
+      if (b.type === 'image' && !photo) {
+        await hooks.appendMessage({
+          convId,
+          senderId: peer.id,
+          type: 'text',
+          content: b.content,
+          status: 'sent',
+          createdAt: hooks.now(),
+        });
+        playMessageSound(hooks.now());
+        continue;
+      }
+
+      // Seeded per (turn, bubble index) so a replayed turn swaps identically.
+      const customSticker =
+        b.type === 'sticker'
+          ? maybeAgentSticker(
+              (await prefetch.stickers) ?? [],
+              `${convId}:${recent.at(-1)?.id ?? 0}:${i}`,
+              // 表情使用率 (M-I18): a sticker-happy character reaches for one of
+              // YOUR packs far oftener than a reserved one does.
+              persona.stickerRate,
+            )
+          : null;
 
       await hooks.appendMessage({
         convId,
         senderId: peer.id,
         type: bubbleToMsgType(b),
-        content: b.content,
-        ...(b.type === 'voice' ? { meta: await voiceMeta(b.content, persona, b.emotion, tier) } : {}),
+        content: photo ? photo.ref : (customSticker ?? b.content),
+        // The description rides along as the caption so a later turn can refer
+        // back to "那张饼干的照片" rather than to an opaque handle.
+        ...(photo ? { meta: { caption: photo.caption } } : {}),
+        ...(b.type === 'voice' ? { meta: await voiceMeta(b.content, persona, tier, b.emotion) } : {}),
         status: 'sent',
         createdAt: hooks.now(),
       });
@@ -394,12 +713,15 @@ async function generateAndPlayInner(
     }
     // The reply landed with these facts in context — count the reference
     // (pending→confirmed on first use). Fire-and-forget bookkeeping.
-    if (bubbles.length > 0 && memory.ids.length > 0) {
+    if (played > 0 && memory.ids.length > 0) {
       void touchFacts(peer.id, memory.ids, hooks.now()).catch(() => {});
     }
   } catch {
-    // Router threw past its own ladder — emit the persona refusal so the thread never breaks.
-    if (!ctrl.signal.aborted) {
+    // Router threw past its own ladder — emit the persona refusal so the thread
+    // never breaks. Only when NOTHING was shown: a turn that already put lines
+    // on screen was closed by the router's own cut-off line, and a second
+    // apology under it is one bubble too many.
+    if (!ctrl.signal.aborted && played === 0) {
       for (const b of personaRefusalBubbles(persona)) {
         await hooks.appendMessage({
           convId,
@@ -514,6 +836,17 @@ export async function sendProactiveMessage(
         '你上一条消息对方一直没回。轻轻问一下（"在忙？"这类），一句就好——' +
         '不要连环追问，不要表现出不满，问完就等。';
     } else {
+      // A goal that just ended (M-I14) outranks everything: "我考过了！" is the
+      // single strongest reason a friend reaches out first. Once-ever, and the
+      // ledger is written BEFORE generation so a failed attempt cannot make
+      // her announce the same ending twice.
+      const goalEvent = latestTerminalEvent(peer.id, at ?? hooks.now(), agentEpoch(peer.id));
+      if (goalEvent && !(await goalEventTold(peer.id, goalEvent.id))) {
+        await markGoalEventTold(peer.id, goalEvent.id);
+        material = goalShareDirective(goalEvent);
+      }
+    }
+    if (!material && !opts.nudge) {
       const facts = await repo.getMemory(peer.id);
       const moments = await repo.getMoments({ limit: 10 });
       const own = moments.find(
@@ -539,7 +872,15 @@ export async function sendProactiveMessage(
         // forever, and a failed generation must not make her ask again.
         await markThreadUsed(peer.id, thread.id);
       } else {
-        material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`).directive;
+        // Something that happened with a MUTUAL friend, if anything just did
+        // (M-H1). The social graph has existed since M-E4 and was completely
+        // invisible: numbers moved, nothing was ever said. An agent who just
+        // fell out with someone you both know has an actual reason to message
+        // you, which is the whole difference between a heartbeat and a person.
+        const arc = await freshArc(peer.id, await peersOf(persona), at ?? hooks.now());
+        material = pickOpener(facts, own?.text, `${convId}:${lastMsg?.id ?? 0}`, {
+          arc: arc ? arcOpener(arc.marker.kind, arc.peer.name) : undefined,
+        }).directive;
       }
     }
   } catch (e) {
@@ -592,6 +933,38 @@ function bubbleToMsgType(b: Bubble): MessageVM['type'] {
   return 'text';
 }
 
+/**
+ * Name → contact resolver for `contact` bubbles (M-I13), shared with the
+ * group engine. Matches on remark first (what the user calls them), then the
+ * real name. `self` and the speaker are never card material: a card of the
+ * user is nonsense, and introducing yourself by card reads as a bug.
+ */
+export function cardResolver(
+  contacts: ContactVM[],
+  speakerId: string,
+): (name: string) => CardContact | undefined {
+  return (name: string) => {
+    const wanted = name.trim();
+    if (!wanted) return undefined;
+    const c = contacts.find(
+      (x) =>
+        x.id !== 'self' &&
+        x.id !== speakerId &&
+        x.type === 'ai' &&
+        (x.remark === wanted || x.name === wanted),
+    );
+    return c
+      ? {
+          contactId: c.id,
+          name: c.remark ?? c.name,
+          ...(c.wxid ? { wxid: c.wxid } : {}),
+          avatarColor: c.avatarColor,
+          avatarText: c.avatarText,
+        }
+      : undefined;
+  };
+}
+
 /** Rough voice length from text so the voice bar shows a plausible duration. */
 function estimateVoiceMs(text: string): number {
   return Math.min(Math.max(text.length * 220, 1000), 60000);
@@ -608,8 +981,13 @@ function estimateVoiceMs(text: string): number {
 export async function voiceMeta(
   text: string,
   persona: PersonaVM,
+  // Required, and BEFORE the optional `emotion` (M-I18). It used to be last and
+  // defaulted to `= 'off'`, so a forgotten argument sent full-tier text to
+  // MiniMax's mainland TTS, which audits input. Same reason as extractMemory:
+  // rule 6 should fail to COMPILE, not fail quietly — and a required parameter
+  // cannot sit after an optional one, which is why the order changed.
+  tier: NsfwTier,
   emotion?: string,
-  tier: NsfwTier = 'off',
 ): Promise<Record<string, unknown>> {
   // HARD RULE: full-tier text is never sent to MiniMax (mainland input auditing).
   // The bubble still posts, just without audio. See specs/nsfw.md.

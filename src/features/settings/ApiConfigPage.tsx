@@ -22,6 +22,7 @@ import {
 import { saveTextFile } from '../../lib/save-file';
 import type { ProviderVM } from '../../data/types';
 import './settings.css';
+import { Switch } from '../../components/Switch';
 
 /** Build a default ProviderVM from a preset kind. */
 function presetToVm(kind: keyof typeof PRESETS): ProviderVM {
@@ -320,9 +321,13 @@ export function ApiConfigPage() {
             }}
           >
             <span className="settings__label">录制真实请求与回复</span>
-            <span className={`switch${recording ? ' switch--on' : ''}`}>
-              <span className="switch__knob" />
-            </span>
+            <Switch
+              on={recording}
+              onChange={(next) => {
+                setRecordingEnabled(next);
+                setRecording(next);
+              }}
+            />
           </div>
           <div className="field">
             <span className="field__hint">
