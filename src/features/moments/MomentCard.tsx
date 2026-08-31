@@ -48,6 +48,8 @@ interface Props {
   onTopicTap?: (tag: string) => void;
   /** Tap the author's name (M-I15 → 个人相册页). */
   onAuthorTap?: () => void;
+  /** Tap the post's prose (M-J12 → 单条详情页). Topic runs still win the tap. */
+  onTextTap?: () => void;
 }
 
 /**
@@ -130,10 +132,24 @@ function gridClass(n: number): string {
 }
 
 /** Post text with #话题# runs linked. Lossless for the prose in between. */
-function MomentText({ text, onTopicTap }: { text: string; onTopicTap?: (tag: string) => void }) {
+function MomentText({
+  text,
+  onTopicTap,
+  onTextTap,
+}: {
+  text: string;
+  onTopicTap?: (tag: string) => void;
+  onTextTap?: () => void;
+}) {
   const segs = topicSegments(text);
   return (
-    <p className="moment__text">
+    <p
+      className="moment__text"
+      role={onTextTap ? 'link' : undefined}
+      // Topic spans stopPropagation, so a #话题# tap still goes to the topic
+      // page, not the detail page.
+      onClick={onTextTap}
+    >
       {segs.map((s, i) =>
         s.kind === 'topic' ? (
           <span
@@ -176,6 +192,7 @@ export function MomentCard({
   onRepost,
   onTopicTap,
   onAuthorTap,
+  onTextTap,
 }: Props) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -204,7 +221,9 @@ export function MomentCard({
           {activeDot && <span className="moment__active-dot" title="刚刚活跃" aria-label="刚刚活跃" />}
         </div>
 
-        {moment.text && <MomentText text={moment.text} onTopicTap={onTopicTap} />}
+        {moment.text && (
+          <MomentText text={moment.text} onTopicTap={onTopicTap} onTextTap={onTextTap} />
+        )}
 
         {/* 转发卡片 (M-I15): the quoted ROOT original. Rendered from the row's
             own snapshot fields — never from any conversation — so the card

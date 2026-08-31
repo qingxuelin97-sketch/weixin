@@ -57,6 +57,7 @@ import { BatteryGuidePage } from './features/settings/BatteryGuidePage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
 import { useDeepLinks } from './app/useDeepLinks';
+import { MomentDetailPage } from './features/moments/MomentDetailPage';
 
 /** Mounts the Android hardware-back handler; needs the router context. */
 function BackButtonBridge() {
@@ -185,6 +186,9 @@ export function App() {
               <Route path="/rp/:rpId" element={<Push><RedPacketDetailPage /></Push>} />
               <Route path="/transfer/:convId" element={<Push><TransferSendPage /></Push>} />
               <Route path="/wallet" element={<Push><WalletPage /></Push>} />
+              {/* Static /moments/* siblings above rank higher than this param
+                  route (React Router segment ranking), so it only catches ids. */}
+              <Route path="/moments/:momentId" element={<Push><MomentDetailPage /></Push>} />
               <Route path="*" element={<Navigate to="/chats" replace />} />
             </Routes>
               )}

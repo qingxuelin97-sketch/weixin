@@ -339,6 +339,8 @@ export function MomentsPage() {
                     }
                     onTopicTap={(tag) => navigate(`/moments/topic/${encodeURIComponent(tag)}`)}
                     onAuthorTap={() => navigate(`/moments/album/${m.authorId}`)}
+                    // 正文 → 单条详情页 (M-J12).
+                    onTextTap={() => navigate(`/moments/${m.id}`)}
                     onDelete={
                       m.authorId === 'self'
                         ? () => {

@@ -135,7 +135,9 @@ export function SearchPage() {
         navigate(`/chat/${h.convId}?at=${h.id}`);
         break;
       case 'moment':
-        navigate('/moments');
+        // 单条详情页 (M-J12): land ON the matched post, not at the top of the
+        // feed with the hit somewhere below the fold.
+        navigate(`/moments/${h.id}`);
         break;
     }
   };

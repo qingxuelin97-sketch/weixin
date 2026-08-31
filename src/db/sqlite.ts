@@ -495,8 +495,11 @@ export class SqliteRepo implements Repo {
     }
     return { likes, comments };
   }
-  async getMoment(id: string) {
-    return this.kvGet<MomentVM>('moments', id);
+  async getMoment(id: string, viewer = 'self') {
+    const m = await this.kvGet<MomentVM>('moments', id);
+    // Contract twin of db/repo.ts: the by-id read carries the same in-driver
+    // audience gate as the feed read (M-J12).
+    return m && visibleMoments([m], viewer).length > 0 ? m : undefined;
   }
   async getMomentsByAuthor(authorId: string, viewer = 'self') {
     const all = await this.kvAll<MomentVM>('moments');

@@ -126,9 +126,18 @@ describe('收藏的闸门与收藏页的渲染器同口径', () => {
   const chat = read('src/features/chat/ChatPage.tsx');
   const favs = read('src/features/favorites/FavoritesPage.tsx');
 
+  /**
+   * Favorites-NATIVE kinds (M-J12): created on the favorites page itself,
+   * never present on a chat message, so the chat's 收藏 gate cannot and must
+   * not offer them. Everything else keeps the exact gate↔renderer equality.
+   */
+  const FAVORITES_NATIVE = new Set(['note']);
+
   /** Types FavoriteBody has a real `case` for. */
   const rendered = new Set(
-    [...favs.matchAll(/^\s*case '([a-z_]+)':/gm)].map((m) => m[1]),
+    [...favs.matchAll(/^\s*case '([a-z_]+)':/gm)]
+      .map((m) => m[1])
+      .filter((t) => !FAVORITES_NATIVE.has(t)),
   );
   /** Types the 收藏 menu item is offered for. */
   const offered = new Set(

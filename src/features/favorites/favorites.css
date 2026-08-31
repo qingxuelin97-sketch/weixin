@@ -4,6 +4,87 @@
   background: var(--color-page-bg);
 }
 
+/* 全文搜索框 (M-J12) — mirrors the global search field's shape. */
+.favorites__searchbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 12px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--color-cell-bg);
+  color: var(--color-text-secondary);
+}
+.favorites__searchbar svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.favorites__searchbar input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.favorites__search-clear {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0 2px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--color-text-placeholder);
+}
+
+/* ＋ (新建笔记) in the nav. */
+.favorites__add {
+  font-size: 22px;
+  line-height: 1;
+}
+
+/* 笔记 editor sheet (M-J12). */
+.favorites__note-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 16px 16px;
+}
+.favorites__note-editor textarea {
+  min-height: 120px;
+  resize: none;
+  border: none;
+  outline: none;
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--color-page-bg);
+  font-size: var(--fs-bubble);
+  font-family: inherit;
+  color: var(--color-text-primary);
+  line-height: 1.5;
+}
+.favorites__note-save {
+  align-self: flex-end;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 22px;
+  font-size: var(--fs-cell-sub);
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+.favorites__note-save:disabled {
+  opacity: 0.45;
+}
+
+/* A note's own text: no clamp — the text IS the item. */
+.favorites__text--note {
+  display: block;
+  -webkit-line-clamp: unset;
+  white-space: pre-wrap;
+}
+
 /* Type filter chips — one horizontal, scrollable row. */
 .favorites__filters {
   display: flex;

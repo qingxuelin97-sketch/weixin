@@ -49,6 +49,13 @@ const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
       '计划动作执行器，不渲染任何 UI；往隐藏会话里写正是 agent_dm 的本职。' +
       '会外溢到可见群的路径（agent_forward / group_event）自带 isHidden 检查。',
   },
+  'components/ForwardSheet.tsx': {
+    via: 'helper',
+    helper: 'forwardableConversations',
+    why:
+      '转发选择器（M-J12 从 ChatPage 抽出，收藏「转发回聊天」复用）；候选列表' +
+      '走 lib/favorites.forwardableConversations，isHidden 行在 helper 内部被排除。',
+  },
   'app/TabScaffold.tsx': {
     via: 'helper',
     helper: 'totalUnread',

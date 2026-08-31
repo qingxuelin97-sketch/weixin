@@ -32,6 +32,7 @@ const SHOTS: Array<[name: string, path: string]> = [
   ['settings-asr', '/settings/asr'],
   ['settings-tts', '/settings/tts'],
   ['settings-notify-test', '/settings/notify-test'],
+  ['moment-detail', '/moments/mo_seed_lin'],
 ];
 
 for (const [name, path] of SHOTS) {

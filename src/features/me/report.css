@@ -114,6 +114,57 @@
   color: var(--color-report-dim);
 }
 
+/* ---- M-J12: year switcher, truncation banner, long-image button ---- */
+
+.report__years {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 26px;
+}
+.report__year-chip {
+  border: var(--hairline-width) solid var(--color-report-hairline);
+  border-radius: 14px;
+  padding: 4px 14px;
+  font-size: var(--fs-small-gray);
+  background: none;
+  color: var(--color-report-dim);
+}
+.report__year-chip--on {
+  border-color: var(--color-report-accent);
+  color: var(--color-report-accent);
+}
+
+/* Fixed to the top so it is visible whatever snap page is showing — a
+   truncated statistic must never be silent (specs/year-report.md). */
+.report__truncated {
+  position: absolute;
+  top: calc(var(--safe-top) + 12px);
+  left: 14px;
+  right: 60px;
+  z-index: 2;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--color-on-color-fill);
+  color: var(--color-report-accent);
+  font-size: var(--fs-timestamp);
+  line-height: 1.4;
+}
+
+.report__save {
+  margin-top: 36px;
+  border: none;
+  border-radius: 22px;
+  padding: 10px 32px;
+  font-size: var(--fs-cell-sub);
+  background: var(--color-report-accent);
+  color: var(--color-report-bg-a);
+}
+.report__save:disabled {
+  opacity: 0.55;
+}
+
 /* ---- shared text pieces ---- */
 
 .report__lead {
