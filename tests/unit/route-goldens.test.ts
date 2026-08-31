@@ -80,7 +80,7 @@ describe('route ↔ golden ledger', () => {
   it('pendingCast is self-cleaning: once the PNG exists the flag must go', () => {
     const have = goldenNames();
     const lingering = Object.values(ROUTE_LEDGER)
-      .filter((v): v is { golden: string; pendingCast?: true } => 'golden' in v && !!v.pendingCast)
+      .filter((v): v is Extract<RouteRow, { golden: string }> => 'golden' in v && !!v.pendingCast)
       .map((v) => v.golden)
       .filter((g) => have.has(g));
     // CI 铸完基线后这里转红：把对应条目的 pendingCast 摘掉，让它回到

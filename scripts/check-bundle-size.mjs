@@ -18,8 +18,16 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
-/** Total gzipped JS+CSS shipped to the browser, in KB. Measured 307 at M-I18. */
-const BUDGET_KB = 340;
+/**
+ * Total gzipped JS+CSS shipped to the browser, in KB. Measured 307 at M-I18.
+ *
+ * 340→360 (M-J wave 1): J1 心智一致性 + J3 图像生成 landed ~11KB of first-party
+ * main-chunk code with ZERO new runtime dependencies (the only new lazy chunk,
+ * image.ts, is 2.7KB and loads on demand). Raised deliberately per this file's
+ * own doctrine; J13 will split the ratchet into main-chunk vs lazy budgets so
+ * the number stops punishing code that never blocks cold start.
+ */
+const BUDGET_KB = 360;
 
 const dir = 'dist/assets';
 let entries;
