@@ -56,9 +56,15 @@ export function GroupGeneratePage() {
   // is unioned, and the seeded history is floored at the room's newest message.
   const [params] = useSearchParams();
   const rebuildConvId = params.get('rebuild') ?? '';
-  const rebuildConv = useAppStore((s) =>
-    rebuildConvId ? s.conversationById(rebuildConvId) : undefined,
-  );
+  // Only a VISIBLE GROUP can be rebuilt. The id rides in on a query param, i.e.
+  // it is user-forgeable — without the guard, ?rebuild=<hidden dm id> rendered
+  // the hidden AI↔AI conversation's title in the banner below (M-J0). Binding
+  // to a single-chat id was already nonsense for this flow; refuse both.
+  const rebuildConv = useAppStore((s) => {
+    if (!rebuildConvId) return undefined;
+    const c = s.conversationById(rebuildConvId);
+    return c && c.type === 'group' && !c.isHidden ? c : undefined;
+  });
 
   const [brief, setBrief] = useState('');
   const [size, setSize] = useState(8);

@@ -1,67 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { ROUTE_LEDGER, smokePaths, smokeSkips, pathMatchesRoute } from '../lib/route-ledger';
+import type { RouteRow } from '../lib/route-ledger';
 
 /**
- * Route ↔ golden ledger (M-I11). Same shape as the SCHEDULED_ACTION_KINDS and
- * DELETE_CONTACT_CASCADE ledgers: every route mounted in App.tsx must appear
- * here, mapped either to the golden that covers it or to an explicit exemption
- * with the reason beside it. Add a route without deciding → this file turns
- * red. "写了没接线" for pages means "shipped outside the screenshot gate".
+ * Route ↔ golden ledger (M-I11), shared with the boot-smoke spec since M-J0.
+ * Same shape as the SCHEDULED_ACTION_KINDS and DELETE_CONTACT_CASCADE ledgers:
+ * every route mounted in App.tsx must appear in tests/lib/route-ledger.ts,
+ * mapped either to the golden that covers it or to an explicit exemption with
+ * the reason beside it — AND to a smoke decision (a concrete bootable URL, or
+ * a skip with its reason). Add a route without deciding → this file turns red.
+ * "写了没接线" for pages means "shipped outside the screenshot gate".
  */
-const ROUTE_LEDGER: Record<string, { golden: string } | { exempt: string }> = {
-  '/': { exempt: 'redirect to /chats' },
-  '*': { exempt: 'redirect to /chats' },
-  '/chats': { golden: 'chat-list' },
-  '/contacts': { golden: 'contacts' },
-  '/discover': { golden: 'discover' },
-  '/me': { golden: 'me' },
-  '/chat/:convId': { golden: 'chat-single' }, // + chat-group
-  '/search': { golden: 'search-empty' }, // + search-results
-  '/moments': { golden: 'moments-feed' },
-  '/moments/publish': { golden: 'moments-publish' },
-  '/moments/repost/:momentId': { exempt: 'needs a tapped source post; compose UI mirrors publish' },
-  '/moments/topic/:tag': { exempt: 'needs a tapped topic; list body mirrors moments-feed' },
-  '/moments/album/:contactId': { golden: 'moments-album' },
-  '/profile': { golden: 'profile' },
-  '/favorites': { golden: 'favorites' },
-  '/settings': { golden: 'settings' },
-  '/settings/api': { golden: 'settings-api' },
-  '/settings/asr': { golden: 'settings-asr' },
-  '/settings/backup': { golden: 'backup' },
-  '/settings/notify-test': { golden: 'settings-notify-test' },
-  '/settings/env': { exempt: 'probe timings (ms readouts) are nondeterministic by design' },
-  '/settings/usage': { golden: 'settings-usage' },
-  '/settings/prompt-lab': { golden: 'settings-prompt-lab' },
-  '/settings/media': { golden: 'settings-media' },
-  '/settings/native': { golden: 'settings-native' },
-  '/settings/battery': { golden: 'settings-battery' },
-  '/settings/worldbook': { golden: 'settings-worldbook' },
-  '/persona/:contactId': { golden: 'persona-edit' },
-  '/memory/:contactId': { golden: 'memory' },
-  '/merged/:convId/:msgId': { exempt: 'needs an in-session merged forward; card itself is in chat goldens' },
-  '/story': { golden: 'story-list' },
-  '/story/script/:scriptId': { exempt: 'needs a generated script row; layout is list+detail of story-list' },
-  '/story/run/:saveId': { exempt: 'needs a live run; states are exercised by story unit tests' },
-  '/contact/:contactId': { golden: 'contact-profile' },
-  '/status/:contactId': { golden: 'status' },
-  '/report': { golden: 'report' },
-  '/contact-new': { exempt: 'thin two-row chooser; both children covered by their own flows' },
-  '/contact-new/ai': { exempt: 'generation preview needs an LLM round; fixture-tested in unit suite' },
-  '/group-new': { exempt: 'member-pick grid, exercised by unit-tested group-build flow' },
-  '/group-new/ai': { exempt: 'generation progress needs an LLM round' },
-  '/chat/:convId/info': { golden: 'chat-info' },
-  '/groups': { exempt: 'thin list reusing contacts rows' },
-  '/new-friends': { exempt: 'static placeholder list' },
-  '/contacts-chats-only': { exempt: 'thin SimpleListPage variant' },
-  '/contacts-tags': { exempt: 'thin SimpleListPage variant' },
-  '/call/:convId': { exempt: 'live call surface (audio + session); 真机人验 per specs' },
-  '/rp/send/:convId': { golden: 'rp-send' },
-  '/rp/open/:rpId': { golden: 'rp-open' },
-  '/rp/:rpId': { golden: 'rp-detail' },
-  '/transfer/:convId': { golden: 'transfer-send' },
-  '/wallet': { golden: 'wallet' },
-};
 
 const ROOT = join(__dirname, '..', '..');
 
@@ -97,9 +48,52 @@ describe('route ↔ golden ledger', () => {
   it('every claimed golden file exists on disk', () => {
     const have = goldenNames();
     const claimed = Object.values(ROUTE_LEDGER)
-      .filter((v): v is { golden: string } => 'golden' in v)
+      .filter((v): v is Extract<RouteRow, { golden: string }> => 'golden' in v)
       .map((v) => v.golden);
     const missing = claimed.filter((g) => !have.has(g));
     expect(missing).toEqual([]);
+  });
+});
+
+describe('route ↔ smoke ledger (M-J0 — the two lists must never fork again)', () => {
+  it('every smoke path is concrete and instantiates exactly its own route', () => {
+    for (const [route, row] of Object.entries(ROUTE_LEDGER)) {
+      if (!('path' in row.smoke)) continue;
+      const p = row.smoke.path;
+      expect(p.includes(':'), `${route} 的冒烟路径还带着未填的参数: ${p}`).toBe(false);
+      expect(pathMatchesRoute(p, route), `${route} 的冒烟路径 ${p} 根本走不进这条路由`).toBe(true);
+    }
+  });
+
+  it("the catch-all's smoke path matches no real route (otherwise it tests the wrong thing)", () => {
+    const star = ROUTE_LEDGER['*'];
+    expect(star && 'path' in star.smoke).toBe(true);
+    const p = ('path' in star.smoke && star.smoke.path) as string;
+    const hijackers = Object.keys(ROUTE_LEDGER).filter(
+      (r) => r !== '*' && pathMatchesRoute(p, r),
+    );
+    expect(hijackers).toEqual([]);
+  });
+
+  it('a skipped smoke carries a real reason (skip 的门槛比 golden 豁免更高)', () => {
+    for (const { route, reason } of smokeSkips()) {
+      expect(reason.trim().length, `${route} 的 skip 没写原因`).toBeGreaterThan(10);
+    }
+  });
+
+  it('smoke decisions cover the whole ledger — path or skip, no third state', () => {
+    // The RouteRow type already forces this at compile time; this assert keeps
+    // it true for anyone editing the ledger with type errors ignored.
+    expect(smokePaths().length + smokeSkips().length).toBe(Object.keys(ROUTE_LEDGER).length);
+  });
+
+  it('route-smoke.spec.ts derives from THIS ledger and keeps no list of its own', () => {
+    const spec = readFileSync(join(ROOT, 'tests', 'screenshot', 'route-smoke.spec.ts'), 'utf8');
+    expect(spec, 'smoke spec 不再 import 共享台账——两份清单又要分叉了').toMatch(
+      /from '\.\.\/lib\/route-ledger'/,
+    );
+    expect(spec, 'smoke spec 里出现了手抄的路由数组——清单只能有一份').not.toMatch(
+      /const ROUTES\s*[:=]/,
+    );
   });
 });

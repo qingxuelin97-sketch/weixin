@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { smokePaths, smokeSkips } from '../lib/route-ledger';
 
 /**
- * 每条路由都能起来 (M-I18).
+ * 每条路由都能起来 (M-I18; ledger-derived since M-J0).
  *
  * The golden suite proves pages LOOK right, but only for routes that have a
  * golden; the route ledger lets a route be exempt from one, and an exempt route
@@ -16,20 +17,12 @@ import { test, expect } from '@playwright/test';
  * So this walks every route the ledger lists and asserts three things a real
  * user would notice immediately: no unhandled exception, no console error, and
  * the body is not empty.
+ *
+ * The URLs come from tests/lib/route-ledger.ts — the SAME ledger the golden
+ * suite audits. This file must not keep a route list of its own (a unit guard
+ * in route-goldens.test.ts checks exactly that): a route added to the app gets
+ * onto this walk by getting a ledger row, or the ledger tests go red first.
  */
-const ROUTES = [
-  '/chats', '/contacts', '/discover', '/me', '/moments', '/search', '/story',
-  '/wallet', '/profile', '/report', '/favorites', '/settings', '/settings/api',
-  '/settings/asr', '/settings/backup', '/settings/battery', '/settings/env',
-  '/settings/media', '/settings/native', '/settings/notify-test',
-  '/settings/prompt-lab', '/settings/usage', '/settings/worldbook',
-  '/contacts-tags', '/contacts-chats-only', '/groups', '/new-friends',
-  '/contact-new', '/contact-new/ai', '/group-new', '/group-new/ai',
-  '/moments/publish',
-  // Parameterized routes, filled from seed data.
-  '/chat/conv_lin', '/chat/conv_lin/info', '/contact/ai_lin', '/persona/ai_lin',
-  '/status/ai_lin', '/memory/ai_lin', '/moments/album/ai_lin',
-];
 
 /**
  * The browser asks for /favicon.ico on its own and this app ships none — a
@@ -49,12 +42,16 @@ test('every route boots: no crash, no console error, no blank screen', async ({ 
   });
   page.on('pageerror', (e) => problems.push(`pageerror @ ${current}: ${String(e).slice(0, 300)}`));
 
-  for (const route of ROUTES) {
+  for (const route of smokePaths()) {
     current = route;
     await page.goto(`/#${route}`);
     await page.waitForTimeout(450);
     const text = (await page.locator('body').innerText().catch(() => '')) ?? '';
     if (text.trim().length === 0) problems.push(`BLANK PAGE: ${route}`);
+  }
+
+  for (const { route, reason } of smokeSkips()) {
+    console.log(`[route-smoke] skipped ${route}: ${reason}`);
   }
 
   expect(problems, '有路由起不来——白屏或运行期异常，其它门禁都看不见这一类').toEqual([]);

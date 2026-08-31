@@ -4,7 +4,7 @@ import { settle, SEED_EPOCH } from './helpers';
 /**
  * Golden coverage for every route shell.spec.ts left out (M-I11). One shot per
  * page, seeded state, clock pinned at the seed epoch — the same discipline as
- * the core screens. The route ledger (tests/unit/route-goldens.test.ts) turns
+ * the core screens. The route ledger (tests/lib/route-ledger.ts) turns
  * red when a route exists with neither a golden here nor a recorded exemption,
  * so a new page cannot silently ship outside the gate.
  */
