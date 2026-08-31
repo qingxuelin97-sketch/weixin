@@ -23,7 +23,7 @@
  * Everything here is pure: no clock, no storage, no LLM (constitution rule 4
  * — the UI injects `now`, and nothing here needs randomness at all).
  */
-import type { Script, StoryNode } from './story-script';
+import type { Script, StoryNode, Vars } from './story-script';
 import { runOf, type StorySaveRow } from './story-gm';
 
 /* ==================================================================== */
@@ -170,6 +170,71 @@ export function runsOf(saves: StorySaveRow[], scriptId: string): StorySaveRow[] 
 export function runStateLabel(save: StorySaveRow): string {
   if (save.isActive) return save.stalledAt ? '已暂停' : '进行中';
   return save.endingId ? '已完结' : '已中止';
+}
+
+/* ==================================================================== */
+/* NG+ (V4)                                                              */
+/* ==================================================================== */
+
+/** What a finished run leaves for the next one to inherit. */
+export interface LegacyRecord {
+  endingId: string;
+  /** The FINAL vars of that run, unfiltered. `carriedVars` applies the whitelist. */
+  vars: Vars;
+  run: number;
+  endedAt: number;
+  saveId: string;
+}
+
+/**
+ * The legacy a new run of this script could inherit: the most recently
+ * FINISHED run — ended with a real ending, not abandoned. An abandoned run
+ * (结束这一轮 without an endingId) leaves nothing; that is what separates
+ * "I beat it and want NG+" from "I gave up".
+ */
+export function legacyOf(saves: StorySaveRow[], scriptId: string): LegacyRecord | undefined {
+  let best: StorySaveRow | undefined;
+  for (const s of saves) {
+    if (s.scriptId !== scriptId || s.isActive || !s.endingId) continue;
+    if (!best || (s.endedAt ?? s.updatedAt) > (best.endedAt ?? best.updatedAt)) best = s;
+  }
+  if (!best) return undefined;
+  return {
+    endingId: best.endingId!,
+    vars: { ...best.vars },
+    run: runOf(best),
+    endedAt: best.endedAt ?? best.updatedAt,
+    saveId: best.id,
+  };
+}
+
+/**
+ * The vars a new run actually inherits: the intersection of the script's
+ * `legacy.carry` whitelist and what the finished run left behind. The
+ * whitelist is the load-bearing half — carrying everything would start 第 2
+ * 周目 with every secret already exposed and every trust meter maxed, which
+ * un-writes the script. No whitelist declared ⇒ nothing carries.
+ */
+export function carriedVars(script: Script, finalVars: Vars): Vars {
+  const out: Vars = {};
+  for (const key of script.legacy?.carry ?? []) {
+    if (key in finalVars) out[key] = finalVars[key];
+  }
+  return out;
+}
+
+/**
+ * The grey opening line an NG+ run posts before its first beat — the visible
+ * proof the inheritance took, phrased to tease the previous outcome without
+ * replaying it.
+ */
+export function ngPlusOpening(
+  script: Script,
+  ngPlus: { fromRun: number; endingId: string },
+  thisRun: number,
+): string {
+  const goal = script.nodes.find((n) => n.id === ngPlus.endingId)?.goal ?? ngPlus.endingId;
+  return `【第 ${thisRun} 周目 · 继承】上一周目（第 ${ngPlus.fromRun} 周目）走到了「${goal}」。有些事，他们似乎还记得。`;
 }
 
 /* ==================================================================== */

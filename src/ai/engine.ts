@@ -886,7 +886,18 @@ export async function sendProactiveMessage(
   globalTier: NsfwTierVM,
   hooks: EngineHooks,
   at?: number,
-  opts: { nudge?: boolean } = {},
+  opts: {
+    nudge?: boolean;
+    /**
+     * Story beat directive (V4, single-chat剧情): the GM's per-character
+     * instruction for this beat. When set, the persona speaks IN SCENE — the
+     * nudge/goal/thread opener machinery is skipped entirely, because those
+     * paths consume once-ever ledgers (threads, goal announcements) that a
+     * story beat must not burn, and their "reach out to a friend" framing is
+     * wrong inside a play.
+     */
+    story?: string;
+  } = {},
 ): Promise<void> {
   if (inFlight.has(convId)) return; // don't talk over a live exchange
   const ctrl = new AbortController();
@@ -914,7 +925,10 @@ export async function sendProactiveMessage(
     // What to open WITH: a nudge about the unanswered message, a remembered fact
     // to follow up on, their own fresh moment to share — or a plain greeting.
     // "有事找你" reads human; "打招呼" reads like a bot on a timer.
-    if (opts.nudge) {
+    if (opts.story) {
+      // In-scene beat: the directive IS the material. Nothing else is
+      // consulted — see the opts doc for why the opener ledgers must not burn.
+    } else if (opts.nudge) {
       material =
         '你上一条消息对方一直没回。轻轻问一下（"在忙？"这类），一句就好——' +
         '不要连环追问，不要表现出不满，问完就等。';
@@ -930,7 +944,7 @@ export async function sendProactiveMessage(
         material = goalShareDirective(goalEvent);
       }
     }
-    if (!material && !opts.nudge) {
+    if (!material && !opts.nudge && !opts.story) {
       const facts = await repo.getMemory(peer.id);
       const moments = await repo.getMoments({ limit: 10 });
       const own = moments.find(
@@ -982,10 +996,16 @@ export async function sendProactiveMessage(
     globalTier,
     stamped,
     ctrl,
-    `现在是你主动发消息给对方，不是在回复。${gap}` +
-      (material ? `\n${material}\n` : '') +
-      '找一个自然的由头开口，**不要**用"有什么可以帮你"这种客服口气，' +
-      '就像真人突然想起朋友那样。1-2 条短消息即可。',
+    opts.story
+      ? // 单聊剧情 (V4): the GM's beat, framed as scene work rather than
+        // "reaching out". Only this character's OWN directive rides in —
+        // never the script (the isolation invariant of the whole feature).
+        `【剧情进行中】这是你们正在演的一场戏，下面是这一幕里**你自己**的目标与指令（只有你知道）：\n${opts.story}\n` +
+        '照着演下去，保持你的人设与说话方式，不要跳出戏解释规则。1-3 条短消息。'
+      : `现在是你主动发消息给对方，不是在回复。${gap}` +
+        (material ? `\n${material}\n` : '') +
+        '找一个自然的由头开口，**不要**用"有什么可以帮你"这种客服口气，' +
+        '就像真人突然想起朋友那样。1-2 条短消息即可。',
     'proactive',
   );
 }

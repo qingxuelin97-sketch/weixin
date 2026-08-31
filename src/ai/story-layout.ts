@@ -21,7 +21,7 @@
  * node/trigger arrays, no randomness, no clock (constitution rule 4 — the
  * graph a user stares at must not reshuffle between two renders).
  */
-import type { Script } from './story-script';
+import { outEdgesOf, type Script } from './story-script';
 
 /** Abstract layout units. The renderer multiplies into pixels. */
 export const NODE_W = 92;
@@ -48,7 +48,7 @@ export interface LaidNode {
 export interface LaidEdge {
   from: string;
   to: string;
-  kind: 'trigger' | 'timeout';
+  kind: 'trigger' | 'timeout' | 'choice';
   /**
    * forward: to a later column (the normal flow). back: to an earlier-or-same
    * column (a cycle — legal when it has an exit). self: a node looping to
@@ -88,11 +88,9 @@ export function layoutScript(script: Script): ScriptLayout {
       const id = queue.shift()!;
       const node = byId.get(id)!;
       const depth = colOf.get(id)!;
-      const outs = [
-        ...node.triggers.map((t) => t.to),
-        ...(node.timeout ? [node.timeout.to] : []),
-      ];
-      for (const to of outs) {
+      // The same edge list the validator walks — choice edges (V4) included,
+      // or a fork behind a decision would park its branches as "unreachable".
+      for (const to of outEdgesOf(node)) {
         if (!byId.has(to) || colOf.has(to)) continue;
         colOf.set(to, depth + 1);
         queue.push(to);
@@ -145,6 +143,7 @@ export function layoutScript(script: Script): ScriptLayout {
     };
     for (const t of n.triggers) push(t.to, 'trigger');
     if (n.timeout) push(n.timeout.to, 'timeout');
+    for (const o of n.choice?.options ?? []) push(o.goto, 'choice');
   }
 
   const cols = Math.max(0, ...[...colOf.values()].map((c) => c + 1));

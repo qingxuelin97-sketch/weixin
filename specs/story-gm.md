@@ -1,7 +1,48 @@
-# spec: 剧情模式 / GM（V3 完全体已实现，M-I7）
+# spec: 剧情模式 / GM（V4，M-J9）
 
 **状态**：引擎 M-E5/G0 交付；V3 完全体（可视化/选角/舞台/任意幕回滚/存档槽/多周目）
-M-I7 交付。
+M-I7 交付；V4（choice 节点/单聊剧情/NG+/按幕裁剪/节奏自适应）M-J9 交付。
+【裁决】可视化编辑器不做。
+
+## V4（M-J9 落地裁决）
+- **choice 节点**：`Node.choice = {prompt, options[1..4]:{label,setVars?,goto}}`。
+  GM 推进到带 choice 的节点即**暂停**：prompt 以灰条落进会话（带本幕戳，回滚会
+  重新提问），`pendingChoice`（选项快照）存进 `story_saves`，自续链停排——
+  `tickMsFor` 对等待中的 run 返回 null，`chainNextBeat` 因此不排后继，落在等待期
+  的旧 tick 在 `runStoryBeat` 顶部直接返回（不演、不判定、不计轮）。聊天页出
+  底部选项条（`.story-choice`，chat.css）；点选 → `applyChoice`：先取水位、
+  落「【选择】label」灰条（同样带戳）、`applyChoiceOption`（结构上就是一次
+  applyTrigger，所以可回滚可重放）、清 pendingChoice、重排 tick。**双链防护**：
+  链先于工作排后继，暂停那一拍已有一个在途 tick——`hasLiveTick` 有在途就不再
+  开新链（resumeRun 同保护）。校验：goto 必须存在（dangling_edge）、选项 1-4
+  （schema）、结局节点禁带 choice（choice_conflict）、choice 边算进可达性与
+  逃逸分析（`outEdgesOf` 是唯一的出边清单，layout 同源）。
+- **单聊剧情**：`eligibleStages` 放开 single（peer 有 persona 即可，isHidden
+  仍是第一道也是唯一一道防线——隐藏 DM 正是 single 型）。单聊无导演：peer 是
+  唯一 AI 演员，beat 经 `sendProactiveMessage(opts.story)` 下场（跳过 nudge/
+  goal/线头台账——那些是一次性账本，剧情 beat 不许烧）；绑到 `'self'` 的角色由
+  用户本人演，`planBeat` 对 self 不生成指令（秘密绝不进任何 AI 的 prompt）。
+  judgeTriggers 的 tier 参与者集合：single 用 `[peerId]`（空集会判成 'off'，
+  铁律 6 事故）。种子含双人本《末班车》（choice+pace+legacy 三合一展示）。
+- **NG+（继承周目）**：结局达成的 run（endRun 带 endingId）就是 legacy 区——
+  行里留着终局 vars。`legacyOf` 取最近完结的那轮；`carriedVars` 按
+  `Script.legacy.carry` 白名单过滤（不声明=什么都不带，全带会把第二周目开成
+  剧透局）；`makeSave({inherit})` 合并 vars 并记 `ngPlus:{fromRun,endingId}`。
+  开局第一拍：灰条注入上周目结局摘要（`ngPlusOpening`），首拍 goal 附带
+  「既视感」提示（不给演员旧剧情本体）。入口在剧本详情页（结局画廊下方 +
+  头部 NG+ 按钮），走同一张选角表。
+- **按幕裁剪（storySeq 终于有读者）**：`collectCascade` 的消息集合 = 水位并集
+  幕戳——`storyScriptId==本剧本 && storySeq>目标幕 && createdAt>=本 run 开演`
+  （时间窗防同剧本上一周目误伤）。零水位快照（pre-I7）从「只回状态」升级为
+  「仍按幕裁剧情行」。rowid 留洞、时间戳不动不变。
+- **restoreSlot 用槽自己的状态**：读档=落到槽记录的 {seq,nodeId,vars,msgCursor}，
+  不再翻译成「history 里最近的 ≤seq 快照」——旧实现既不读槽的水位，又在
+  「存完档没再推进」时多回退一幕（最近快照是 seq-1 的）。预览走
+  `planSlotRestore`（引用槽自己的水位，预览==执行）。回滚/读档一律清
+  pendingChoice（等待属于被回滚掉的时刻；落回 choice 节点会重新开问）。
+- **节奏自适应**：`tickMsFor(save, script, userPresent)` = 用户盯着舞台会话
+  15s（`activeConvId`，app 层注入）/ 平时 45s，`Node.pace` fast ×½ / slow ×2，
+  choice 等待 null（不排）。全部只是 fireAt 的算式——没有第二套时钟（铁律 5）。
 
 ## V1 预埋（已全部接线）
 - `messages.story_script_id` + `story_seq` 标签列——**M-I7 起有写入方**：

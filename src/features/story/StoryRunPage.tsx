@@ -27,6 +27,7 @@ import {
   getSave,
   getScript,
   planRollback,
+  planSlotRestore,
   putSave,
   restoreSlot,
   rollbackTo,
@@ -201,7 +202,10 @@ export function StoryRunPage() {
       if (!save) return;
       const slot = (save.slots ?? []).find((s) => s.id === slotId);
       if (!slot) return;
-      const plan = await planRollback(save, slot.seq);
+      // The slot-aware preview (V4): quotes the SLOT's own watermark, because
+      // that is what restoreSlot now trims by — preview must equal execution.
+      const plan = await planSlotRestore(save, slotId);
+      if (!plan) return;
       const ok = await showConfirm({
         title: `读档「${slot.name}」？`,
         body: `回到第 ${slot.seq} 幕。${rollbackConfirmBody(plan)}`,
@@ -265,9 +269,11 @@ export function StoryRunPage() {
             >
               {runStateLabel(save)}
             </span>
+            {save.ngPlus && <span className="story-chip">NG+</span>}
           </div>
           <div className="run-head__sub">
             第 {save.seq} 幕 · {currentNode ? currentNode.goal : '（当前节点已不在剧本里）'}
+            {save.pendingChoice && ' · 正在等你的选择（去聊天页选）'}
             {save.endingId && (
               <>
                 <br />
@@ -279,7 +285,7 @@ export function StoryRunPage() {
           </div>
           <div className="run-head__actions">
             <button className="run-btn" onClick={() => navigate(`/chat/${save.convId}`)}>
-              去群里看
+              {stage?.type === 'single' ? '去聊天看' : '去群里看'}
             </button>
             {save.isActive && stalled && (
               <button className="run-btn run-btn--primary" onClick={onResume}>

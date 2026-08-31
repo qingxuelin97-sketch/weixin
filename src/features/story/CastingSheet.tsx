@@ -37,14 +37,39 @@ export interface CastingSheetProps {
   busy?: boolean;
 }
 
-/** Groups a story can play in: ≥2 persona-backed members, never hidden. */
+/**
+ * Where a story can play, never a hidden row (AI↔AI DMs are single-typed and
+ * MUST stay filtered here — the save row this sheet creates is the only way a
+ * convId enters story mode):
+ *  - a group with ≥2 persona-backed members (the V3 stage), or
+ *  - (V4) a single chat whose peer has a persona — the peer is the only AI
+ *    actor, and the USER takes the remaining role themselves.
+ */
 export function eligibleStages(
   conversations: ConversationVM[],
   personaFor: (id: string) => unknown,
 ): ConversationVM[] {
-  return conversations.filter(
-    (c) => c.type === 'group' && !c.isHidden && (c.memberIds ?? []).filter(personaFor).length >= 2,
-  );
+  return conversations.filter((c) => {
+    if (c.isHidden) return false;
+    if (c.type === 'group') return (c.memberIds ?? []).filter(personaFor).length >= 2;
+    if (c.type === 'single') return c.peerId != null && Boolean(personaFor(c.peerId));
+    return false;
+  });
+}
+
+/**
+ * The actor pool of a stage. In a single chat it is the peer PLUS the user —
+ * 'self' is a castable actor there (V4): a 双人本 in a single chat means one
+ * role is played live by the person holding the phone. Groups stay AI-only;
+ * the user in a group is the audience, which is the V3 contract.
+ */
+export function actorPoolOf(
+  stage: ConversationVM | null,
+  personaFor: (id: string) => unknown,
+): string[] {
+  if (!stage) return [];
+  if (stage.type === 'single') return stage.peerId ? [stage.peerId, 'self'] : [];
+  return (stage.memberIds ?? []).filter((id) => Boolean(personaFor(id)));
 }
 
 export function CastingSheet({ script, open, onClose, onStart, busy }: CastingSheetProps) {
@@ -61,10 +86,7 @@ export function CastingSheet({ script, open, onClose, onStart, busy }: CastingSh
   const [bindings, setBindings] = useState<Record<string, string>>({});
 
   const stage = stages.find((s) => s.id === stageId) ?? null;
-  const members = useMemo(
-    () => (stage?.memberIds ?? []).filter((id) => personaFor(id)),
-    [stage, personaFor],
-  );
+  const members = useMemo(() => actorPoolOf(stage, personaFor), [stage, personaFor]);
 
   // Re-suggest whenever the sheet opens or the stage changes. The suggestion
   // is order-independent (sorted by contact id) so it never depends on how the
@@ -73,10 +95,8 @@ export function CastingSheet({ script, open, onClose, onStart, busy }: CastingSh
     if (!open || !script) return;
     const first = stageId && stages.some((s) => s.id === stageId) ? stageId : stages[0]?.id ?? null;
     if (first !== stageId) setStageId(first);
-    const stageMembers = (stages.find((s) => s.id === first)?.memberIds ?? []).filter((id) =>
-      personaFor(id),
-    );
-    setBindings(suggestBindings(script, stageMembers));
+    const pool = actorPoolOf(stages.find((s) => s.id === first) ?? null, personaFor);
+    setBindings(suggestBindings(script, pool));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, script, stageId, conversations]);
 
@@ -86,6 +106,7 @@ export function CastingSheet({ script, open, onClose, onStart, busy }: CastingSh
   const ready = stage != null && issues.length === 0 && !busy;
 
   const nameOf = (id: string) => {
+    if (id === 'self') return '我自己';
     const c = contactById(id);
     return c?.remark ?? c?.name ?? id;
   };
@@ -95,7 +116,7 @@ export function CastingSheet({ script, open, onClose, onStart, busy }: CastingSh
       <div className="casting">
         <div>
           <div className="casting__section-title">
-            舞台（{stages.length === 0 ? '还没有可用的群' : '在哪个群里演'}）
+            舞台（{stages.length === 0 ? '还没有可用的群或单聊' : '在哪里演'}）
           </div>
           <div className="casting__stage">
             {stages.map((s) => (
@@ -104,10 +125,17 @@ export function CastingSheet({ script, open, onClose, onStart, busy }: CastingSh
                 className={`casting__stage-item${s.id === stageId ? ' casting__stage-item--active' : ''}`}
                 onClick={() => setStageId(s.id)}
               >
-                {s.title}（{(s.memberIds ?? []).filter(personaFor).length} 人）
+                {s.title}（
+                {s.type === 'single'
+                  ? '单聊'
+                  : `${(s.memberIds ?? []).filter(personaFor).length} 人`}
+                ）
               </button>
             ))}
           </div>
+          {stage?.type === 'single' && (
+            <p className="casting__hint">单聊舞台：对方是唯一的 AI 演员，剩下的角色由你自己来演。</p>
+          )}
         </div>
 
         <div>

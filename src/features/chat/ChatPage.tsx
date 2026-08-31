@@ -25,7 +25,7 @@ import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { logError } from '../../lib/errlog';
 import { ComposerPanels } from './ComposerPanels';
 import { useComposerPanel } from './useComposerPanel';
-import { storyRunning } from '../../ai/story-service';
+import { storyRunning, applyChoice } from '../../ai/story-service';
 import type { StorySaveRow } from '../../ai/story-gm';
 import { useAppStore } from '../../store/appStore';
 import { showPrompt } from '../../components/dialog';
@@ -529,6 +529,24 @@ export function ChatPage() {
     };
   }, [convId, rows.length]);
 
+  // 剧情抉择 (V4): the run is parked on a player decision — the bottom option
+  // bar is how it moves again. The tap lands the vars, jumps the graph and
+  // re-opens the tick chain; the「选择」line arrives through the store's own
+  // appendMessage, which re-triggers the story refresh above.
+  const [choosing, setChoosing] = useState(false);
+  const pickChoice = async (index: number) => {
+    if (!story || choosing) return;
+    setChoosing(true);
+    try {
+      const updated = await applyChoice(story.id, index, Date.now(), { appendMessage });
+      if (updated) setStory(updated);
+    } catch (e) {
+      logError('story.choice', e);
+    } finally {
+      setChoosing(false);
+    }
+  };
+
   const send = async () => {
     const text = draft.trim();
     if (!text || !conv) return;
@@ -1019,7 +1037,11 @@ export function ChatPage() {
             {story.stalledAt ? '⏸' : '🎬'}
           </span>
           <span className="group-announce__text">
-            {story.stalledAt ? '剧情已暂停——多次生成失败，去剧情页可以继续' : '剧情进行中'}
+            {story.stalledAt
+              ? '剧情已暂停——多次生成失败，去剧情页可以继续'
+              : story.pendingChoice
+                ? '剧情正在等你的选择（见下方选项）'
+                : '剧情进行中'}
           </span>
           <button
             className="group-announce__action"
@@ -1258,6 +1280,27 @@ export function ChatPage() {
           <button className="select-bar__cancel" onClick={exitSelect}>
             取消
           </button>
+        </div>
+      )}
+
+      {/* 剧情抉择条 (V4): the play is waiting on the person holding the phone.
+          Sits above the composer so they can still talk in-scene while they
+          think — the story only moves when they tap. */}
+      {story?.pendingChoice && !selecting && (
+        <div className="story-choice" onClick={(e) => e.stopPropagation()}>
+          <div className="story-choice__prompt">{story.pendingChoice.prompt}</div>
+          <div className="story-choice__options">
+            {story.pendingChoice.options.map((o, i) => (
+              <button
+                key={`${i}-${o.label}`}
+                className="story-choice__opt"
+                disabled={choosing}
+                onClick={() => void pickChoice(i)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

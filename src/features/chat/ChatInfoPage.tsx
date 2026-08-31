@@ -398,7 +398,9 @@ export function ChatInfoPage() {
           </div>
         )}
 
-        {isGroup && storyRun && (
+        {/* V4: single-chat stories exist, so the entry row is no longer
+            group-gated — any conversation hosting a run gets it. */}
+        {storyRun && (
           <div className="settings__group">
             <div
               className="settings__row"

@@ -129,13 +129,15 @@ const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
   },
   'features/story/CastingSheet.tsx': {
     via: 'filters',
-    why: '可开演的舞台列表 filter type===group && !isHidden（隐藏行今天都是 single 型，双保险）。',
+    why:
+      '可开演的舞台列表首条即 isHidden 出局（V4 起单聊也可开演，而隐藏 DM 行' +
+      '正是 single 型——这条过滤从双保险变成了唯一防线，eligibleStages 单测钉死它）。',
   },
   'features/story/StoryRunPage.tsx': {
     via: 'not-ui',
     why:
       '可见面，但 stage 的 convId 只能来自存档，而存档只能由 CastingSheet 开演创建' +
-      '（那里已过滤）；隐藏行也不是群，构造上到不了这里。',
+      '——那里对 group 和（V4 起的）single 舞台一律先过滤 isHidden，构造上到不了这里。',
   },
   'native/background-notify.ts': {
     via: 'filters',
