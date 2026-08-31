@@ -1,21 +1,43 @@
 /**
- * 聊天年度报告 (M-I14; specs/year-report.md) — a WeChat-annual-report style
- * full-screen scroll story, computed entirely on device.
+ * 聊天年度报告 (M-I14; multi-dimension + year switching M-J12) — a WeChat-
+ * annual-report style full-screen scroll story, computed entirely on device.
  *
  * Data flow: visible conversations (hidden ones are dropped HERE as defense in
- * depth, and again inside computeReport — the real guarantee) → up to 2000
- * messages per conversation from the repo → one pure `computeReport` pass.
+ * depth, and again inside computeReport — the real guarantee) → the WHOLE
+ * history per conversation via `scanAllMessages` (paged, capped at 20k rows
+ * per thread — hitting the cap shows「统计截断」, never a silently wrong
+ * number) → moments + social rows, wallet ledger and story saves → one pure
+ * `computeReport` pass per selected year. `?year=` picks the year; the chips
+ * list every year the data actually touches.
+ *
+ * story_saves is read through src/ai/story-gm's own idb accessor — that module
+ * bypasses the Repo (known debt, M-J12 reads it but does not re-architect).
  *
  * Motion discipline: scroll-snap for the paging, IntersectionObserver toggling
  * a class, CSS transitions/keyframes for everything that moves. No rAF.
  */
-import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '../../store/appStore';
 import { repo } from '../../db/repo';
-import { computeReport, type YearReport } from '../../lib/report';
+import {
+  computeReport,
+  scanAllMessages,
+  scanTruncatedForYear,
+  yearsWithData,
+  type MessageScan,
+  type ReportInput,
+  type ReportStorySave,
+  type YearReport,
+} from '../../lib/report';
+import {
+  renderReportImage,
+  reportImageLines,
+  type ReportImagePalette,
+} from '../../lib/report-image';
+import { saveBlobFile } from '../../lib/save-file';
+import { listSaves } from '../../ai/story-gm';
 import { fenToYuan } from '../../lib/money';
-import type { MessageVM } from '../../data/types';
 import { logError } from '../../lib/errlog';
 import './report.css';
 
@@ -39,12 +61,20 @@ function fmtDuration(ms: number): string {
   return `${Math.floor(min / 60)} 小时 ${min % 60} 分钟`;
 }
 
+/** Everything the page pulled once; year switching recomputes without refetch. */
+interface ReportPool {
+  scan: MessageScan;
+  base: Omit<ReportInput, 'year'>;
+}
+
 export function YearReportPage() {
   const navigate = useNavigate();
   const conversations = useAppStore((s) => s.conversations);
   const contacts = useAppStore((s) => s.contacts);
-  const [report, setReport] = useState<YearReport | null>(null);
+  const [pool, setPool] = useState<ReportPool | null>(null);
   const [failed, setFailed] = useState(false);
+
+  const [params, setParams] = useSearchParams();
 
   useEffect(() => {
     let alive = true;
@@ -54,21 +84,35 @@ export function YearReportPage() {
         // fetch. computeReport filters again — that inner filter is the tested
         // guarantee; this one just avoids reading rows we will never use.
         const visible = conversations.filter((c) => !c.isHidden);
-        const messagesByConv: Record<string, MessageVM[]> = {};
-        for (const conv of visible) {
-          messagesByConv[conv.id] = await repo.getMessages(conv.id, { limit: 2000 });
-        }
-        const walletTxs = await repo.getWalletTxs();
+        const scan = await scanAllMessages(
+          visible.map((c) => c.id),
+          { page: (convId, beforeId, limit) => repo.getMessages(convId, { beforeId, limit }) },
+        );
+        const [walletTxs, moments] = await Promise.all([
+          repo.getWalletTxs(),
+          repo.getMoments({ limit: 100_000 }),
+        ]);
+        const { likes, comments } = await repo.getMomentSocial(moments.map((m) => m.id));
+        const storySaves: ReportStorySave[] = (await listSaves()).map((s) => ({
+          scriptId: s.scriptId,
+          endingId: s.endingId,
+          endedAt: s.endedAt,
+        }));
         if (!alive) return;
-        setReport(
-          computeReport({
+        setPool({
+          scan,
+          base: {
             conversations: visible,
-            messagesByConv,
+            messagesByConv: scan.messagesByConv,
             contacts,
             walletTxs,
             now: Date.now(),
-          }),
-        );
+            moments,
+            momentLikes: Object.values(likes).flat(),
+            momentComments: Object.values(comments).flat(),
+            storySaves,
+          },
+        });
       } catch (e) {
         logError('report.compute', e);
         if (alive) setFailed(true);
@@ -79,17 +123,38 @@ export function YearReportPage() {
     };
   }, [conversations, contacts]);
 
+  const years = useMemo(() => (pool ? yearsWithData(pool.base) : []), [pool]);
+
+  // ?year= picks the year; anything unknown falls back to the newest.
+  const yearParam = Number(params.get('year'));
+  const year = years.includes(yearParam) ? yearParam : (years[0] ?? new Date().getFullYear());
+
+  const report = useMemo(
+    () => (pool ? computeReport({ ...pool.base, year }) : null),
+    [pool, year],
+  );
+  const truncated = pool ? scanTruncatedForYear(pool.scan, year) : false;
+
   return (
     <div className="report">
       <button className="report__close" onClick={() => navigate(-1)} aria-label="关闭">
         ✕
       </button>
+      {truncated && (
+        <div className="report__truncated" role="status">
+          部分会话超过 20000 条消息，本年统计已截断
+        </div>
+      )}
       {failed ? (
         <div className="report__loading">统计失败了，回去再试一次吧</div>
       ) : !report ? (
         <div className="report__loading">正在翻你们的聊天记录…</div>
       ) : (
-        <ReportBody r={report} />
+        <ReportBody
+          r={report}
+          years={years}
+          onPickYear={(y) => setParams({ year: String(y) }, { replace: true })}
+        />
       )}
     </div>
   );
@@ -97,16 +162,71 @@ export function YearReportPage() {
 
 /* ==================================================================== */
 
-function ReportBody({ r }: { r: YearReport }) {
+function ReportBody({
+  r,
+  years,
+  onPickYear,
+}: {
+  r: YearReport;
+  years: number[];
+  onPickYear: (y: number) => void;
+}) {
   const maxHour = Math.max(1, ...r.hourHistogram);
   const maxWord = Math.max(1, ...r.topWords.map((w) => w.count));
   const maxTalker = Math.max(1, ...r.topTalkers.map((t) => t.count));
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [saving, setSaving] = useState(false);
+
+  const saveLongImage = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      // Canvas cannot read var(); resolve the report tokens at runtime so the
+      // image follows the SAME palette the page renders with (rule #1: the
+      // literals stay in tokens.css).
+      const cs = getComputedStyle(rootRef.current ?? document.documentElement);
+      const token = (name: string) => cs.getPropertyValue(name).trim();
+      const palette: ReportImagePalette = {
+        bgA: token('--color-report-bg-a'),
+        bgB: token('--color-report-bg-b'),
+        text: token('--color-report-text'),
+        dim: token('--color-report-dim'),
+        accent: token('--color-report-accent'),
+        hairline: token('--color-report-hairline'),
+      };
+      const canvas = document.createElement('canvas');
+      renderReportImage(canvas, reportImageLines(r), palette);
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
+      if (!blob) throw new Error('图片导出失败');
+      await saveBlobFile(`聊天年度报告-${r.year}.png`, blob, '保存年度报告长图');
+    } catch (e) {
+      logError('report.longImage', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="report__scroll">
+    <div className="report__scroll" ref={rootRef}>
       <Section className="report__cover">
         <div className="report__year">{r.year}</div>
         <div className="report__title">聊天年度报告</div>
         <div className="report__sub">你和你的朋友们，这一年都聊了什么</div>
+        {years.length > 1 && (
+          <div className="report__years" role="tablist" aria-label="选择年份">
+            {years.map((y) => (
+              <button
+                key={y}
+                role="tab"
+                aria-selected={y === r.year}
+                className={`report__year-chip${y === r.year ? ' report__year-chip--on' : ''}`}
+                onClick={() => onPickYear(y)}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="report__hint">往下滑 ↓</div>
       </Section>
 
@@ -199,15 +319,78 @@ function ReportBody({ r }: { r: YearReport }) {
         </div>
       </Section>
 
-      {r.longestSession && (
+      {(r.momentsStat.posts > 0 ||
+        r.momentsStat.likesReceived > 0 ||
+        r.momentsStat.commentsReceived > 0) && (
         <Section>
-          <div className="report__lead">聊到停不下来的那次</div>
-          <div className="report__hero-name">{r.longestSession.convTitle}</div>
-          <div className="report__line">
-            <em>{fmtDate(r.longestSession.startAt)}</em>，一口气 <em>{r.longestSession.count}</em>{' '}
-            条来回
+          <div className="report__lead">朋友圈的一年</div>
+          <div className="report__big">
+            {r.momentsStat.posts}
+            <span className="report__unit">条动态</span>
           </div>
-          <div className="report__line">持续了 {fmtDuration(r.longestSession.durationMs)}</div>
+          <div className="report__line">
+            收到 <em>{r.momentsStat.likesReceived}</em> 个赞、
+            <em>{r.momentsStat.commentsReceived}</em> 条评论
+          </div>
+          {r.momentsStat.topCommenters.length > 0 && (
+            <div className="report__line">
+              评论你最多的是 <em>{r.momentsStat.topCommenters[0].name}</em>（
+              {r.momentsStat.topCommenters[0].count} 条）
+            </div>
+          )}
+        </Section>
+      )}
+
+      {(r.callsStat.count > 0 || r.callsStat.missed > 0) && (
+        <Section>
+          <div className="report__lead">打过的电话</div>
+          <div className="report__big">
+            {r.callsStat.count}
+            <span className="report__unit">通</span>
+          </div>
+          <div className="report__line">
+            加起来聊了 <em>{fmtDuration(r.callsStat.totalMs)}</em>
+          </div>
+          {r.callsStat.longest && (
+            <div className="report__line">
+              最长的一通在 <em>{fmtDate(r.callsStat.longest.at)}</em>，和{' '}
+              {r.callsStat.longest.convTitle} 聊了 {fmtDuration(r.callsStat.longest.ms)}
+            </div>
+          )}
+          {r.callsStat.missed > 0 && (
+            <div className="report__line">还有 {r.callsStat.missed} 通没有接上</div>
+          )}
+        </Section>
+      )}
+
+      {r.storyStat.runsCompleted > 0 && (
+        <Section>
+          <div className="report__lead">走完的剧情</div>
+          <div className="report__big">
+            {r.storyStat.runsCompleted}
+            <span className="report__unit">个周目</span>
+          </div>
+          <div className="report__line">
+            解锁了 <em>{r.storyStat.endingsSeen}</em> 个结局
+          </div>
+        </Section>
+      )}
+
+      {r.gameStat.diceThrows + r.gameStat.rpsThrows > 0 && (
+        <Section>
+          <div className="report__lead">表情游戏战绩</div>
+          <div className="report__big">
+            {r.gameStat.wins}
+            <span className="report__unit">胜</span> {r.gameStat.losses}
+            <span className="report__unit">负</span> {r.gameStat.draws}
+            <span className="report__unit">平</span>
+          </div>
+          <div className="report__line">
+            掷了 <em>{r.gameStat.diceThrows}</em> 次骰子，六点开出 {r.gameStat.sixes} 回
+          </div>
+          <div className="report__line">
+            猜拳出手 <em>{r.gameStat.rpsThrows}</em> 次
+          </div>
         </Section>
       )}
 
@@ -232,6 +415,9 @@ function ReportBody({ r }: { r: YearReport }) {
       <Section className="report__ending">
         <div className="report__title">聊天记录会过期</div>
         <div className="report__sub">说过的话不会</div>
+        <button className="report__save" disabled={saving} onClick={() => void saveLongImage()}>
+          {saving ? '正在生成…' : '保存长图'}
+        </button>
         <div className="report__foot">
           {r.year} 聊天年度报告 · 纯本地统计，未上传任何数据
         </div>
