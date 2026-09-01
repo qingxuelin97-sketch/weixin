@@ -45,8 +45,13 @@ import type {
   FavoriteVM,
 } from '../data/types';
 import { STORES, idbGetAll, idbDelete, idbPut } from './idb';
-import { deleteContactCascade, type Repo, type CascadeStoryRow } from './repo';
-import { estimateStorage, type StorageReport } from './repo';
+import {
+  deleteContactCascade,
+  estimateStorage,
+  type CascadeStoryRow,
+  type Repo,
+  type StorageReport,
+} from './repo';
 import { visibleMoments } from '../lib/moment-visibility';
 import { NO_FRIEND_PERMS, type FriendPermMap } from '../lib/friend-perms';
 

@@ -662,9 +662,15 @@ describe('the deleteContact ledger', () => {
       const src = readFileSync(resolve(__dirname, '../..', f), 'utf8');
       expect(src, f).toContain('deleteContactCascade(this, {');
     }
-    expect(readFileSync(resolve(SRC_ROOT, 'db/sqlite.ts'), 'utf8')).toContain(
-      "import { deleteContactCascade",
-    );
+    // 匹配的是**含义**不是排版：原来断言的是字面量 `import { deleteContactCascade`，
+    // 于是 M-J10 把那句 import 合并成多行（同一个模块本来就该只 import 一次）
+    // 就把它打红了——而不变量一点没变。现在找的是「从 './repo' 的 import 块里
+    // 拿到了 deleteContactCascade」，换行、排序、prettier 都影响不到它。
+    const sqliteSrc = readFileSync(resolve(SRC_ROOT, 'db/sqlite.ts'), 'utf8');
+    const fromRepo = [...sqliteSrc.matchAll(/import\s*\{([^}]*)\}\s*from\s*'\.\/repo'/g)]
+      .map((m) => m[1])
+      .join(',');
+    expect(fromRepo, "sqlite.ts 没有从 './repo' 引入共享级联").toContain('deleteContactCascade');
   });
 });
 
