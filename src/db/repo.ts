@@ -361,6 +361,13 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
     why: 'J8 群收款结算状态（billId→状态 map），随会话消亡；钱的痕迹在 wallet_tx 账本里',
   },
   'memext:': { scope: 'conv', row: 'cascade', why: '记忆抽取水位（msgId），随会话消亡' },
+  'pinnedMsg:': {
+    scope: 'conv',
+    row: 'cascade',
+    // 值是 {msgId, text} 的**投影**而不是指针：撤回后横幅仍显示得出「这条已
+    // 撤回」，而一个指向虚空的指针只会让人以为是 bug。随会话消亡。
+    why: 'J7 置顶消息（msgId + 当时的文本投影），随会话消亡',
+  },
   'announceSeen:': {
     scope: 'conv',
     row: 'cascade',

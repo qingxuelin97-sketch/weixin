@@ -103,8 +103,11 @@ src/
   必须登记** scope 与「删联系人时怎么办」，`deleteContactCascade` **读这份台账**行事——
   所以「登记一个前缀」本身就是修复。源码扫描守卫会断言扫到的键集合与台账相等，
   新增键不表态即转红（此前 `agent_state:` / `goal_told:` / `giftAt:` 就是这样漏掉的）。
-  值是 id 键控 map 的行（`rel_edges` / `groupNick:`）走**逐条手术**，不能删整行——
-  那一行里还有活人的数据。
+  值是 id 键控 map 的行（`rel_edges` / `groupNick:` / `friendPerms` / `contactTags` /
+  `contactStatus`）走**逐条手术**，不能删整行——那一行里还有活人的数据。
+  另外：**键的字面量必须内联写在调用点**。级联的源码扫描读的是调用点上的模板串，
+  提到变量里（`const k = \`foo:${id}\`` 再 `putSetting(k, …)`）它就看不见了——
+  M-I18 那五个漏网的 per-contact 键正是这么漏的，M-J7 的 `announceSeen:` 差点重演。
 - **前台生命周期**（`src/app/useForegroundLifecycle.ts`）：回前台 = 回填 → 撤销并重排通知。
   没有它，`runBackfill` 只在冷启动跑一次——而手机上「切后台→回前台」才是常态。
 - **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
@@ -194,9 +197,12 @@ src/
   从卡片里打开的全屏图片查看器渲染成卡内 390×276 小窗。现象离病因极远（去查了查看器的 CSS、
   z-index、portal，全都是对的）。规则：淡入类用 `backwards`；WAAPI（`springTo` 默认
   `fill: both`）收尾先把值落成 inline style 再 `cancel()`。详见 `specs/motion.md`。
-- **体积棘轮统计的是总 gzip（含懒 chunk），拆懒一个字节都不降**（M-J）。把模块拆成
-  lazy chunk 仍然值得做（冷启动更快），但想让 `check:size` 的数字变小只有删代码或删
-  依赖。「拆懒 → 数字没动 → 以为拆失败了」会重复发生，直到棘轮拆成主/懒双账本。
+- **体积棘轮已拆成主/懒双账本（M-J10）**，拆懒终于能让主账本的数字下降。两条配套规矩：
+  ① **迁移时 MAIN 降的必须不少于 LAZY 升的**——main→lazy 是净零字节，一个会因迁移
+  转红的 lazy 预算惩罚的正是它该奖励的行为（这也是当初单一总量口径犯的错，只低一层）；
+  ② **带 golden 的路由不许 `React.lazy`**：懒页首帧是 Suspense 兜底，而基线拍的正是
+  首帧，CI 下次 regen 会安安静静铸出一张空白基线，那一页的门禁从此永远为真。
+  守卫在 `tests/unit/route-goldens.test.ts`，它落地当场就抓住了我自己拆错的一条。
 - **`useMedia(refs)` 只做预热，不回传 URL**（返回 `void`）：URL 要另外走
   `resolveImageRef(ref).url`（`src/data/moments-images.ts`，Avatar/MessageBubble 都是
   这个配法）。写成 `const url = useMedia(x)` 会拿到 undefined 然后静默画占位图。
@@ -228,7 +234,7 @@ src/
 | 智能体 | agents · relationship · worldbook · goals-status · year-report · backfill |
 | 功能面 | money · moments · call |
 | 剧情 | story-gm（V3） |
-| 工程 | observability · backup（.aiwx 导出恢复，M-I18 起自成一块）· build-distribution · native-android（M-I10 重原生） |
+| 工程 | observability · backup（.aiwx 导出恢复 + M-J10 可选加密）· build-distribution · native-android（M-I10 重原生） |
 
 ## 5. 工程护栏
 

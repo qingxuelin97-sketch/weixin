@@ -200,4 +200,23 @@ describe('接线扫描（写了没接线 = 没做）', () => {
     expect(show, '找不到公告弹窗').toBeGreaterThan(0);
     expect(show, '弹窗排在写水位之前——在弹窗上杀掉 App 就会永远弹').toBeGreaterThan(put);
   });
+
+  /**
+   * 消息置顶 (M-J7)：存的是**投影**，不是指针。
+   *
+   * 只存 msgId 的话，撤回或删除之后那条横幅要么空白要么消失，用户会以为是 bug。
+   * 存下当时的文本，撤回后横幅仍然说得出「这条是什么」。这条扫的是写入形状
+   * ——一个「省掉 text 只存 id」的重构在类型上完全说得通，在界面上是一条空横幅。
+   */
+  it('置顶存的是 {msgId, text} 投影而不是光秃秃的 id', () => {
+    const src = readFileSync(resolve(__dirname, '../../src/features/chat/ChatPage.tsx'), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+    expect(code).toMatch(/putSetting\(`pinnedMsg:\$\{convId\}`, \{ msgId: m\.id, text \}\)/);
+  });
+
+  /** 一条会话只有一条置顶——菜单文案必须说清是「替换」，别让人以为能攒一摞。 */
+  it('已有置顶时菜单说「替换置顶」', () => {
+    const src = readFileSync(resolve(__dirname, '../../src/features/chat/ChatPage.tsx'), 'utf8');
+    expect(src).toContain('替换置顶');
+  });
 });

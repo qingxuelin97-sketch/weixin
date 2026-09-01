@@ -1096,6 +1096,26 @@ export function ChatPage() {
    * an announcement reverted to a previous wording that this user already
    * dismissed stays dismissed, which is the behaviour that surprises nobody.
    */
+  /**
+   * 消息置顶 (M-J7)。存一条**投影**（msgId + 当时的文本），不是一个指针。
+   *
+   * 只存 msgId 的话，置顶条要么每次渲染都去查一次库，要么在消息被撤回/删除后
+   * 变成一条空白横幅。存下当时的文本，撤回之后横幅仍然显示「这条已撤回」，
+   * 用户知道发生了什么——而一条指向虚空的指针只会让人以为是 bug。
+   */
+  const [pinned, setPinned] = useState<{ msgId: number; text: string } | null>(null);
+  useEffect(() => {
+    if (!convId) return;
+    let alive = true;
+    void (async () => {
+      const row = await repo.getSetting<{ msgId: number; text: string }>(`pinnedMsg:${convId}`);
+      if (alive) setPinned(row ?? null);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [convId]);
+
   const announcement = conv?.type === 'group' ? conv.announcement : undefined;
   useEffect(() => {
     if (!announcement || !convId) return;
@@ -1269,6 +1289,26 @@ export function ChatPage() {
           })(),
       });
     }
+    // 置顶 (M-J7)：一条会话只有一条置顶，和微信一致——第二条会顶掉第一条，
+    // 所以按钮文案要说清「置顶」还是「替换」，不然用户以为可以攒一摞。
+    if (!m.isRecalled) {
+      const isPinned = pinned?.msgId === m.id;
+      items.push({
+        label: isPinned ? '取消置顶' : pinned ? '替换置顶' : '置顶',
+        onSelect: () =>
+          void (async () => {
+            if (isPinned) {
+              await repo.putSetting(`pinnedMsg:${convId}`, null);
+              setPinned(null);
+              showToast('已取消置顶');
+              return;
+            }
+            const text = (m.content ?? '').slice(0, 60) || `[${m.type}]`;
+            await repo.putSetting(`pinnedMsg:${convId}`, { msgId: m.id, text });
+            setPinned({ msgId: m.id, text });
+          })(),
+      });
+    }
     items.push({
       label: '多选',
       onSelect: () => {
@@ -1312,6 +1352,19 @@ export function ChatPage() {
           }}
         >
           未配置 API key，对方无法回复 · 点此去配置 ›
+        </div>
+      )}
+
+      {pinned && (
+        <div
+          className="msg-pinned hairline-bottom"
+          onClick={(e) => {
+            e.stopPropagation();
+            onQuoteTap(pinned.msgId);
+          }}
+        >
+          <span className="msg-pinned__tag">置顶</span>
+          <span className="msg-pinned__text">{pinned.text}</span>
         </div>
       )}
 
