@@ -56,9 +56,17 @@ export interface VoiceInputButtonProps {
    * permissive — 铁律 6 applies to what goes out of the microphone too.
    */
   tier?: 'off' | 'ambiguous' | 'full';
+  /**
+   * 'icon' = the small mic inside the composer pill (default).
+   * 'bar'  = 语音模式 (M-J7): the full-width 「按住 说话」 bar that REPLACES the
+   *          text pill, which is what WeChat's left-hand circle toggles into.
+   *          Same gesture, same recorder, same three zones — only the hit area
+   *          differs, so there is exactly one implementation of hold-to-talk.
+   */
+  variant?: 'icon' | 'bar';
 }
 
-export function VoiceInputButton({ onText, onClip, tier }: VoiceInputButtonProps) {
+export function VoiceInputButton({ onText, onClip, tier, variant = 'icon' }: VoiceInputButtonProps) {
   const showToast = useAppStore((s) => s.showToast);
   const [phase, setPhase] = useState<Phase>('idle');
   const [cancelArmed, setCancelArmed] = useState(false);
@@ -286,8 +294,8 @@ export function VoiceInputButton({ onText, onClip, tier }: VoiceInputButtonProps
   return (
     <>
       <button
-        className="composer__mic"
-        aria-label="语音输入"
+        className={variant === 'bar' ? `composer__talkbar${phase === 'recording' ? ' composer__talkbar--held' : ''}` : 'composer__mic'}
+        aria-label={variant === 'bar' ? '按住 说话' : '语音输入'}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -295,7 +303,7 @@ export function VoiceInputButton({ onText, onClip, tier }: VoiceInputButtonProps
         onContextMenu={(e) => e.preventDefault()}
         style={{ touchAction: 'none' }}
       >
-        <IconMicSmall />
+        {variant === 'bar' ? (phase === 'recording' ? '松开 发送' : '按住 说话') : <IconMicSmall />}
       </button>
 
       {overlayUp && (

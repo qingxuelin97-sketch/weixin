@@ -164,6 +164,18 @@ describe('接线扫描（写了没接线 = 没做）', () => {
     expect(read('src/features/chat/MessageBubble.tsx')).toContain('msg-translation');
   });
 
+  it('语音模式：左侧圆圈把输入条换成「按住 说话」，而不再弹已经不成立的 toast', () => {
+    const src = read('src/features/chat/ChatPage.tsx');
+    // J7a 交付语音消息之后，「语音消息暂未开放」就成了一句假话。
+    expect(src).not.toContain('语音消息暂未开放');
+    expect(src).toContain('setVoiceMode');
+    expect(src).toContain('variant="bar"');
+    // 同一个组件、同一套手势——不许出现第二份 hold-to-talk 实现。
+    const voice = read('src/features/chat/VoiceInput.tsx');
+    expect(voice).toContain("variant === 'bar'");
+    expect((src.match(/startRecording\(/g) ?? []).length).toBe(0);
+  });
+
   it('个人信息页能设拍一拍后缀', () => {
     const src = read('src/features/me/ProfilePage.tsx');
     expect(src).toContain('PAT_SUFFIX_KEY');

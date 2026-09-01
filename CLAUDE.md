@@ -77,11 +77,14 @@ src/
   记忆 → 场景。改顺序=改行为，需评审。
 - **`scheduledActions` 表**：见铁律 5。新增时间驱动行为 = 在 `SCHEDULED_ACTION_KINDS`
   （`src/db/schema.ts`，**唯一那份列表**，`ActionKind` 由它派生）加一项 + `registerHandler`，
-  **不要**新建计时器。M-J 轮结束时共 **24 种**：heartbeat / rp_grab / transfer_accept /
+  **不要**新建计时器。M-J 轮结束时共 **25 种**：heartbeat / rp_grab / transfer_accept /
   moment_post / moment_like / moment_comment / group_msg / agent_dm / recall /
   mem_extract / story_tick / ai_money / ai_call / joint_plan / agent_forward /
   group_event / agent_invite / moment_repost / auto_backup / sticker_reply /
-  transfer_return / **rp_return / bill_pay / group_chatter**（后三个 M-J8/J2 新增）。
+  transfer_return / **rp_return / bill_pay / group_chatter / pat_back**
+  （M-J8 / J2 / J7 新增）。加一种 kind 要同时过四关：这份列表、
+  `NOTIFY_STANCE`、`ACTION_LLM_BOUND`、以及自续链的 SELF_CHAINING 清单——
+  前三关是 `Record<ActionKind, …>`，漏一个直接编译不过。
   自续链的那几种用
   `registerChainedHandler`（先续链后干活，失败只暂停不终结），并且必须进 wiring 测试的
   SELF_CHAINING 清单。
@@ -192,6 +195,13 @@ src/
 - **`@keyframes` 里用独立 `translate` 属性要进 `KEYFRAME_EXEMPTIONS`**（motion 守卫
   只认 transform/opacity）。它本身是合成类属性、截图门禁同样冻结，用它是为了让平移
   与 `transform: scale` 在同一元素上叠加而不互相覆盖——但豁免必须有名有由地登记。
+- **未定义的 CSS 变量什么都不画，而且没有任何东西会报错**（M-J13）：
+  `var(--color-cell-pressed)`（不存在）不是错误，只是那条声明整个消失——按下态、
+  边框、阴影就这么静默不见，硬编码颜色检查照样绿。反过来那半边由
+  `j13-css-tokens.test.ts` 守：所有无兜底的 `var(--x)` 必须真的定义过，
+  运行时才设的（`--i` / `--nav-alpha` 之类）走有名有由的台账。
+  它落地时当场抓出三个真的：call.css 的 `--color-text`/`--color-bg`
+  （静音按钮无背景无字色）与我自己二十分钟前写的 `--fs-body`。
 - **不要为"截图稳定"冻结业务时钟**：组件里硬编码 NOW 常量意味着真机上所有相对时间戳
   永远错（diffDays 为负渲染成「星期六」）。确定性归测试侧：Playwright
   `page.clock.setFixedTime(种子纪元)`，业务代码用真实时钟（`useNow()` 分钟级 tick）。

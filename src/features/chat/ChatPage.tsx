@@ -196,6 +196,9 @@ export function ChatPage() {
   // like the send path does it (global setting × this persona's permit), so
   // 铁律 6 covers speech going OUT the same way it covers prompts.
   const [micTier, setMicTier] = useState<'off' | 'ambiguous' | 'full'>('off');
+  // 语音模式 (M-J7)：微信左侧那个圆圈把输入条整条换成「按住 说话」。
+  // 直到 J7a 语音消息落地前，这个按钮一直弹「暂未开放」——那句话现在是假的。
+  const [voiceMode, setVoiceMode] = useState(false);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -1558,9 +1561,34 @@ export function ChatPage() {
           </div>
         )}
         <div className="composer__bar">
-          <button className="composer__icon" aria-label="语音" onClick={() => showToast('语音消息暂未开放')}>
+          <button
+            className="composer__icon"
+            aria-label={voiceMode ? '切回键盘' : '切到语音'}
+            onClick={() => {
+              composer.closeAll();
+              setVoiceMode((v) => !v);
+            }}
+          >
             <IconVoiceCircle />
           </button>
+          {voiceMode ? (
+            // 语音模式：整条输入区换成「按住 说话」。同一个 VoiceInputButton、
+            // 同一套三区手势、同一个录音器——只是命中区变成一整条。
+            <VoiceInputButton
+              variant="bar"
+              tier={micTier}
+              onText={(t) => {
+                // 从 文 区回来的文字：退出语音模式，让人能改完再发。
+                setVoiceMode(false);
+                setDraft((d) => (d ? d + t : t));
+              }}
+              onClip={(blob, ms) =>
+                void sendVoiceClip(blob, ms).catch((err) =>
+                  showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+                )
+              }
+            />
+          ) : (
           <div className="composer__pill">
             <textarea
               ref={composer.inputRef}
@@ -1596,6 +1624,7 @@ export function ChatPage() {
               }
             />
           </div>
+          )}
           <button className="composer__icon" aria-label="表情" onClick={composer.toggleEmoji}>
             <IconEmoji />
           </button>

@@ -317,8 +317,11 @@
 }
 
 .call-page__btn--mute-on {
-  background: var(--color-text);
-  color: var(--color-bg);
+  /* 静音时反色：白底深字。用的是通话页自己的深色底与「彩底上的字」两个 token，
+     此前写的 --color-text / --color-bg 两个 token 从来就不存在，所以按钮
+     在静音态下没有背景也没有字色——CSS 不报错，它只是什么都不画。 */
+  background: var(--color-text-on-brand);
+  color: var(--color-call-bg);
 }
 
 /* ---- 视频通话画面 (M-J6b) ---- */
