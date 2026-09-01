@@ -2,6 +2,7 @@
  * 朋友圈 v2 (M-I15): topics, reposts (and their leak rule), visitor hints,
  * the news badge, serial goal posts, and the notification grading extension.
  */
+import { NO_FRIEND_PERMS } from '../../src/lib/friend-perms';
 import { describe, it, expect } from 'vitest';
 import { parseTopics, topicSegments, hasTopic } from '../../src/lib/topics';
 import {
@@ -184,21 +185,21 @@ describe('planRepost (AI 转发)', () => {
   const crowd = ['a', 'b', 'c'].map((id) => reactor(id));
 
   it('is deterministic', () => {
-    expect(planRepost(post('m1', 'self', NOW), crowd, 's')).toEqual(
-      planRepost(post('m1', 'self', NOW), crowd, 's'),
+    expect(planRepost(post('m1', 'self', NOW), crowd, 's', NO_FRIEND_PERMS)).toEqual(
+      planRepost(post('m1', 'self', NOW), crowd, 's', NO_FRIEND_PERMS),
     );
   });
 
   it('only ever fires on USER posts — agents never boost each other', () => {
     for (let i = 0; i < 200; i++) {
-      expect(planRepost(post(`m${i}`, 'a', NOW), crowd, 's')).toBeNull();
+      expect(planRepost(post(`m${i}`, 'a', NOW), crowd, 's', NO_FRIEND_PERMS)).toBeNull();
     }
   });
 
   it('is rare, near the configured rate', () => {
     let hits = 0;
     const n = 800;
-    for (let i = 0; i < n; i++) if (planRepost(post(`m${i}`, 'self', NOW), crowd, 's')) hits++;
+    for (let i = 0; i < n; i++) if (planRepost(post(`m${i}`, 'self', NOW), crowd, 's', NO_FRIEND_PERMS)) hits++;
     expect(hits / n).toBeGreaterThan(REPOST_RATE - 0.05);
     expect(hits / n).toBeLessThan(REPOST_RATE + 0.05);
   });
@@ -206,13 +207,13 @@ describe('planRepost (AI 转发)', () => {
   it('only close friends repost', () => {
     const cold = ['a', 'b'].map((id) => reactor(id, REPOST_MIN_AFFINITY - 10));
     for (let i = 0; i < 300; i++) {
-      expect(planRepost(post(`m${i}`, 'self', NOW), cold, 's')).toBeNull();
+      expect(planRepost(post(`m${i}`, 'self', NOW), cold, 's', NO_FRIEND_PERMS)).toBeNull();
     }
   });
 
   it('lands after the post, later than a like would', () => {
     for (let i = 0; i < 300; i++) {
-      const p = planRepost(post(`m${i}`, 'self', NOW), crowd, 's');
+      const p = planRepost(post(`m${i}`, 'self', NOW), crowd, 's', NO_FRIEND_PERMS);
       if (!p) continue;
       expect(p.at).toBeGreaterThan(NOW + 29 * 60_000);
       expect(['a', 'b', 'c']).toContain(p.contactId);

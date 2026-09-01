@@ -1,3 +1,4 @@
+import { NO_FRIEND_PERMS } from '../../src/lib/friend-perms';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -242,7 +243,8 @@ describe('call site 3 — runAgentDm (hidden, and therefore trace-free)', () => 
       putMemory: async () => {},
       getMemoryFacts: async () => [],
       getGroupMessages: async () => [msg(1, 'ai_x', EXPLICIT)],
-      getMoments: async () => [],
+      getFriendPerms: async () => NO_FRIEND_PERMS,
+    getMoments: async () => [],
       complete: async (_m, _k, tier) => {
         tiers.push(tier);
         return '{"speaker":"A","text":"嗨"}\n{"speaker":"B","text":"嗯"}';

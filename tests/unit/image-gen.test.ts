@@ -40,6 +40,9 @@ vi.mock('../../src/db/repo', async (importOriginal) => ({
     },
     getMediaItem: async (id: string) => media.get(id),
     getProviders: async () => [],
+    // 朋友权限 (M-J7): this fake exists to test image generation, not audience
+    // rules — no restrictions is the honest answer here, not an oversight.
+    getFriendPerms: async () => ({}),
   },
 }));
 

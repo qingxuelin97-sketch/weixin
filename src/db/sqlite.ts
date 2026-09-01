@@ -47,6 +47,7 @@ import type {
 import { STORES, idbGetAll, idbDelete, idbPut } from './idb';
 import { deleteContactCascade, type Repo, type CascadeStoryRow } from './repo';
 import { visibleMoments } from '../lib/moment-visibility';
+import { NO_FRIEND_PERMS, type FriendPermMap } from '../lib/friend-perms';
 
 /**
  * The slice of @capacitor-community/sqlite's SQLiteDBConnection this driver
@@ -461,6 +462,15 @@ export class SqliteRepo implements Repo {
   }
 
   /* -- moments -- */
+  /**
+   * 朋友权限 (M-J7) — read inside the driver for the same reason 可见范围 is
+   * filtered here: a reader that has to remember to fetch the perms is a reader
+   * that eventually forgets, and forgetting shows up as her liking a post you
+   * blocked her from. One KV row, so this is one extra get per moment read.
+   */
+  async getFriendPerms(): Promise<FriendPermMap> {
+    return (await this.getSetting<FriendPermMap>('friendPerms')) ?? NO_FRIEND_PERMS;
+  }
   async getMoments(opts: { limit?: number; before?: number; viewer?: string } = {}) {
     const limit = opts.limit ?? DEFAULT_MOMENTS_PAGE;
     const res =
@@ -477,7 +487,7 @@ export class SqliteRepo implements Repo {
     // — both drivers must enforce it or swapping storage would silently unmute
     // every restricted post.
     const rows = (res.values ?? []).map((r) => JSON.parse(String(r.data)) as MomentVM);
-    return visibleMoments(rows, opts.viewer ?? 'self');
+    return visibleMoments(rows, opts.viewer ?? 'self', await this.getFriendPerms());
   }
   async getMomentSocial(momentIds: string[]) {
     const likes: Record<string, MomentLikeVM[]> = {};
@@ -504,13 +514,14 @@ export class SqliteRepo implements Repo {
     const m = await this.kvGet<MomentVM>('moments', id);
     // Contract twin of db/repo.ts: the by-id read carries the same in-driver
     // audience gate as the feed read (M-J12).
-    return m && visibleMoments([m], viewer).length > 0 ? m : undefined;
+    return m && visibleMoments([m], viewer, await this.getFriendPerms()).length > 0 ? m : undefined;
   }
   async getMomentsByAuthor(authorId: string, viewer = 'self') {
     const all = await this.kvAll<MomentVM>('moments');
     return visibleMoments(
       all.filter((m) => m.authorId === authorId),
       viewer,
+      await this.getFriendPerms(),
     ).sort((a, b) => b.createdAt - a.createdAt);
   }
   async putMoment(m: MomentVM) {

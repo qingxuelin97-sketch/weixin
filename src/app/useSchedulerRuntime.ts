@@ -556,6 +556,7 @@ async function runDmSession(plan: DmPlan): Promise<boolean> {
     getMemoryFacts: (id) => repo.getMemory(id),
     getGroupMessages: (id) => repo.getMessages(id, { limit: 8 }),
     getMoments: () => repo.getMoments({ limit: 10 }),
+    getFriendPerms: () => repo.getFriendPerms(),
     complete: async (messages, convKey, tier) =>
       (await router.complete({ role: 'chat', nsfwTier: tier ?? 'off' }, { messages }, {}, convKey))
         .text,
@@ -675,7 +676,8 @@ async function runForegroundPass(): Promise<void> {
     .filter((c) => c.type === 'group' && !c.isHidden)
     .map((c) => c.memberIds ?? []);
   try {
-    await runBackfill(now, { singles, groups, recentMoments, groupRosters });
+    const friendPerms = await repo.getFriendPerms();
+    await runBackfill(now, { singles, groups, recentMoments, groupRosters, friendPerms });
   } catch (e) {
     // A failed backfill must never block startup — the app still works, it
     // just doesn't show a fabricated absence this time. But it must not fail

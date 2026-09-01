@@ -53,7 +53,8 @@ export async function scheduleReactionsFor(
   const reactors = await collectReactors(contacts, personaFor, now);
   // The whole row goes in, so the post's 可见范围 (M-I18) is inside the planner's
   // reach and cannot be dropped on the way.
-  const planned = planReactions(moment, reactors, 'react');
+  const perms = await repo.getFriendPerms();
+  const planned = planReactions(moment, reactors, 'react', perms);
   for (const p of planned) {
     await enqueue({
       kind: p.kind,
@@ -66,7 +67,7 @@ export async function scheduleReactionsFor(
   }
   // 转发 (M-I15): rarely, one close friend reposts a USER post. The planner
   // refuses everything else, so no queue row exists to go wrong for AI posts.
-  const rp = planRepost(moment, reactors, 'react');
+  const rp = planRepost(moment, reactors, 'react', perms);
   if (rp) {
     await enqueue({
       kind: 'moment_repost',
@@ -216,12 +217,16 @@ export async function runMomentLike(
   hooks: MomentsHooks,
   at?: number,
 ): Promise<void> {
-  const moment = await repo.getMoment(momentId);
+  // Fetched AS THE REACTOR (M-J7), not as 'self': with 朋友权限 in the driver,
+  // a 'self' read would also apply 不看他 — muting someone's feed would then
+  // silently stop them liking OTHER people's posts too, which is not what the
+  // switch says it does.
+  const moment = await repo.getMoment(momentId, contactId);
   if (!moment) return; // post was deleted before the like landed
   // 可见范围 checked AGAIN at fire time (M-I18), the same two-checks rule
   // `canForwardFrom` follows: the row was queued hours ago, and what lands on
   // screen cannot be taken back.
-  if (!canSeeMoment(moment, contactId)) return;
+  if (!canSeeMoment(moment, contactId, await repo.getFriendPerms())) return;
   // Route through the store so an open feed updates without a reload; the store
   // writes through to the Repo and ignores a like that already exists.
   await hooks.applyLike({
@@ -251,13 +256,13 @@ export async function runMomentRepost(
   hooks: MomentsHooks,
   at?: number,
 ): Promise<void> {
-  const source = await repo.getMoment(momentId);
+  const source = await repo.getMoment(momentId, reposter.id);
   if (!source) return; // post deleted before the repost landed
   // Re-check the audience at fire time (M-I18). A repost is republication —
   // the strictest of the three reactions, so it refuses anything restricted
   // outright rather than merely checking this reposter.
   if (source.visibility && source.visibility.mode !== 'public') return;
-  if (!canSeeMoment(source, reposter.id)) return;
+  if (!canSeeMoment(source, reposter.id, await repo.getFriendPerms())) return;
   const stamp = at ?? hooks.now();
   const text = await generateRepostText(persona, reposter, source, stamp);
   const posted = await repostMoment(
@@ -278,9 +283,10 @@ export async function runMomentComment(
   hooks: MomentsHooks,
   at?: number,
 ): Promise<void> {
-  const moment = await repo.getMoment(momentId);
+  const moment = await repo.getMoment(momentId, commenter.id);
   if (!moment) return;
-  if (!canSeeMoment(moment, commenter.id)) return; // M-I18, checked twice
+  // M-I18, checked twice; 朋友权限 rides the same check since M-J7.
+  if (!canSeeMoment(moment, commenter.id, await repo.getFriendPerms())) return;
   const stamp = at ?? hooks.now();
   const text = await generateMomentComment(persona, commenter, moment, authorName, stamp);
   if (!text) return;

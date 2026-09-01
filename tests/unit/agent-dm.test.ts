@@ -1,3 +1,4 @@
+import { NO_FRIEND_PERMS } from '../../src/lib/friend-perms';
 import { describe, it, expect } from 'vitest';
 import {
   dmConvId,
@@ -258,7 +259,8 @@ describe('runAgentDm (scripted end-to-end, no real API)', () => {
       putMemory: async (f) => void memories.push(f),
       getMemoryFacts: async () => [],
       getGroupMessages: async () => [],
-      getMoments: async () => [],
+      getFriendPerms: async () => NO_FRIEND_PERMS,
+    getMoments: async () => [],
       complete: async () => completeText,
       enqueueGroupSpill: async (groupId, speakerId, hint) =>
         void spills.push({ groupId, speakerId, hint }),
@@ -335,7 +337,8 @@ describe('SAFETY: a DM never quotes a post a participant cannot see', () => {
         putMemory: async () => {},
         getMemoryFacts: async () => [],
         getGroupMessages: async () => [],
-        getMoments: async () => moments,
+        getFriendPerms: async () => NO_FRIEND_PERMS,
+    getMoments: async () => moments,
         complete: async (messages) => {
           seen += JSON.stringify(messages);
           return '{"speaker":"A","text":"嗯"}\n{"speaker":"B","text":"嗯"}';

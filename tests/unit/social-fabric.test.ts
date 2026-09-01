@@ -1,3 +1,4 @@
+import { NO_FRIEND_PERMS } from '../../src/lib/friend-perms';
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -132,7 +133,8 @@ describe('the bounded three-way DM (M-I3)', () => {
       putMemory: async (f: { subjectId: string; fact: string }) => void memories.push(f),
       getMemoryFacts: async () => [],
       getGroupMessages: async () => [],
-      getMoments: async () => [],
+      getFriendPerms: async () => NO_FRIEND_PERMS,
+    getMoments: async () => [],
       complete: async () => {
         onCall();
         return script;

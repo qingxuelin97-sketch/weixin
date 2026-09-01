@@ -31,6 +31,7 @@ import type {
 } from '../data/types';
 import { seededRng } from '../lib/money';
 import { canSeeMoment } from '../lib/moment-visibility';
+import type { FriendPermMap } from '../lib/friend-perms';
 import { beginRecordingSuppression, endRecordingSuppression } from '../lib/llm-recorder';
 import {
   recordRelEvent,
@@ -557,6 +558,13 @@ export interface DmDeps {
   getMemoryFacts: (subjectId: string) => Promise<MemoryFactVM[]>;
   getGroupMessages: (convId: string) => Promise<MessageVM[]>;
   getMoments: () => Promise<MomentVM[]>;
+  /**
+   * 朋友权限 (M-J7). Injected like everything else here so this orchestrator
+   * keeps its "no ambient state" property, and REQUIRED so the audience filter
+   * below cannot be built out of a half-empty rulebook: two agents gossiping
+   * about a post the user hid from one of them is the same穿帮 as the like.
+   */
+  getFriendPerms: () => Promise<FriendPermMap>;
   complete: (
     messages: Array<{ role: 'system' | 'user'; content: string }>,
     convKey: string,
@@ -602,10 +610,11 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
 
   // Topic: their memories, the shared group's recent chatter, their moments.
   // A no-group session (M-J1 兜底) simply has no room to quote.
-  const [memories, groupMsgs, moments] = await Promise.all([
+  const [memories, groupMsgs, moments, perms] = await Promise.all([
     Promise.all(named.map((p) => deps.getMemoryFacts(p.id))),
     plan.groupId ? deps.getGroupMessages(plan.groupId) : Promise.resolve([] as MessageVM[]),
     deps.getMoments(),
+    deps.getFriendPerms(),
   ]);
   // Routing tier (rule #6): every participant's permit gates the material any
   // of them may quote. Derived BEFORE the memory read below, because the same
@@ -663,7 +672,7 @@ export async function runAgentDm(plan: DmPlan, deps: DmDeps): Promise<boolean> {
       // 部分可见 (the plan's AI 连续剧式发帖 heads that way), the leak would
       // open silently, with no test failing.
       .filter((m) => ids.includes(m.authorId) && m.text)
-      .filter((m) => ids.every((viewer) => canSeeMoment(m, viewer)))
+      .filter((m) => ids.every((viewer) => canSeeMoment(m, viewer, perms)))
       .slice(0, 2)
       .map((m) => `朋友圈那条「${m.text}」`),
     '最近各自在忙什么',

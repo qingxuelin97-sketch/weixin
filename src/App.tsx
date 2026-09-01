@@ -48,7 +48,14 @@ import { PersonaGeneratePage } from './features/contacts/PersonaGeneratePage';
 import { GroupCreatePage } from './features/contacts/GroupCreatePage';
 import { GroupGeneratePage } from './features/contacts/GroupGeneratePage';
 import { ChatInfoPage } from './features/chat/ChatInfoPage';
-import { GroupListPage, NewFriendsPage, SimpleListPage } from './features/contacts/ContactListPages';
+import {
+  ChatOnlyListPage,
+  GroupListPage,
+  NewFriendsPage,
+  TagListPage,
+  TagMembersPage,
+} from './features/contacts/ContactListPages';
+import { FriendPermPage } from './features/contacts/FriendPermPage';
 import { CallPage } from './features/call/CallPage';
 import { GroupCallPage } from './features/call/GroupCallPage';
 import { SearchPage } from './features/search/SearchPage';
@@ -180,8 +187,10 @@ export function App() {
               <Route path="/chat/:convId/info" element={<Push><ChatInfoPage /></Push>} />
               <Route path="/groups" element={<Push><GroupListPage /></Push>} />
               <Route path="/new-friends" element={<Push><NewFriendsPage /></Push>} />
-              <Route path="/contacts-chats-only" element={<Push><SimpleListPage kind="chats-only" /></Push>} />
-              <Route path="/contacts-tags" element={<Push><SimpleListPage kind="tags" /></Push>} />
+              <Route path="/contacts-chats-only" element={<Push><ChatOnlyListPage /></Push>} />
+              <Route path="/contacts-tags" element={<Push><TagListPage /></Push>} />
+              <Route path="/contacts-tags/:tag" element={<Push><TagMembersPage /></Push>} />
+              <Route path="/contact/:contactId/perm" element={<Push><FriendPermPage /></Push>} />
               <Route path="/call/:convId" element={<Push><CallPage /></Push>} />
               <Route path="/group-call/:convId" element={<Push><GroupCallPage /></Push>} />
               <Route path="/rp/send/:convId" element={<Push><RedPacketSendPage /></Push>} />

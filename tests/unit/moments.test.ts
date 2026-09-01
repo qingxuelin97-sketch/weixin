@@ -1,3 +1,4 @@
+import { NO_FRIEND_PERMS } from '../../src/lib/friend-perms';
 import { describe, it, expect } from 'vitest';
 import {
   planReactions,
@@ -32,37 +33,37 @@ describe('planReactions', () => {
   const crowd = ['a', 'b', 'c', 'd', 'e'].map((id) => reactor(id));
 
   it('is deterministic for the same moment and seed', () => {
-    const one = planReactions(post('m1', 'self', NOON), crowd, 's');
-    const two = planReactions(post('m1', 'self', NOON), crowd, 's');
+    const one = planReactions(post('m1', 'self', NOON), crowd, 's', NO_FRIEND_PERMS);
+    const two = planReactions(post('m1', 'self', NOON), crowd, 's', NO_FRIEND_PERMS);
     expect(one).toEqual(two);
   });
 
   it('gives different moments different crowds', () => {
-    const a = planReactions(post('m1', 'self', NOON), crowd, 's');
-    const b = planReactions(post('m2', 'self', NOON), crowd, 's');
+    const a = planReactions(post('m1', 'self', NOON), crowd, 's', NO_FRIEND_PERMS);
+    const b = planReactions(post('m2', 'self', NOON), crowd, 's', NO_FRIEND_PERMS);
     expect(a).not.toEqual(b);
   });
 
   it('never lets the author react to their own post', () => {
-    const planned = planReactions(post('m1', 'a', NOON), crowd, 's');
+    const planned = planReactions(post('m1', 'a', NOON), crowd, 's', NO_FRIEND_PERMS);
     expect(planned.every((p) => p.contactId !== 'a')).toBe(true);
   });
 
   it('returns reactions sorted by time', () => {
-    const planned = planReactions(post('m1', 'self', NOON), crowd, 's');
+    const planned = planReactions(post('m1', 'self', NOON), crowd, 's', NO_FRIEND_PERMS);
     const times = planned.map((p) => p.at);
     expect(times).toEqual([...times].sort((x, y) => x - y));
   });
 
   it('never schedules a reaction before the post exists', () => {
-    const planned = planReactions(post('m1', 'self', NOON), crowd, 's');
+    const planned = planReactions(post('m1', 'self', NOON), crowd, 's', NO_FRIEND_PERMS);
     expect(planned.every((p) => p.at > NOON)).toBe(true);
   });
 
   it('puts a commenter’s comment after their own like', () => {
     // Everyone likes and comments, so every reactor produces both.
     const certain = crowd.map((r) => ({ ...r, likeRate: 1, commentRate: 1 }));
-    const planned = planReactions(post('m1', 'self', NOON), certain, 's');
+    const planned = planReactions(post('m1', 'self', NOON), certain, 's', NO_FRIEND_PERMS);
     for (const id of ['a', 'b', 'c', 'd', 'e']) {
       const like = planned.find((p) => p.contactId === id && p.kind === 'moment_like');
       const comment = planned.find((p) => p.contactId === id && p.kind === 'moment_comment');
@@ -74,18 +75,18 @@ describe('planReactions', () => {
 
   it('rate 0 means nobody reacts; rate 1 means everybody does', () => {
     const none = crowd.map((r) => ({ ...r, likeRate: 0, commentRate: 0 }));
-    expect(planReactions(post('m1', 'self', NOON), none, 's')).toEqual([]);
+    expect(planReactions(post('m1', 'self', NOON), none, 's', NO_FRIEND_PERMS)).toEqual([]);
 
     const all = crowd.map((r) => ({ ...r, likeRate: 1, commentRate: 1 }));
-    const planned = planReactions(post('m1', 'self', NOON), all, 's');
+    const planned = planReactions(post('m1', 'self', NOON), all, 's', NO_FRIEND_PERMS);
     expect(planned.filter((p) => p.kind === 'moment_like')).toHaveLength(5);
     expect(planned.filter((p) => p.kind === 'moment_comment')).toHaveLength(5);
   });
 
   it('higher affinity draws more reactions than lower affinity', () => {
     const big = Array.from({ length: 40 }, (_, i) => reactor(`c${i}`));
-    const cold = planReactions(post('m1', 'self', NOON), big.map((r) => ({ ...r, affinity: 0 })), 's');
-    const warm = planReactions(post('m1', 'self', NOON), big.map((r) => ({ ...r, affinity: 100 })), 's');
+    const cold = planReactions(post('m1', 'self', NOON), big.map((r) => ({ ...r, affinity: 0 })), 's', NO_FRIEND_PERMS);
+    const warm = planReactions(post('m1', 'self', NOON), big.map((r) => ({ ...r, affinity: 100 })), 's', NO_FRIEND_PERMS);
     expect(warm.length).toBeGreaterThan(cold.length);
   });
 
@@ -97,7 +98,7 @@ describe('planReactions', () => {
       commentRate: 1,
       activeHours: [[9, 11]] as Array<[number, number]>,
     }));
-    const planned = planReactions(post('m1', 'self', NOON), narrow, 's');
+    const planned = planReactions(post('m1', 'self', NOON), narrow, 's', NO_FRIEND_PERMS);
     expect(planned.length).toBeGreaterThan(0);
     for (const p of planned) {
       const h = new Date(p.at).getHours();

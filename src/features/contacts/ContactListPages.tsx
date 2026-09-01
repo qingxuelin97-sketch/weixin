@@ -1,12 +1,14 @@
 /**
- * 通讯录功能行的三个真页面（M-D3）：群聊列表 / 新的朋友 / 仅聊天与标签。
- * 之前这些行全是 toast 死入口；现在每个都点得进、看得到真数据。
+ * 通讯录功能行的真页面：群聊列表 / 新的朋友 / 仅聊天的朋友 / 标签（M-D3，M-J7 扩写）。
+ * 之前这些行全是 toast 死入口；M-D3 让每个都点得进，M-J7 让后两个终于有真数据
+ * ——在那之前它们是两句诚实的空文案，因为标签与朋友权限根本还不存在。
  */
 import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
+import { chatOnlyIds, groupByTag } from '../../lib/friend-perms';
 import '../settings/settings.css';
 import './contacts.css';
 
@@ -88,20 +90,131 @@ export function NewFriendsPage() {
   );
 }
 
-/** 仅聊天的朋友 / 标签：honest empty-state pages (this archive has neither yet). */
-export function SimpleListPage({ kind }: { kind: 'chats-only' | 'tags' }) {
+/** One tappable person row, shared by the two list pages below. */
+function PersonRow({ id, trailing }: { id: string; trailing?: string }) {
+  const navigate = useNavigate();
+  const contact = useAppStore((s) => s.contactById(id));
+  if (!contact) return null;
+  return (
+    <div
+      className="settings__row settings__row--divided"
+      onClick={() => navigate(`/contact/${contact.id}`)}
+    >
+      <Avatar
+        color={contact.avatarColor}
+        text={contact.avatarText}
+        imageRef={contact.avatarRef}
+        size={40}
+      />
+      <span className="settings__label" style={{ marginLeft: 10 }}>
+        {contact.remark ?? contact.name}
+      </span>
+      {trailing && <span className="settings__value">{trailing}</span>}
+      <span className="settings__chevron">›</span>
+    </div>
+  );
+}
+
+/**
+ * 仅聊天的朋友 (M-J7).
+ *
+ * Derived from `friendPerms` rather than stored as its own list, so it cannot
+ * disagree with the switch on the profile page — a second list would be a
+ * second truth, and the one that drifts is always the index.
+ */
+export function ChatOnlyListPage() {
+  const perms = useAppStore((s) => s.friendPerms);
+  const ids = useMemo(() => chatOnlyIds(perms), [perms]);
   return (
     <>
-      <SubNav title={kind === 'tags' ? '标签' : '仅聊天的朋友'} />
+      <SubNav title="仅聊天的朋友" />
+      <div className="page-body settings">
+        {ids.length > 0 ? (
+          <>
+            <div className="settings__group">
+              {ids.map((id) => (
+                <PersonRow key={id} id={id} />
+              ))}
+            </div>
+            <p className="settings__footnote">
+              仅聊天的朋友看不到你的朋友圈，你也看不到他的。
+            </p>
+          </>
+        ) : (
+          <div className="settings__group">
+            <div className="field">
+              <span className="field__hint">
+                没有仅聊天的朋友——在联系人资料页的「朋友权限」里可以设置。
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** 标签列表 (M-J7)：每个标签一行，右侧是人数，点进去看成员。 */
+export function TagListPage() {
+  const navigate = useNavigate();
+  const tags = useAppStore((s) => s.contactTags);
+  const groups = useMemo(() => groupByTag(tags), [tags]);
+  return (
+    <>
+      <SubNav title="标签" />
+      <div className="page-body settings">
+        {groups.length > 0 ? (
+          <div className="settings__group">
+            {groups.map((g) => (
+              <div
+                key={g.tag}
+                className="settings__row settings__row--divided"
+                onClick={() => navigate(`/contacts-tags/${encodeURIComponent(g.tag)}`)}
+              >
+                <span className="settings__label">{g.tag}</span>
+                <span className="settings__value">{g.contactIds.length} 人</span>
+                <span className="settings__chevron">›</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="settings__group">
+            <div className="field">
+              <span className="field__hint">
+                还没有创建标签。在联系人资料页的「设置标签」里给朋友打标签后会显示在这里。
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** 一个标签的成员页。 */
+export function TagMembersPage() {
+  const { tag = '' } = useParams();
+  const name = decodeURIComponent(tag);
+  const tags = useAppStore((s) => s.contactTags);
+  const ids = useMemo(
+    () => groupByTag(tags).find((g) => g.tag === name)?.contactIds ?? [],
+    [tags, name],
+  );
+  return (
+    <>
+      <SubNav title={name || '标签'} />
       <div className="page-body settings">
         <div className="settings__group">
-          <div className="field">
-            <span className="field__hint">
-              {kind === 'tags'
-                ? '还没有创建标签。给朋友设置标签后会显示在这里。'
-                : '没有仅聊天的朋友——你的所有好友都是完整权限的朋友。'}
-            </span>
-          </div>
+          {ids.map((id) => (
+            <PersonRow key={id} id={id} />
+          ))}
+          {ids.length === 0 && (
+            <div className="field">
+              {/* Reachable by a stale deep link after the last member lost the
+                  tag — the same "gone, not broken" answer /moments/:id gives. */}
+              <span className="field__hint">这个标签下已经没有朋友了。</span>
+            </div>
+          )}
         </div>
       </div>
     </>

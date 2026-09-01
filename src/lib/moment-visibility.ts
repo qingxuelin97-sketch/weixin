@@ -15,6 +15,7 @@
  * Pure: no storage, no clock, no randomness.
  */
 import type { ContactVM, MomentVisibility, MomentVM } from '../data/types';
+import { canSeeMyMoments, showsInMyFeed, type FriendPermMap } from './friend-perms';
 
 /** The default every row without an explicit audience carries. */
 export const PUBLIC_VISIBILITY: MomentVisibility = { mode: 'public', ids: [] };
@@ -32,9 +33,25 @@ export type AudienceRow = Pick<MomentVM, 'authorId' | 'visibility'>;
  * An unknown/garbage mode falls through to `false`: an unreadable audience must
  * fail CLOSED, because the alternative is publishing something the user meant
  * to restrict.
+ *
+ * 朋友权限 (M-J7) is checked FIRST and separately from the post's own audience,
+ * because the two rules answer different questions: 可见范围 is per-post and
+ * chosen when publishing, 朋友权限 is per-person and applies to everything
+ * retroactively — flipping 「不让他看」 has to hide the posts that already
+ * exist, which is only possible on the read side.
+ *
+ * `perms` is REQUIRED rather than defaulted. Defaulting it would make「忘了传」
+ * indistinguishable from「这里确实没有限制」, and the first of those two is a
+ * silent leak on a surface where a leak is irreversible: a like from someone
+ * you blocked cannot be unseen. Callers with genuinely no user perms in scope
+ * pass `NO_FRIEND_PERMS`, which reads as the declaration it is.
  */
-export function canSeeMoment(m: AudienceRow, viewerId: string): boolean {
+export function canSeeMoment(m: AudienceRow, viewerId: string, perms: FriendPermMap): boolean {
   if (viewerId === m.authorId) return true;
+  // 不让他看 / 不看他 — only ever about the user ('self'); two AIs have no
+  // permissions over each other, they have relationships.
+  if (m.authorId === 'self' && !canSeeMyMoments(perms, viewerId)) return false;
+  if (viewerId === 'self' && !showsInMyFeed(perms, m.authorId)) return false;
   const v = m.visibility;
   if (!v) return true; // no audience recorded = 公开 (every pre-M-I18 row)
   switch (v.mode) {
@@ -58,8 +75,12 @@ export function canSeeMoment(m: AudienceRow, viewerId: string): boolean {
  * property is unit-locked, because the one way a visibility filter turns into a
  * leak is by growing into a fetcher that reaches for more rows than it was given.
  */
-export function visibleMoments<T extends AudienceRow>(rows: readonly T[], viewerId: string): T[] {
-  return rows.filter((m) => canSeeMoment(m, viewerId));
+export function visibleMoments<T extends AudienceRow>(
+  rows: readonly T[],
+  viewerId: string,
+  perms: FriendPermMap,
+): T[] {
+  return rows.filter((m) => canSeeMoment(m, viewerId, perms));
 }
 
 /**

@@ -105,10 +105,20 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/groups': { exempt: 'thin list reusing contacts rows', smoke: { path: '/groups' } },
   '/new-friends': { exempt: 'static placeholder list', smoke: { path: '/new-friends' } },
   '/contacts-chats-only': {
-    exempt: 'thin SimpleListPage variant',
+    exempt: 'thin derived list (仅聊天 名单从 friendPerms 推导)',
     smoke: { path: '/contacts-chats-only' },
   },
-  '/contacts-tags': { exempt: 'thin SimpleListPage variant', smoke: { path: '/contacts-tags' } },
+  '/contacts-tags': { exempt: 'thin derived list (标签索引)', smoke: { path: '/contacts-tags' } },
+  '/contacts-tags/:tag': {
+    exempt: 'thin derived list (一个标签的成员)',
+    // No seeded tag: the members page must still mount and say「没有朋友了」
+    // for a tag whose last member lost it, exactly as /moments/:id does.
+    smoke: { path: '/contacts-tags/smoke_missing' },
+  },
+  '/contact/:contactId/perm': {
+    exempt: 'four switches over one settings row; behavior is unit-tested at the chokepoint',
+    smoke: { path: '/contact/ai_lin/perm' },
+  },
   '/call/:convId': {
     exempt: 'live call surface (audio + session); 真机人验 per specs',
     smoke: { path: '/call/conv_lin' }, // boots into the dialing phase; smoke leaves before answer

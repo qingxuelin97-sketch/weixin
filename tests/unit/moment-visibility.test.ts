@@ -12,6 +12,7 @@
  * filter is in the data layer rather than in whichever component happens to
  * render a feed.
  */
+import { NO_FRIEND_PERMS } from '../../src/lib/friend-perms';
 import { describe, it, expect, beforeEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
@@ -61,38 +62,38 @@ const contact = (id: string, type: ContactVM['type'] = 'ai'): ContactVM => ({
 
 describe('canSeeMoment', () => {
   it('treats a row with no audience as 公开 (every pre-M-I18 post)', () => {
-    expect(canSeeMoment(post(), 'ai_a')).toBe(true);
+    expect(canSeeMoment(post(), 'ai_a', NO_FRIEND_PERMS)).toBe(true);
   });
 
   it('公开 is visible to everyone', () => {
-    expect(canSeeMoment(post({ visibility: vis('public') }), 'ai_a')).toBe(true);
+    expect(canSeeMoment(post({ visibility: vis('public') }), 'ai_a', NO_FRIEND_PERMS)).toBe(true);
   });
 
   it('私密 is visible to nobody but the author', () => {
     const m = post({ visibility: vis('private') });
-    expect(canSeeMoment(m, 'ai_a')).toBe(false);
-    expect(canSeeMoment(m, 'ai_b')).toBe(false);
+    expect(canSeeMoment(m, 'ai_a', NO_FRIEND_PERMS)).toBe(false);
+    expect(canSeeMoment(m, 'ai_b', NO_FRIEND_PERMS)).toBe(false);
     // The author still sees it — 私密 is a diary, not a write-only hole.
-    expect(canSeeMoment(m, 'self')).toBe(true);
+    expect(canSeeMoment(m, 'self', NO_FRIEND_PERMS)).toBe(true);
   });
 
   it('部分可见 is a whitelist', () => {
     const m = post({ visibility: vis('include', ['ai_a']) });
-    expect(canSeeMoment(m, 'ai_a')).toBe(true);
-    expect(canSeeMoment(m, 'ai_b')).toBe(false);
+    expect(canSeeMoment(m, 'ai_a', NO_FRIEND_PERMS)).toBe(true);
+    expect(canSeeMoment(m, 'ai_b', NO_FRIEND_PERMS)).toBe(false);
   });
 
   it('不给谁看 is a blacklist', () => {
     const m = post({ visibility: vis('exclude', ['ai_a']) });
-    expect(canSeeMoment(m, 'ai_a')).toBe(false);
-    expect(canSeeMoment(m, 'ai_b')).toBe(true);
+    expect(canSeeMoment(m, 'ai_a', NO_FRIEND_PERMS)).toBe(false);
+    expect(canSeeMoment(m, 'ai_b', NO_FRIEND_PERMS)).toBe(true);
   });
 
   it('fails CLOSED on an audience it cannot read', () => {
     // A row written by a future version, or corrupted in a restore. Publishing
     // something the user meant to restrict is the unrecoverable direction.
     const m = post({ visibility: { mode: 'sometimes' as never, ids: [] } });
-    expect(canSeeMoment(m, 'ai_a')).toBe(false);
+    expect(canSeeMoment(m, 'ai_a', NO_FRIEND_PERMS)).toBe(false);
   });
 });
 
@@ -107,7 +108,7 @@ describe('visibleMoments', () => {
       post({ id: 'm4', visibility: vis('exclude', ['ai_a']) }),
     ];
     for (const viewer of ['self', 'ai_a', 'ai_b']) {
-      const out = visibleMoments(rows, viewer);
+      const out = visibleMoments(rows, viewer, NO_FRIEND_PERMS);
       expect(out.length).toBeLessThanOrEqual(rows.length);
       for (const m of out) expect(rows).toContain(m);
     }
@@ -115,7 +116,7 @@ describe('visibleMoments', () => {
 
   it('shows the author everything they wrote', () => {
     const rows = [post({ id: 'm1', visibility: vis('private') }), post({ id: 'm2' })];
-    expect(visibleMoments(rows, 'self').map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(visibleMoments(rows, 'self', NO_FRIEND_PERMS).map((m) => m.id)).toEqual(['m1', 'm2']);
   });
 });
 
@@ -184,24 +185,24 @@ describe('planReactions honours 可见范围', () => {
   const crowd = ['ai_a', 'ai_b', 'ai_c'].map((id) => reactor(id));
 
   it('plans ZERO reactions for someone the post is hidden from', () => {
-    const planned = planReactions(post({ visibility: vis('exclude', ['ai_a']) }), crowd, 's');
+    const planned = planReactions(post({ visibility: vis('exclude', ['ai_a']) }), crowd, 's', NO_FRIEND_PERMS);
     expect(planned.filter((p) => p.contactId === 'ai_a')).toEqual([]);
     // …while everyone else still reacts, so this is a filter and not an outage.
     expect(planned.some((p) => p.contactId === 'ai_b')).toBe(true);
   });
 
   it('plans reactions ONLY for the whitelist under 部分可见', () => {
-    const planned = planReactions(post({ visibility: vis('include', ['ai_b']) }), crowd, 's');
+    const planned = planReactions(post({ visibility: vis('include', ['ai_b']) }), crowd, 's', NO_FRIEND_PERMS);
     expect(new Set(planned.map((p) => p.contactId))).toEqual(new Set(['ai_b']));
   });
 
   it('a 私密 post draws nothing at all', () => {
-    expect(planReactions(post({ visibility: vis('private') }), crowd, 's')).toEqual([]);
+    expect(planReactions(post({ visibility: vis('private') }), crowd, 's', NO_FRIEND_PERMS)).toEqual([]);
   });
 
   it('leaves 公开 posts exactly as they were before M-I18', () => {
-    const before = planReactions(post(), crowd, 's');
-    const after = planReactions(post({ visibility: vis('public') }), crowd, 's');
+    const before = planReactions(post(), crowd, 's', NO_FRIEND_PERMS);
+    const after = planReactions(post({ visibility: vis('public') }), crowd, 's', NO_FRIEND_PERMS);
     expect(after).toEqual(before);
     expect(before.length).toBeGreaterThan(0);
   });
@@ -209,8 +210,8 @@ describe('planReactions honours 可见范围', () => {
   it('does not merely re-roll the dice — the excluded person is dropped, the rest keep their times', () => {
     // If the filter had been applied by consuming rng draws differently, the
     // survivors' schedules would shift. Same seed, same times.
-    const open = planReactions(post(), crowd, 's');
-    const closed = planReactions(post({ visibility: vis('exclude', ['ai_a']) }), crowd, 's');
+    const open = planReactions(post(), crowd, 's', NO_FRIEND_PERMS);
+    const closed = planReactions(post({ visibility: vis('exclude', ['ai_a']) }), crowd, 's', NO_FRIEND_PERMS);
     expect(closed).toEqual(open.filter((p) => p.contactId !== 'ai_a'));
   });
 });
@@ -224,14 +225,14 @@ describe('planRepost honours 可见范围', () => {
     for (const mode of ['private', 'include', 'exclude'] as const) {
       for (let i = 0; i < 200; i++) {
         const m = post({ id: `m${i}`, visibility: vis(mode, ['ai_a']) });
-        expect(planRepost(m, crowd, 's')).toBeNull();
+        expect(planRepost(m, crowd, 's', NO_FRIEND_PERMS)).toBeNull();
       }
     }
   });
 
   it('still reposts 公开 posts (the refusal is targeted, not a kill switch)', () => {
     let hits = 0;
-    for (let i = 0; i < 200; i++) if (planRepost(post({ id: `m${i}` }), crowd, 's')) hits++;
+    for (let i = 0; i < 200; i++) if (planRepost(post({ id: `m${i}` }), crowd, 's', NO_FRIEND_PERMS)) hits++;
     expect(hits).toBeGreaterThan(0);
   });
 });
@@ -375,14 +376,23 @@ describe('no feature component holds the visibility invariant', () => {
     // `audienceLabel` (a label) is fine on a card; `canSeeMoment` /
     // `visibleMoments` (the rule) must not be. If a future change moves the
     // check into a page, the next read path added elsewhere silently leaks.
+    //
+    // Comments are stripped BEFORE the scan (M-J7). A page's header comment
+    // explaining that the rule lives in the data layer is the opposite of the
+    // violation this guard exists to catch, and flagging it teaches exactly the
+    // wrong lesson: delete the explanation to get the build green. Same failure
+    // mode as J11's union scan — a text scan that does not know what is code
+    // and what is prose reports on prose.
     const root = join(__dirname, '..', '..', 'src', 'features');
     const offenders: string[] = [];
+    const stripComments = (s: string) =>
+      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
     const walk = (dir: string) => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
         const p = join(dir, e.name);
         if (e.isDirectory()) walk(p);
         else if (/\.tsx?$/.test(e.name)) {
-          const src = readFileSync(p, 'utf8');
+          const src = stripComments(readFileSync(p, 'utf8'));
           if (/\b(canSeeMoment|visibleMoments)\b/.test(src)) offenders.push(p);
         }
       }

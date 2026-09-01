@@ -3,6 +3,15 @@
  * State is hydrated from the Repo on startup; mutations write through to the Repo
  * so data survives refresh. Component-facing selectors keep their M1 signatures.
  */
+import {
+  NO_FRIEND_PERMS,
+  NO_TAGS,
+  setPerm,
+  setTags,
+  type ContactTagMap,
+  type FriendPerm,
+  type FriendPermMap,
+} from '../lib/friend-perms';
 import { create } from 'zustand';
 import type {
   ContactVM,
@@ -89,6 +98,18 @@ interface AppState {
    * Discover-tab badge lie. Stable reference; only refresh/markSeen replace it.
    */
   momentsNews: MomentsNews;
+  /**
+   * 朋友权限 / 标签 (M-J7). Hydrated once and written through, like every other
+   * settings-backed slice here. Both are stable references replaced wholesale
+   * on write — never derived in a selector, which is how §3.5's infinite
+   * re-render happens.
+   */
+  friendPerms: FriendPermMap;
+  contactTags: ContactTagMap;
+  /** Merge one contact's permission switches (clears the entry when all are off). */
+  setFriendPerm: (contactId: string, patch: FriendPerm) => Promise<void>;
+  /** Replace one contact's tag list (clears the entry when empty). */
+  setContactTags: (contactId: string, tags: string[]) => Promise<void>;
   /** Recompute momentsNews from storage. Cheap (one feed page + social rows). */
   refreshMomentsNews: () => Promise<void>;
   /** The user just looked at the feed: persist the watermark, clear the badge. */
@@ -254,12 +275,26 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
     if (item.kind === 'avatar') materializeMedia(item.id, item.blob);
   }
   conversations.sort(sortConversations);
-  set({ hydrated: true, contacts, conversations, messages, personas });
+  const [friendPerms, contactTags] = await Promise.all([
+    repo.getFriendPerms(),
+    repo.getSetting<ContactTagMap>('contactTags'),
+  ]);
+  set({
+    hydrated: true,
+    contacts,
+    conversations,
+    messages,
+    personas,
+    friendPerms,
+    contactTags: contactTags ?? NO_TAGS,
+  });
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
   hydrated: false,
   hydrateError: null,
+  friendPerms: NO_FRIEND_PERMS,
+  contactTags: NO_TAGS,
   contacts: [],
   conversations: [],
   messages: {},
@@ -689,6 +724,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     const news = collectMomentsNews(moments, likes, comments, seenAt);
     // Keep the stable EMPTY_NEWS reference for the common nothing-new case.
     set({ momentsNews: news.count === 0 ? EMPTY_NEWS : news });
+  },
+
+  setFriendPerm: async (contactId, patch) => {
+    const next = setPerm(get().friendPerms, contactId, patch);
+    await repo.putSetting('friendPerms', next);
+    set({ friendPerms: next });
+  },
+
+  setContactTags: async (contactId, tags) => {
+    const next = setTags(get().contactTags, contactId, tags);
+    await repo.putSetting('contactTags', next);
+    set({ contactTags: next });
   },
 
   markMomentsSeen: async (now) => {

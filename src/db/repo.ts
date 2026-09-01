@@ -41,6 +41,7 @@ import {
   idbFirstByIndex,
 } from './idb';
 import { visibleMoments, withoutContact } from '../lib/moment-visibility';
+import { NO_FRIEND_PERMS, type FriendPermMap } from '../lib/friend-perms';
 
 export interface Repo {
   // contacts & personas
@@ -129,6 +130,16 @@ export interface Repo {
    * deleted post. `viewer` defaults to 'self', like every other moment read.
    */
   getMoment(id: string, viewer?: string): Promise<MomentVM | undefined>;
+  /**
+   * 朋友权限 (M-J7) — 仅聊天 / 不让他看 / 不看他，一行 KV，值是 contactId→开关。
+   *
+   * On the interface rather than as a bare `getSetting('friendPerms')` at each
+   * call site for the same reason `getMoment` takes a viewer: the perms are an
+   * INPUT to every audience decision, and a key string copy-pasted into eight
+   * files is a key string that gets typo'd in the ninth. The drivers use it
+   * internally too, so the feed is filtered whether or not a caller remembers.
+   */
+  getFriendPerms(): Promise<FriendPermMap>;
   /** One person's whole timeline, newest first (个人相册页, M-I15). Audience-filtered. */
   getMomentsByAuthor(authorId: string, viewer?: string): Promise<MomentVM[]>;
   putMoment(m: MomentVM): Promise<void>;
@@ -323,6 +334,23 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
   'relarc:': { scope: 'pair', row: 'cascade', why: 'A 与 B 的关系弧标记' },
 
   /* ---- a global row that nonetheless carries per-contact ENTRIES ---- */
+  // 朋友权限 / 标签 (M-J7). One row each, values keyed by contactId — the same
+  // shape as rel_edges and for the same reason: 「列出所有标签」and「谁是仅聊天」
+  // are index queries, and one row answers them without reading N rows. So the
+  // same consequence too: deleting the row would take every OTHER friend's
+  // settings with it, hence per-entry surgery.
+  friendPerms: {
+    scope: 'global',
+    row: 'exempt',
+    entries: 'id',
+    why: '朋友圈权限表存在一行里：删行=把所有人的权限一起清空，所以按 id 逐条删',
+  },
+  contactTags: {
+    scope: 'global',
+    row: 'exempt',
+    entries: 'id',
+    why: '联系人标签表存在一行里：同上，按 id 逐条删',
+  },
   rel_edges: {
     scope: 'global',
     row: 'exempt',
@@ -820,6 +848,15 @@ export class IdbRepo implements Repo {
     return { likes, comments };
   }
 
+  /**
+   * 朋友权限 (M-J7) — read inside the driver for the same reason 可见范围 is
+   * filtered here: a reader that has to remember to fetch the perms is a reader
+   * that eventually forgets, and forgetting shows up as her liking a post you
+   * blocked her from. One KV row, so this is one extra get per moment read.
+   */
+  async getFriendPerms(): Promise<FriendPermMap> {
+    return (await this.getSetting<FriendPermMap>('friendPerms')) ?? NO_FRIEND_PERMS;
+  }
   async getMoments(opts: { limit?: number; before?: number; viewer?: string } = {}) {
     // Walks `byCreatedAt` backwards (v7) instead of reading and sorting the
     // whole store. The old version applied `limit` only AFTER deserializing
@@ -833,13 +870,13 @@ export class IdbRepo implements Repo {
     // runs AFTER the page is cut, which can hand back a short page to an agent
     // viewer; that is the right trade for the two agent-side readers (limit 8
     // and 10), and 'self' — the paginating reader — never loses a row.
-    return visibleMoments(page, opts.viewer ?? 'self');
+    return visibleMoments(page, opts.viewer ?? 'self', await this.getFriendPerms());
   }
   async getMoment(id: string, viewer = 'self') {
     const m = await idbGet<MomentVM>('moments', id);
     // Same in-driver audience gate as getMoments — a by-id read must not be
     // the one path that skips the rule.
-    return m && visibleMoments([m], viewer).length > 0 ? m : undefined;
+    return m && visibleMoments([m], viewer, await this.getFriendPerms()).length > 0 ? m : undefined;
   }
   /**
    * Full scan by design: the album page is an occasional destination, one
@@ -851,6 +888,7 @@ export class IdbRepo implements Repo {
     return visibleMoments(
       all.filter((m) => m.authorId === authorId),
       viewer,
+      await this.getFriendPerms(),
     ).sort((a, b) => b.createdAt - a.createdAt);
   }
   async putMoment(m: MomentVM) {

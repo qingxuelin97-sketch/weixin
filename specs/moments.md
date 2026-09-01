@@ -287,3 +287,46 @@ React Router 段排名优先，参数路由只接 id）。
   （删完返回上一页）；评论输入复用 feed 的内联 composer，评论全量展开。
 - 路由台账：golden `moment-detail`（pendingCast，PNG 由 CI 铸）+ smoke 用种子
   `mo_seed_lin`；截图接进 pages.spec.ts。
+
+---
+
+## M-J7 增补：朋友权限（仅聊天 / 不让他看 / 不看他）
+
+微信资料页那三个开关。与「可见范围」看着像，实际是**正交的另一条规则**：
+可见范围是**按帖**的、发帖那一刻定的；朋友权限是**按人**的，且对**已经存在的
+一切**生效。所以它只能做在读侧——把权限在发帖时折叠进那条帖子的黑名单看着更省
+事，但那样改开关就改不动昨天的帖子，而用户打开「不让他看」时想的正是昨天那条。
+
+### 数据
+
+一行 KV `friendPerms`，值是 `contactId → { chatOnly?, hideMine?, hideTheirs? }`。
+一行装下的理由与 `rel_edges` 相同：「谁是仅聊天」是个索引查询，一行就答完了。
+代价也相同——删联系人时**不能删整行**，`SETTINGS_KEY_CASCADE` 里登记
+`entries: 'id'` 走逐条手术（`contactTags` 同）。
+
+三个开关**互不写坏对方**：`chatOnly` 是顶替不是同步。实现成「打开时把两个细
+开关一起写 true」会吃掉用户原来的选择，而那正是他关掉粗开关时想拿回来的东西。
+
+### 收口
+
+规则只有一处：`canSeeMoment(row, viewer, perms)`。权限判在可见范围**之前**，
+两者取交集（任一条拒绝即拒绝）。第三个参数**必填**，没有默认值：
+
+> 默认值会让「忘了传」和「这里确实没有限制」长得一模一样，而前者是在本 App
+> 泄漏后果最重的面上静默失效——消息能撤回，赞不能。调用点确实没有用户权限
+> 时传 `NO_FRIEND_PERMS`，那是一句声明，不是省略。
+
+读侧因此全部自动闭合：两个驱动的 `getMoments`/`getMoment`/`getMomentsByAuthor`
+在**驱动内部**取权限；`planReactions` / `planRepost` 掷骰子**之前**先过滤；
+`simulate()` 是纯函数，权限经 `SimInput.friendPerms` 带进去；agent-dm 取朋友圈
+话题时对**每个参与者**都判一次。
+
+### 已知坑
+
+- **单测夹具里给人设 `chatOnly` / `hideTheirs` 会连带改变别的断言**：这两档会把
+  那个人自己的帖子从 `getMoments()`（viewer='self'）里滤掉。级联测试的残留探针
+  正好要读回那些帖子，于是一个「更真实」的夹具会让一堆与删除无关的断言变红。
+  只测级联时用 `hideMine`——级联不关心是哪个开关。
+- **`runMomentLike` 一类要以「反应者」为 viewer 取帖**（`getMoment(id, contactId)`）。
+  用默认的 'self' 取，「不看他」会顺带让她连**别人**的帖子都点不了赞——开关上
+  可没这么写。

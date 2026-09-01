@@ -14,6 +14,7 @@
 import type { PersonaVM, ContactVM, MomentVM } from '../data/types';
 import { seededRng } from '../lib/money';
 import { canSeeMoment } from '../lib/moment-visibility';
+import type { FriendPermMap } from '../lib/friend-perms';
 import { maxTier, globalTier } from '../lib/nsfw-tier';
 import type { NsfwTier } from '../llm/router';
 import { assembleSystemPrompt } from './prompt';
@@ -76,21 +77,23 @@ const MIN_COMMENT_DELAY = 3 * MINUTE;
  * A commenter always likes first if they were also going to like, and their
  * comment lands after that like, which is what real ordering looks like.
  *
- * 可见范围 (M-I18): anyone the post is not visible to is dropped BEFORE the dice
- * are rolled, so a restricted post plans exactly zero reactions for them. This
- * is the single most important consequence of the whole audience feature — a
- * like from someone you excluded is an instant, irreversible tell.
+ * 可见范围 (M-I18) + 朋友权限 (M-J7): anyone the post is not visible to is
+ * dropped BEFORE the dice are rolled, so a restricted post plans exactly zero
+ * reactions for them. This is the single most important consequence of both
+ * audience features — a like from someone you excluded is an instant,
+ * irreversible tell, and unlike a message it cannot be recalled.
  */
 export function planReactions(
   post: PlannablePost,
   reactors: ReactorInfo[],
   seed: string,
+  perms: FriendPermMap,
 ): PlannedReaction[] {
   const { id: momentId, authorId, createdAt: postedAt } = post;
   const out: PlannedReaction[] = [];
   for (const r of reactors) {
     if (r.contactId === authorId) continue;
-    if (!canSeeMoment(post, r.contactId)) continue;
+    if (!canSeeMoment(post, r.contactId, perms)) continue;
     const rng = seededRng(`${seed}:${momentId}:${r.contactId}`);
     // Affinity 0→0.6x, 50→1.0x, 100→1.4x of the persona's base rate.
     const affinityScale = 0.6 + (r.affinity / 100) * 0.8;
@@ -217,6 +220,7 @@ export function planRepost(
   post: PlannablePost,
   reactors: ReactorInfo[],
   seed: string,
+  perms: FriendPermMap,
 ): PlannedRepost | null {
   const { id: momentId, authorId, createdAt: postedAt } = post;
   if (authorId !== 'self') return null;
@@ -229,7 +233,7 @@ export function planRepost(
     (r) =>
       r.contactId !== authorId &&
       r.affinity >= REPOST_MIN_AFFINITY &&
-      canSeeMoment(post, r.contactId),
+      canSeeMoment(post, r.contactId, perms),
   );
   if (eligible.length === 0) return null;
   const who = eligible[Math.floor(rng() * eligible.length)];

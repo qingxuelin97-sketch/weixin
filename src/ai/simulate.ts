@@ -27,6 +27,7 @@ import { maybeGroupInvite } from './agent-invite';
 import { MEM_EXTRACT_MIN_NEW } from './memory-service';
 import type { MomentVisibility, PersonaVM } from '../data/types';
 import { canSeeMoment } from '../lib/moment-visibility';
+import { NO_FRIEND_PERMS, type FriendPermMap } from '../lib/friend-perms';
 
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
@@ -178,6 +179,14 @@ export interface SimInput {
      */
     visibility?: MomentVisibility;
   }>;
+  /**
+   * 朋友权限 (M-J7). Passed in for the same reason `activity` is: simulate() is
+   * pure and must not read storage — and for the same reason `visibility` rides
+   * with the row: the belated-reaction planner is the read path most likely to
+   * be forgotten, and a like from someone the user blocked is indistinguishable
+   * from a live one once it lands.
+   */
+  friendPerms?: FriendPermMap;
   /**
    * Member lists of every non-hidden group (M-I18), for `agent_invite`: a trio
    * that already shares a room must never be proposed one. Passed in rather
@@ -333,7 +342,8 @@ export function simulate(t0: number, t1: number, input: SimInput, seed: string):
     for (const cand of candidates) {
       if (reacted >= reactBudget) break;
       if (cand.contactId === m.authorId) continue; // never self-react
-      if (!canSeeMoment(m, cand.contactId)) continue; // 可见范围 (M-I18)
+      // 可见范围 (M-I18) + 朋友权限 (M-J7), one check, one chokepoint.
+      if (!canSeeMoment(m, cand.contactId, input.friendPerms ?? NO_FRIEND_PERMS)) continue;
       const r = seededRng(`react:${seed}:${from}:${m.id}:${cand.contactId}`);
       if (r() >= cand.persona.likeRate * 0.5) continue;
       const at = pickTimes(

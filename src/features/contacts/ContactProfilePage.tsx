@@ -6,6 +6,7 @@
 import { useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
+import { parseTags, permLabel } from '../../lib/friend-perms';
 import { Avatar } from '../../components/Avatar';
 import { FLIP_KEYS } from '../../lib/flip';
 import { useFlipEnter } from '../../lib/useFlipEnter';
@@ -31,6 +32,9 @@ export function ContactProfilePage() {
   const contact = useAppStore((s) => s.contactById(contactId));
   const persona = useAppStore((s) => s.personaFor(contactId));
   const conversations = useAppStore((s) => s.conversations);
+  const tags = useAppStore((s) => s.contactTags);
+  const perms = useAppStore((s) => s.friendPerms);
+  const setContactTags = useAppStore((s) => s.setContactTags);
   const addConversation = useAppStore((s) => s.addConversation);
   const deleteContact = useAppStore((s) => s.deleteContact);
   const showToast = useAppStore((s) => s.showToast);
@@ -158,6 +162,39 @@ export function ContactProfilePage() {
           >
             <span className="settings__label">备注名</span>
             <span className="settings__value">{contact.remark ?? '未设置'}</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          {/* 设置标签 (M-J7). Free text rather than a picker: the tag set is
+              derived from what people are tagged with, so a "create tag" step
+              would be a second source for a list that already has one. */}
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() =>
+              guard('contact.tags', async () => {
+                const next = await showPrompt({
+                  title: '设置标签',
+                  initial: (tags[contactId] ?? []).join('、'),
+                  placeholder: '用逗号分隔，如：同事, 球友',
+                  maxLength: 60,
+                  allowEmpty: true, // clearing every tag is a real intent
+                });
+                if (next === null) return;
+                await setContactTags(contactId, parseTags(next));
+              })
+            }
+          >
+            <span className="settings__label">标签</span>
+            <span className="settings__value">
+              {(tags[contactId] ?? []).join('、') || '未设置'}
+            </span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate(`/contact/${contactId}/perm`)}
+          >
+            <span className="settings__label">朋友权限</span>
+            <span className="settings__value">{permLabel(perms, contactId)}</span>
             <span className="settings__chevron">›</span>
           </div>
           {/* 个人相册 (M-I18): the album page existed since I15 but was only

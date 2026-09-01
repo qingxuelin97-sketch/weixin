@@ -632,15 +632,15 @@ describe('the deleteContact ledger', () => {
 
   /**
    * Rows whose VALUE is an id-keyed map need bespoke surgery, so each one needs
-   * its own test. There are two, and both have one below. A third turns this
-   * red until someone writes its test too.
+   * its own test. There are four, and all four have one below. A fifth turns
+   * this red until someone writes its test too.
    */
   it('pins the rows that need per-entry surgery', () => {
     const withEntries = Object.entries(SETTINGS_KEY_CASCADE)
       .filter(([, r]) => r.entries)
       .map(([k]) => k)
       .sort();
-    expect(withEntries).toEqual(['groupNick:', 'rel_edges']);
+    expect(withEntries).toEqual(['contactTags', 'friendPerms', 'groupNick:', 'rel_edges']);
   });
 
   it('refuses to delete the user', async () => {
@@ -781,6 +781,18 @@ describe('deleteContact cascade', () => {
     // 群昵称: the GROUP survives the deletion, so this row survives with it —
     // but the dead member's alias inside it must not.
     await repo.putSetting('groupNick:conv_g', { [VICTIM]: '小删', [FRIEND]: '小留' });
+
+    // 朋友权限 / 标签 (M-J7): same shape as groupNick — one row, many owners.
+    // Both entries use 不让他看 rather than 仅聊天/不看他, and that is load-bearing:
+    // the two 不看他 flavours hide that person's OWN posts from the feed, and the
+    // residue probes above read exactly those posts back. A "more realistic"
+    // fixture here makes unrelated assertions fail for a reason that has nothing
+    // to do with deletion. The cascade does not care which flag is set.
+    await repo.putSetting('friendPerms', {
+      [VICTIM]: { hideMine: true },
+      [FRIEND]: { hideMine: true },
+    });
+    await repo.putSetting('contactTags', { [VICTIM]: ['同事'], [FRIEND]: ['同事', '球友'] });
 
     // Relationship edges, written through the REAL engine so the test proves
     // the actual read path (one settings row holding every pair).
@@ -951,6 +963,24 @@ describe('deleteContact cascade', () => {
     expect(nicks).toBeDefined();
     expect(nicks![VICTIM]).toBeUndefined();
     expect(nicks![FRIEND]).toBe('小留');
+  });
+
+  /**
+   * 朋友权限 (M-J7). The consequence of getting this wrong is specific and
+   * ugly: seed ids are fixed, so a surviving 「仅聊天」 entry means the NEXT
+   * person created under that id is silently born unable to see your moments —
+   * a friend who never likes anything, with no UI anywhere saying why.
+   */
+  it('drops the dead contact from friendPerms and contactTags, keeping the survivors', async () => {
+    await repo.deleteContact(VICTIM);
+
+    const perms = await repo.getFriendPerms();
+    expect(perms[VICTIM]).toBeUndefined();
+    expect(perms[FRIEND]).toEqual({ hideMine: true });
+
+    const tags = await repo.getSetting<Record<string, string[]>>('contactTags');
+    expect(tags![VICTIM]).toBeUndefined();
+    expect(tags![FRIEND]).toEqual(['同事', '球友']);
   });
 
   /**

@@ -10,6 +10,7 @@
  * the failure mode is "someone deletes the call site", the source is scanned
  * (the wiring.test.ts precedent: unreached code passes its own tests).
  */
+import { NO_FRIEND_PERMS } from '../../src/lib/friend-perms';
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -392,6 +393,7 @@ function dmHarness(over: Partial<DmDeps> = {}) {
     putMemory: async (f) => void memories.push(f),
     getMemoryFacts: async () => [],
     getGroupMessages: async () => [],
+    getFriendPerms: async () => NO_FRIEND_PERMS,
     getMoments: async () => [],
     complete: async (messages) => {
       prompts.push(messages.map((m) => m.content).join('\n'));
