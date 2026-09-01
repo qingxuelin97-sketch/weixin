@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import 'fake-indexeddb/auto';
 import { repo } from '../../src/db/repo';
-import { idbPut } from '../../src/db/idb';
+import { idbPut, idbBulkPut } from '../../src/db/idb';
 import {
   enqueue,
   pendingActions,
@@ -304,5 +304,73 @@ describe('deleting a conversation is one transaction, not one per message', () =
     expect(read('messages')).toBe(0);
     expect(getAllCalls).toBe(0);
     expect(await repo.getMessages('big', { limit: 10 })).toHaveLength(0);
+  });
+});
+
+/* ==================================================================== */
+/* 规模压测 (M-J11)                                                      */
+/* ==================================================================== */
+
+/**
+ * 上面每一组都在几千行的量级上验「不是 O(store)」。这一组把量级抬到用户真的
+ * 会走到的地方——**四万条消息**——因为常数与渐进在这个仓库里骗过人不止一次：
+ * 「一次全表扫」在 2,000 行时跑 3ms，看着完全正常，到 40,000 行才变成半秒的
+ * 白屏，而那时候没人记得是哪次改动带进来的。
+ *
+ * 断言的仍然是**读了多少行**，不是花了多少毫秒（CI 上会飘，这是本文件开头就
+ * 立下的规矩）。
+ */
+describe('四万条消息下仍然按页付费', () => {
+  const BIG_CONV = 'conv_big';
+  const BIG_N = 40_000;
+
+  beforeAll(async () => {
+    // 走 idbBulkPut 而不是四万次 repo.addMessage：逐条写在 fake-indexeddb 上要
+    // 四十秒，会把整个单测套件的时长翻三倍。这一组测的是**读**，写的形状由
+    // sqlite-repo 那套三驱动等价性套件保证。
+    const rows: MessageVM[] = [];
+    for (let i = 1; i <= BIG_N; i++) {
+      rows.push({
+        id: i,
+        convId: BIG_CONV,
+        senderId: i % 2 ? 'self' : 'ai_a',
+        type: 'text',
+        content: `第 ${i} 条`,
+        status: 'sent',
+        createdAt: T0 + i,
+      } as unknown as MessageVM);
+    }
+    // 一次事务写不下四万行时分批——单个事务过大在真 IndexedDB 上会被中止。
+    for (let i = 0; i < rows.length; i += 5_000) {
+      await idbBulkPut('messages', rows.slice(i, i + 5_000));
+    }
+  }, 120_000);
+
+  beforeEach(() => {
+    rowsRead.clear();
+  });
+
+  it('打开会话只付一屏的钱，不是四万行', async () => {
+    const page = await repo.getMessages(BIG_CONV, { limit: 50 });
+    expect(page).toHaveLength(50);
+    // 游标读，允许一点索引开销，但绝不能是 O(全表)。
+    expect(read('messages')).toBeLessThan(2_000);
+  });
+
+  it('往上翻一页也是一页的钱（深翻页不许 O(skipped)）', async () => {
+    const first = await repo.getMessages(BIG_CONV, { limit: 50 });
+    rowsRead.clear();
+    const older = await repo.getMessages(BIG_CONV, {
+      limit: 50,
+      beforeId: first[0].id,
+    });
+    expect(older).toHaveLength(50);
+    expect(read('messages')).toBeLessThan(2_000);
+  });
+
+  it('取最早一条消息的时间不需要把四万行读进 JS', async () => {
+    const at = await repo.firstMessageAt(BIG_CONV);
+    expect(at).toBe(T0 + 1);
+    expect(read('messages')).toBeLessThan(2_000);
   });
 });

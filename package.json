@@ -23,7 +23,8 @@
     "cap:sync": "cap sync",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "cap:add": "cap add android",
-    "cap:apk": "pnpm build && cap sync android && cd android && ./gradlew assembleDebug"
+    "cap:apk": "pnpm build && cap sync android && cd android && ./gradlew assembleDebug",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@capacitor-community/sqlite": "^7.0.3",
@@ -54,6 +55,7 @@
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^2.1.9",
     "eslint": "^8.57.1",
     "eslint-plugin-react-hooks": "^5.1.0",
     "fake-indexeddb": "^6.2.5",

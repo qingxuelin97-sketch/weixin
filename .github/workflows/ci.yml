@@ -30,6 +30,19 @@ jobs:
       # green — and nothing measured startup weight at all.
       - run: pnpm build
       - run: pnpm check:size
+      # 覆盖率 (M-J11)：**先观测，不阻塞**。`continue-on-error` 不是偷懒——
+      # 一个一上来就卡阈值的门禁，第一件促成的事是有人给好测的纯函数补凑数用例，
+      # 而真正没被覆盖的是 .tsx 与原生桥。先让数字在几轮里可见，再谈要不要卡。
+      # 现状（M-J11 首测）：statements 49%，分支 83%——两个数字差这么远本身
+      # 就是结论：逻辑分支测得不错，整片整片没被执行的是组件。
+      - run: pnpm test:coverage
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
 
   # android/ 是手写 Kotlin（M-I10），但 `check` 全程碰不到它——本容器构不了 android
   # （dl.google.com 被出网策略拦），所以 Kotlin 编译错误只会在 release.yml 手动出包时

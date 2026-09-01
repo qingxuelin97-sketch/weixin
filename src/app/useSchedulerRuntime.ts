@@ -115,332 +115,360 @@ import { maybeGroupInvite } from '../ai/agent-invite';
 import { repo } from '../db/repo';
 import { useAppStore } from '../store/appStore';
 
+/**
+ * 调度运行时的**可执行核心** (M-J11)。
+ *
+ * 这 1000 行是全部 25 个 handler 的注册地，也是五个守卫的断言对象——而在这次
+ * 抽取之前它们**一次都没有被执行过**：那五个守卫全是对着源码字符串做正则，
+ * 「注册了 25 个 kind」这句话从来没有被真的验证过一次。字符串断言看得见
+ * `registerHandler('pat_back'` 这行文本，看不见它是否在一个 `if (false)` 里面。
+ *
+ * 所以把 deps 构造与注册从 `useEffect` 里搬出来，成为两个不依赖 React 的普通
+ * 函数。Hook 只剩生命周期。测试因此可以直接调 `registerAllHandlers(假deps)`
+ * 并检查真实的注册结果。字符串守卫保留为第二道保险，没有删。
+ */
+export function buildHandlerDeps(): HandlerDeps {
+const store = useAppStore.getState();
+const hooks = {
+  appendMessage: store.appendMessage,
+  updateMessage: store.updateMessage,
+  setTyping: store.setTyping,
+  now: () => Date.now(),
+};
+
+// Handlers live in ai/handlers.ts as plain functions; this bag is the only
+// place they touch the store, the repo, or the network. Registration is all
+// that remains here.
+const deps: HandlerDeps = {
+  contactById: (id) => useAppStore.getState().contactById(id),
+  personaFor: (id) => useAppStore.getState().personaFor(id),
+  conversationById: (id) => useAppStore.getState().conversationById(id),
+  messagesFor: (id) => useAppStore.getState().messagesFor(id),
+  conversationExists: (id) => useAppStore.getState().conversations.some((c) => c.id === id),
+
+  hooks,
+  updateMessage: (m) => useAppStore.getState().updateMessage(m),
+
+  getMessages: (convId, opts) => repo.getMessages(convId, opts),
+  getMemory: (id) => repo.getMemory(id),
+  putConvSummary: (row) => repo.putConvSummary(row),
+  getGlobalTier: globalTier,
+  getMoment: (id) => repo.getMoment(id),
+
+  getRouter,
+  now: () => Date.now(),
+
+  // Social fabric (M-I3).
+  addMoment: (m) => useAppStore.getState().addMoment(m),
+  enqueue: async (opts) => {
+    await enqueue({ ...opts, now: Date.now() });
+  },
+  visibleConvWithUser: (contactId) =>
+    useAppStore
+      .getState()
+      .conversations.find(
+        (c) => c.type === 'single' && c.peerId === contactId && !c.isHidden,
+      ),
+
+  claimRedPacket: (rpId, contactId, name, h) => claimRedPacket(rpId, contactId, name, h),
+  // 收钱侧动机 (M-J8): the QUEUE's accept goes through receiveTransfer, so
+  // she can refuse a too-big or badly-timed transfer. The user's own tap
+  // (ChatPage.onMoneyTap) still calls acceptTransfer unconditionally.
+  acceptTransfer: (transferId, h) =>
+    receiveTransfer(transferId, h, {
+      personaFor: (id) => useAppStore.getState().personaFor(id),
+      affinityOf: async (id) => {
+        const edge = await getEdge('self', id, Date.now());
+        const persona = useAppStore.getState().personaFor(id);
+        return effectiveAffinity(edge, persona?.affinityInit ?? 20);
+      },
+      valenceOf: async (id) => (await affectFor(id, Date.now())).affect.valence,
+    }),
+  returnTransfer: (transferId, h, at) => returnTransfer(transferId, h, at),
+  returnRedPacket: (rpId, h, at) => returnRedPacket(rpId, h, at),
+  payBill: (billId, convId, contactId, at) => payBill(billId, convId, contactId, hooks, at),
+  runBill: (p) =>
+    startAiBill(p, {
+      conversationById: (id) => useAppStore.getState().conversationById(id),
+      contactById: (id) => useAppStore.getState().contactById(id),
+      personaFor: (id) => useAppStore.getState().personaFor(id),
+      hooks,
+    }),
+  sendProactiveMessage,
+  sendGroupProactiveMessage,
+  runMemExtract,
+  runAgentDm: (plan) => runDmSession(plan),
+  runMomentPost: async (persona, peer, at) => {
+    const s = useAppStore.getState();
+    await runMomentPost(persona, peer, s.contacts, s.personaFor, momentsHooks, at);
+  },
+  // A call can only ring while the app is open — a WebView cannot wake the
+  // screen — so this is a plain store write, and returns whether it took.
+  ringUser: (convId, contactId, reason) => {
+    const st = useAppStore.getState();
+    // Never ring over a call already in progress, and never while the user
+    // is typing in that very conversation: a call is a synchronous demand
+    // for attention, and the worst possible moment for one is mid-sentence.
+    if (st.incomingCall || st.activeConvId === convId) return false;
+    st.setIncomingCall({ convId, contactId, reason, at: Date.now() });
+    return true;
+  },
+  runGift: (p) =>
+    runGift(p, {
+      hooks,
+      // Everyone in the room except the sender may grab a group packet;
+      // in a single chat this is empty and only the user can open it.
+      grabbers: (convId, senderId) => {
+        const s = useAppStore.getState();
+        const conv = s.conversationById(convId);
+        if (conv?.type !== 'group') return [];
+        return (conv.memberIds ?? [])
+          .filter((id) => id !== senderId && id !== 'self')
+          .map((id) => ({ contactId: id, persona: s.personaFor(id) }));
+      },
+      contactById: (id) => useAppStore.getState().contactById(id),
+      now: () => Date.now(),
+    }),
+  runMomentLike: (momentId, contactId, at) =>
+    runMomentLike(momentId, contactId, momentsHooks, at),
+  runMomentComment: (momentId, commenter, persona, authorName, at) =>
+    runMomentComment(momentId, commenter, persona, authorName, momentsHooks, at),
+  runMomentRepost: async (momentId, reposter, persona, at) => {
+    const s = useAppStore.getState();
+    await runMomentRepost(momentId, reposter, persona, s.contacts, s.personaFor, momentsHooks, at);
+  },
+
+  chainHeartbeat: async (persona, convId, lastMsgAt) => {
+    // Anti-spam bookkeeping: two unanswered reaches in a row → 24h cooldown.
+    const now = Date.now();
+    const state = await noteProactiveSent(persona.contactId, now);
+    const edge = await getEdge('self', persona.contactId, now);
+    // Pacing now answers to how she FEELS, not only to the day's dice: the
+    // affect pulse rides the same proactMul the mood already used (M-E3).
+    const { params } = await affectFor(persona.contactId, now);
+    // Proactivity drifts (M-H1): being answered teaches her that reaching
+    // out works, and being ignored teaches her the opposite.
+    await scheduleHeartbeat(await driftedPersona(persona, now), convId, now, lastMsgAt, {
+      affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
+      proactMul: params.proactMul,
+      notBefore: state.cooldownUntil || undefined,
+    });
+  },
+  chainAgentDm: scheduleNextAgentDm,
+  chainMomentPost: (persona) => scheduleNextMoment(persona, Date.now()),
+
+  playMessageSound,
+  shouldFollowUpAfterRecall,
+  recallFollowUpLine,
+};
+
+const momentsHooks = {
+  addMoment: store.addMoment,
+  applyLike: store.applyLike,
+  addComment: store.addComment,
+  // 换头像 (M-J3): through the store so an open chat list repaints the new
+  // face immediately; the store writes through to the Repo.
+  updateContact: (c: ContactVM) => useAppStore.getState().putContact(c),
+  // 微信「状态」 (M-J7): through the STORE, so an open me/contacts page
+  // shows her new status without a reload — same write-through shape as
+  // updateContact above.
+  setStatus: (contactId: string, st: StatusVM) =>
+    useAppStore.getState().setStatusFor(contactId, st, st.at),
+  now: () => Date.now(),
+};
+  return deps;
+}
+
+/**
+ * 把每个 kind 接到它的 handler 上。
+ *
+ * 自续链的那几种走 `registerChainedHandler`（先续链后干活，失败只暂停不终结）
+ * ——`story_tick` 曾经因为写成普通 `registerHandler` 而在一次 LLM 超时后
+ * 永久卡死（M-G0），这就是为什么这个区分值得一条真跑的测试。
+ */
+export function registerAllHandlers(deps: HandlerDeps): void {
+// Failures inside a handler are dropped (never retried into a loop) — but
+// they are no longer silent, which is how "她突然不说话了" stayed invisible.
+setHandlerErrorSink(logError);
+
+// 全局成本闸 (M-J1): every router dispatch checks the hourly/daily budget,
+// and the queue defers LLM-bound kinds (keeps them PENDING) while over it.
+installCostGate();
+setBudgetGate(schedulerBudgetGate);
+
+registerHandler('rp_grab', (p) => handleRpGrab(deps, p));
+registerHandler('transfer_accept', (p) => handleTransferAccept(deps, p));
+registerHandler('transfer_return', (p) => handleTransferReturn(deps, p));
+// 红包 24h 过期退还 (M-J8): queued at send, inert once the packet settled.
+registerHandler('rp_return', (p) => handleRpReturn(deps, p));
+// 群收款 (M-J8): one AI settles their AA share, seeded at bill creation.
+registerHandler('bill_pay', (p) => handleBillPay(deps, p));
+// 斗图 (M-I18): the seeded comeback, delivered off the queue rather than a
+// bare setTimeout — leaving the chat mid-window used to eat the reply.
+registerHandler('sticker_reply', (p) => handleStickerReply(deps, p));
+registerHandler('pat_back', (p) => handlePatBack(deps, p));
+registerHandler('recall', (p) => handleRecall(deps, p));
+registerHandler('group_msg', (p, a) => handleGroupMsg(deps, p, a));
+registerHandler('mem_extract', (p) => handleMemExtract(deps, p));
+registerHandler('moment_like', (p) => handleMomentLike(deps, p));
+registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
+registerHandler('moment_repost', (p) => handleMomentRepost(deps, p));
+registerHandler('ai_money', (p) => handleAiMoney(deps, p));
+registerHandler('ai_call', (p) => handleAiCall(deps, p));
+// Social fabric (M-I3): hatched by a completed agent DM, fired here.
+registerHandler('joint_plan', (p) => handleJointPlan(deps, p));
+registerHandler('agent_forward', (p) => handleAgentForward(deps, p));
+registerHandler('agent_invite', (p) => handleAgentInvite(deps, p));
+
+// Story mode's beat (M-E5, chained in M-G0).
+//
+// This comment used to claim the handler was chained while the code below
+// called plain `registerHandler`, and `runStoryBeat` queued its successor
+// on its LAST line — after the group generation that can time out. Since
+// the scheduler marks a row done before running it and drops handler
+// errors without retrying, one flaky LLM call ended the story forever.
+registerChainedHandler('story_tick', {
+  // 节奏自适应 (V4): the user watching the stage conversation tightens the
+  // beat gap to 15s; `tickMsFor` inside chainNextBeat also honours a choice
+  // wait (no scheduling at all) and the node's pace. Presence is read HERE
+  // because story-service is pure of the store by design.
+  chain: (p) =>
+    chainNextBeat(p, Date.now(), useAppStore.getState().activeConvId === p.convId),
+  work: async (p) => {
+    const saveId = String(p.saveId ?? '');
+    if (!saveId) return;
+    await runStoryBeat(saveId, {
+      appendMessage: (m) => useAppStore.getState().appendMessage(m),
+      playBeat: async (convId, directives, goal) => {
+        const st = useAppStore.getState();
+        const c = st.conversationById(convId);
+        if (!c) return;
+        // 单聊剧情 (V4): no director — the peer is the play's only actor,
+        // speaking through the single-chat engine with their own beat
+        // directive (roles bound to 'self' are the user, who acts freely).
+        if (c.type === 'single') {
+          const peerId = c.peerId;
+          const peer = peerId ? st.contactById(peerId) : undefined;
+          const persona = peerId ? st.personaFor(peerId) : undefined;
+          const directive = peerId ? directives[peerId] : undefined;
+          if (!peerId || !peer || !persona || !directive) return;
+          await sendProactiveMessage(convId, peer, persona, await globalTier(), deps.hooks, Date.now(), {
+            story: `${goal}｜${directive}`.slice(0, 300),
+          });
+          return;
+        }
+        const members = (c.memberIds ?? []).map((id) => {
+          const ct = st.contactById(id);
+          return {
+            contactId: id,
+            name: ct?.remark ?? ct?.name ?? id,
+            persona: st.personaFor(id),
+          };
+        });
+        const speaker = members.find((m) => directives[m.contactId]);
+        if (!speaker?.persona) return;
+        // The GM's beat rides in as the director hint — per character, and
+        // ONLY that character's own instruction (never the whole script).
+        await sendGroupProactiveMessage(
+          c,
+          speaker,
+          members,
+          await globalTier(),
+          deps.hooks,
+          st.contactById,
+          Date.now(),
+          `${goal}｜${directives[speaker.contactId]}`.slice(0, 200),
+        );
+      },
+      judgeTriggers: async (convId, goal, pending) => {
+        const st = useAppStore.getState();
+        const c = st.conversationById(convId);
+        if (!c) return undefined;
+        // Rule #6: this prompt carries the transcript, so the tier comes
+        // from the CONVERSATION's participants — never from a constant
+        // here. `tierOfConversation` is the authority for exactly this.
+        // A single-chat stage (V4) has no memberIds — its participant set
+        // is the peer; falling through to [] would judge at the floor.
+        const participants =
+          c.type === 'single' && c.peerId ? [c.peerId] : (c.memberIds ?? []);
+        const tier = await tierOfConversation(participants, st.personaFor);
+        const nameOf = (id: string) => {
+          const ct = st.contactById(id);
+          return ct?.remark ?? ct?.name ?? id;
+        };
+        const tail = st.messagesFor(convId).length
+          ? st.messagesFor(convId).slice(-12)
+          : await repo.getMessages(convId, { limit: 12 });
+        // Same discipline as the director (director.ts:231-237): above
+        // 'off' the words never leave in full, so the judgement stays
+        // honest even when a permissive channel is unavailable.
+        const recent =
+          tier === 'off'
+            ? renderTranscript(tail, { nameOf, maxChars: 120 })
+            : redactForTier(tail, nameOf);
+        const router = await getRouter();
+        const res = await router.complete(
+          { role: 'director', nsfwTier: tier },
+          {
+            messages: [{ role: 'user', content: judgePrompt(goal, recent, pending) }],
+            temperature: 0.2,
+            // The whole answer is one integer. Capping it here is what
+            // keeps the soft track from costing anything meaningful.
+            maxTokens: 8,
+          },
+          {},
+          `story:${convId}`,
+        );
+        return parseJudgement(res.text, pending);
+      },
+      contactById: (id) => useAppStore.getState().contactById(id),
+      now: () => Date.now(),
+    });
+  },
+});
+
+// Self-chaining kinds: the successor is queued BEFORE the work that can
+// fail, so one bad night does not end the chain forever (see scheduler.ts).
+registerChainedHandler('heartbeat', {
+  chain: (p) => chainHeartbeatStep(deps, p),
+  work: (p, a) => handleHeartbeat(deps, p, a),
+});
+registerChainedHandler('agent_dm', {
+  chain: () => chainAgentDmStep(deps),
+  work: (p) => handleAgentDm(deps, p),
+});
+registerChainedHandler('moment_post', {
+  chain: (p) => chainMomentPostStep(deps, p),
+  work: (p) => handleMomentPost(deps, p),
+});
+// 聚会 arc (M-I3): propose → rsvp → aftermath. Chained so one flaky call
+// costs one phase, not the whole event.
+registerChainedHandler('group_event', {
+  chain: (p) => chainGroupEventStep(deps, p),
+  work: (p) => handleGroupEvent(deps, p),
+});
+// 群的自发生命 (M-J2): with the app open a group finally speaks first.
+// Chained so one flaky generation costs one round, never the room's pulse.
+registerChainedHandler('group_chatter', {
+  chain: (p) => chainGroupChatterStep(deps, p),
+  work: (p, a) => handleGroupChatter(deps, p, a),
+});
+// Periodic backups (M-I17): the successor is queued before the export, so
+// one failed write costs one package, never the habit.
+registerChainedHandler('auto_backup', {
+  chain: () => chainAutoBackup(Date.now()),
+  work: async () => {
+    await runAutoBackup(Date.now());
+  },
+});
+}
+
 export function useSchedulerRuntime(enabled: boolean): void {
   useEffect(() => {
     if (!enabled) return;
-    const store = useAppStore.getState();
-    const hooks = {
-      appendMessage: store.appendMessage,
-      updateMessage: store.updateMessage,
-      setTyping: store.setTyping,
-      now: () => Date.now(),
-    };
+    const deps = buildHandlerDeps();
+    registerAllHandlers(deps);
 
-    // Handlers live in ai/handlers.ts as plain functions; this bag is the only
-    // place they touch the store, the repo, or the network. Registration is all
-    // that remains here.
-    const deps: HandlerDeps = {
-      contactById: (id) => useAppStore.getState().contactById(id),
-      personaFor: (id) => useAppStore.getState().personaFor(id),
-      conversationById: (id) => useAppStore.getState().conversationById(id),
-      messagesFor: (id) => useAppStore.getState().messagesFor(id),
-      conversationExists: (id) => useAppStore.getState().conversations.some((c) => c.id === id),
-
-      hooks,
-      updateMessage: (m) => useAppStore.getState().updateMessage(m),
-
-      getMessages: (convId, opts) => repo.getMessages(convId, opts),
-      getMemory: (id) => repo.getMemory(id),
-      putConvSummary: (row) => repo.putConvSummary(row),
-      getGlobalTier: globalTier,
-      getMoment: (id) => repo.getMoment(id),
-
-      getRouter,
-      now: () => Date.now(),
-
-      // Social fabric (M-I3).
-      addMoment: (m) => useAppStore.getState().addMoment(m),
-      enqueue: async (opts) => {
-        await enqueue({ ...opts, now: Date.now() });
-      },
-      visibleConvWithUser: (contactId) =>
-        useAppStore
-          .getState()
-          .conversations.find(
-            (c) => c.type === 'single' && c.peerId === contactId && !c.isHidden,
-          ),
-
-      claimRedPacket: (rpId, contactId, name, h) => claimRedPacket(rpId, contactId, name, h),
-      // 收钱侧动机 (M-J8): the QUEUE's accept goes through receiveTransfer, so
-      // she can refuse a too-big or badly-timed transfer. The user's own tap
-      // (ChatPage.onMoneyTap) still calls acceptTransfer unconditionally.
-      acceptTransfer: (transferId, h) =>
-        receiveTransfer(transferId, h, {
-          personaFor: (id) => useAppStore.getState().personaFor(id),
-          affinityOf: async (id) => {
-            const edge = await getEdge('self', id, Date.now());
-            const persona = useAppStore.getState().personaFor(id);
-            return effectiveAffinity(edge, persona?.affinityInit ?? 20);
-          },
-          valenceOf: async (id) => (await affectFor(id, Date.now())).affect.valence,
-        }),
-      returnTransfer: (transferId, h, at) => returnTransfer(transferId, h, at),
-      returnRedPacket: (rpId, h, at) => returnRedPacket(rpId, h, at),
-      payBill: (billId, convId, contactId, at) => payBill(billId, convId, contactId, hooks, at),
-      runBill: (p) =>
-        startAiBill(p, {
-          conversationById: (id) => useAppStore.getState().conversationById(id),
-          contactById: (id) => useAppStore.getState().contactById(id),
-          personaFor: (id) => useAppStore.getState().personaFor(id),
-          hooks,
-        }),
-      sendProactiveMessage,
-      sendGroupProactiveMessage,
-      runMemExtract,
-      runAgentDm: (plan) => runDmSession(plan),
-      runMomentPost: async (persona, peer, at) => {
-        const s = useAppStore.getState();
-        await runMomentPost(persona, peer, s.contacts, s.personaFor, momentsHooks, at);
-      },
-      // A call can only ring while the app is open — a WebView cannot wake the
-      // screen — so this is a plain store write, and returns whether it took.
-      ringUser: (convId, contactId, reason) => {
-        const st = useAppStore.getState();
-        // Never ring over a call already in progress, and never while the user
-        // is typing in that very conversation: a call is a synchronous demand
-        // for attention, and the worst possible moment for one is mid-sentence.
-        if (st.incomingCall || st.activeConvId === convId) return false;
-        st.setIncomingCall({ convId, contactId, reason, at: Date.now() });
-        return true;
-      },
-      runGift: (p) =>
-        runGift(p, {
-          hooks,
-          // Everyone in the room except the sender may grab a group packet;
-          // in a single chat this is empty and only the user can open it.
-          grabbers: (convId, senderId) => {
-            const s = useAppStore.getState();
-            const conv = s.conversationById(convId);
-            if (conv?.type !== 'group') return [];
-            return (conv.memberIds ?? [])
-              .filter((id) => id !== senderId && id !== 'self')
-              .map((id) => ({ contactId: id, persona: s.personaFor(id) }));
-          },
-          contactById: (id) => useAppStore.getState().contactById(id),
-          now: () => Date.now(),
-        }),
-      runMomentLike: (momentId, contactId, at) =>
-        runMomentLike(momentId, contactId, momentsHooks, at),
-      runMomentComment: (momentId, commenter, persona, authorName, at) =>
-        runMomentComment(momentId, commenter, persona, authorName, momentsHooks, at),
-      runMomentRepost: async (momentId, reposter, persona, at) => {
-        const s = useAppStore.getState();
-        await runMomentRepost(momentId, reposter, persona, s.contacts, s.personaFor, momentsHooks, at);
-      },
-
-      chainHeartbeat: async (persona, convId, lastMsgAt) => {
-        // Anti-spam bookkeeping: two unanswered reaches in a row → 24h cooldown.
-        const now = Date.now();
-        const state = await noteProactiveSent(persona.contactId, now);
-        const edge = await getEdge('self', persona.contactId, now);
-        // Pacing now answers to how she FEELS, not only to the day's dice: the
-        // affect pulse rides the same proactMul the mood already used (M-E3).
-        const { params } = await affectFor(persona.contactId, now);
-        // Proactivity drifts (M-H1): being answered teaches her that reaching
-        // out works, and being ignored teaches her the opposite.
-        await scheduleHeartbeat(await driftedPersona(persona, now), convId, now, lastMsgAt, {
-          affinityMul: heartbeatAffinityMul(effectiveAffinity(edge, persona.affinityInit)),
-          proactMul: params.proactMul,
-          notBefore: state.cooldownUntil || undefined,
-        });
-      },
-      chainAgentDm: scheduleNextAgentDm,
-      chainMomentPost: (persona) => scheduleNextMoment(persona, Date.now()),
-
-      playMessageSound,
-      shouldFollowUpAfterRecall,
-      recallFollowUpLine,
-    };
-
-    const momentsHooks = {
-      addMoment: store.addMoment,
-      applyLike: store.applyLike,
-      addComment: store.addComment,
-      // 换头像 (M-J3): through the store so an open chat list repaints the new
-      // face immediately; the store writes through to the Repo.
-      updateContact: (c: ContactVM) => useAppStore.getState().putContact(c),
-      // 微信「状态」 (M-J7): through the STORE, so an open me/contacts page
-      // shows her new status without a reload — same write-through shape as
-      // updateContact above.
-      setStatus: (contactId: string, st: StatusVM) =>
-        useAppStore.getState().setStatusFor(contactId, st, st.at),
-      now: () => Date.now(),
-    };
-
-    // Failures inside a handler are dropped (never retried into a loop) — but
-    // they are no longer silent, which is how "她突然不说话了" stayed invisible.
-    setHandlerErrorSink(logError);
-
-    // 全局成本闸 (M-J1): every router dispatch checks the hourly/daily budget,
-    // and the queue defers LLM-bound kinds (keeps them PENDING) while over it.
-    installCostGate();
-    setBudgetGate(schedulerBudgetGate);
-
-    registerHandler('rp_grab', (p) => handleRpGrab(deps, p));
-    registerHandler('transfer_accept', (p) => handleTransferAccept(deps, p));
-    registerHandler('transfer_return', (p) => handleTransferReturn(deps, p));
-    // 红包 24h 过期退还 (M-J8): queued at send, inert once the packet settled.
-    registerHandler('rp_return', (p) => handleRpReturn(deps, p));
-    // 群收款 (M-J8): one AI settles their AA share, seeded at bill creation.
-    registerHandler('bill_pay', (p) => handleBillPay(deps, p));
-    // 斗图 (M-I18): the seeded comeback, delivered off the queue rather than a
-    // bare setTimeout — leaving the chat mid-window used to eat the reply.
-    registerHandler('sticker_reply', (p) => handleStickerReply(deps, p));
-    registerHandler('pat_back', (p) => handlePatBack(deps, p));
-    registerHandler('recall', (p) => handleRecall(deps, p));
-    registerHandler('group_msg', (p, a) => handleGroupMsg(deps, p, a));
-    registerHandler('mem_extract', (p) => handleMemExtract(deps, p));
-    registerHandler('moment_like', (p) => handleMomentLike(deps, p));
-    registerHandler('moment_comment', (p) => handleMomentComment(deps, p));
-    registerHandler('moment_repost', (p) => handleMomentRepost(deps, p));
-    registerHandler('ai_money', (p) => handleAiMoney(deps, p));
-    registerHandler('ai_call', (p) => handleAiCall(deps, p));
-    // Social fabric (M-I3): hatched by a completed agent DM, fired here.
-    registerHandler('joint_plan', (p) => handleJointPlan(deps, p));
-    registerHandler('agent_forward', (p) => handleAgentForward(deps, p));
-    registerHandler('agent_invite', (p) => handleAgentInvite(deps, p));
-
-    // Story mode's beat (M-E5, chained in M-G0).
-    //
-    // This comment used to claim the handler was chained while the code below
-    // called plain `registerHandler`, and `runStoryBeat` queued its successor
-    // on its LAST line — after the group generation that can time out. Since
-    // the scheduler marks a row done before running it and drops handler
-    // errors without retrying, one flaky LLM call ended the story forever.
-    registerChainedHandler('story_tick', {
-      // 节奏自适应 (V4): the user watching the stage conversation tightens the
-      // beat gap to 15s; `tickMsFor` inside chainNextBeat also honours a choice
-      // wait (no scheduling at all) and the node's pace. Presence is read HERE
-      // because story-service is pure of the store by design.
-      chain: (p) =>
-        chainNextBeat(p, Date.now(), useAppStore.getState().activeConvId === p.convId),
-      work: async (p) => {
-        const saveId = String(p.saveId ?? '');
-        if (!saveId) return;
-        await runStoryBeat(saveId, {
-          appendMessage: (m) => useAppStore.getState().appendMessage(m),
-          playBeat: async (convId, directives, goal) => {
-            const st = useAppStore.getState();
-            const c = st.conversationById(convId);
-            if (!c) return;
-            // 单聊剧情 (V4): no director — the peer is the play's only actor,
-            // speaking through the single-chat engine with their own beat
-            // directive (roles bound to 'self' are the user, who acts freely).
-            if (c.type === 'single') {
-              const peerId = c.peerId;
-              const peer = peerId ? st.contactById(peerId) : undefined;
-              const persona = peerId ? st.personaFor(peerId) : undefined;
-              const directive = peerId ? directives[peerId] : undefined;
-              if (!peerId || !peer || !persona || !directive) return;
-              await sendProactiveMessage(convId, peer, persona, await globalTier(), hooks, Date.now(), {
-                story: `${goal}｜${directive}`.slice(0, 300),
-              });
-              return;
-            }
-            const members = (c.memberIds ?? []).map((id) => {
-              const ct = st.contactById(id);
-              return {
-                contactId: id,
-                name: ct?.remark ?? ct?.name ?? id,
-                persona: st.personaFor(id),
-              };
-            });
-            const speaker = members.find((m) => directives[m.contactId]);
-            if (!speaker?.persona) return;
-            // The GM's beat rides in as the director hint — per character, and
-            // ONLY that character's own instruction (never the whole script).
-            await sendGroupProactiveMessage(
-              c,
-              speaker,
-              members,
-              await globalTier(),
-              hooks,
-              st.contactById,
-              Date.now(),
-              `${goal}｜${directives[speaker.contactId]}`.slice(0, 200),
-            );
-          },
-          judgeTriggers: async (convId, goal, pending) => {
-            const st = useAppStore.getState();
-            const c = st.conversationById(convId);
-            if (!c) return undefined;
-            // Rule #6: this prompt carries the transcript, so the tier comes
-            // from the CONVERSATION's participants — never from a constant
-            // here. `tierOfConversation` is the authority for exactly this.
-            // A single-chat stage (V4) has no memberIds — its participant set
-            // is the peer; falling through to [] would judge at the floor.
-            const participants =
-              c.type === 'single' && c.peerId ? [c.peerId] : (c.memberIds ?? []);
-            const tier = await tierOfConversation(participants, st.personaFor);
-            const nameOf = (id: string) => {
-              const ct = st.contactById(id);
-              return ct?.remark ?? ct?.name ?? id;
-            };
-            const tail = st.messagesFor(convId).length
-              ? st.messagesFor(convId).slice(-12)
-              : await repo.getMessages(convId, { limit: 12 });
-            // Same discipline as the director (director.ts:231-237): above
-            // 'off' the words never leave in full, so the judgement stays
-            // honest even when a permissive channel is unavailable.
-            const recent =
-              tier === 'off'
-                ? renderTranscript(tail, { nameOf, maxChars: 120 })
-                : redactForTier(tail, nameOf);
-            const router = await getRouter();
-            const res = await router.complete(
-              { role: 'director', nsfwTier: tier },
-              {
-                messages: [{ role: 'user', content: judgePrompt(goal, recent, pending) }],
-                temperature: 0.2,
-                // The whole answer is one integer. Capping it here is what
-                // keeps the soft track from costing anything meaningful.
-                maxTokens: 8,
-              },
-              {},
-              `story:${convId}`,
-            );
-            return parseJudgement(res.text, pending);
-          },
-          contactById: (id) => useAppStore.getState().contactById(id),
-          now: () => Date.now(),
-        });
-      },
-    });
-
-    // Self-chaining kinds: the successor is queued BEFORE the work that can
-    // fail, so one bad night does not end the chain forever (see scheduler.ts).
-    registerChainedHandler('heartbeat', {
-      chain: (p) => chainHeartbeatStep(deps, p),
-      work: (p, a) => handleHeartbeat(deps, p, a),
-    });
-    registerChainedHandler('agent_dm', {
-      chain: () => chainAgentDmStep(deps),
-      work: (p) => handleAgentDm(deps, p),
-    });
-    registerChainedHandler('moment_post', {
-      chain: (p) => chainMomentPostStep(deps, p),
-      work: (p) => handleMomentPost(deps, p),
-    });
-    // 聚会 arc (M-I3): propose → rsvp → aftermath. Chained so one flaky call
-    // costs one phase, not the whole event.
-    registerChainedHandler('group_event', {
-      chain: (p) => chainGroupEventStep(deps, p),
-      work: (p) => handleGroupEvent(deps, p),
-    });
-    // 群的自发生命 (M-J2): with the app open a group finally speaks first.
-    // Chained so one flaky generation costs one round, never the room's pulse.
-    registerChainedHandler('group_chatter', {
-      chain: (p) => chainGroupChatterStep(deps, p),
-      work: (p, a) => handleGroupChatter(deps, p, a),
-    });
-    // Periodic backups (M-I17): the successor is queued before the export, so
-    // one failed write costs one package, never the habit.
-    registerChainedHandler('auto_backup', {
-      chain: () => chainAutoBackup(Date.now()),
-      work: async () => {
-        await runAutoBackup(Date.now());
-      },
-    });
 
     startScheduler();
     void foregroundPass();
