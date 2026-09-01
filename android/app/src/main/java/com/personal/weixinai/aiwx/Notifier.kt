@@ -9,7 +9,10 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
 import com.personal.weixinai.R
 
 /**
@@ -97,6 +100,114 @@ object Notifier {
             .build()
         NotificationManagerCompat.from(ctx).notify(notifId, n)
         return true
+    }
+
+    /**
+     * 对话式通知 (M-J4)：MessagingStyle + Person + 动态快捷方式。
+     *
+     * This is what makes a notification land in Android 11+'s 「对话」section —
+     * the one the user can pin, bubble, or set to priority, i.e. the shape real
+     * messaging apps have and a plain `setContentText` never gets. Three parts
+     * are all required, and each fails silently on its own:
+     *  - a **ShortcutInfoCompat** pushed as a dynamic, long-lived shortcut with
+     *    the same id set via `setShortcutId` (without it the system quietly
+     *    demotes the notification back to the generic section);
+     *  - a **Person** with a name and icon (the avatar in the shade);
+     *  - **MessagingStyle** carrying the recent lines, so several messages from
+     *    her stack into one conversation instead of N separate banners.
+     *
+     * Falls back to [notifyMessage] on anything below Android 8 or if the
+     * shortcut push fails — a notification that is merely plain still arrives.
+     */
+    fun notifyConversation(
+        ctx: Context,
+        convId: String,
+        title: String,
+        body: String,
+        notifId: Int,
+        route: String,
+        tint: String,
+    ): Boolean {
+        if (!canPost(ctx)) return false
+        ensureChannels(ctx)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return notifyMessage(ctx, convId, title, body, notifId)
+        }
+        return try {
+            val now = System.currentTimeMillis()
+            Conversations.append(ctx, convId, body, now)
+
+            val icon = Conversations.avatarIcon(title, tint)
+            val person = Person.Builder().setName(title).setKey(convId).apply {
+                if (icon != null) setIcon(icon)
+            }.setImportant(true).build()
+
+            val shortcutId = "conv_$convId"
+            val openIntent = DeepLink.viewIntent(ctx, route)
+            val shortcut = ShortcutInfoCompat.Builder(ctx, shortcutId)
+                .setShortLabel(title)
+                .setLongLabel(title)
+                .setIntent(openIntent)
+                .setLongLived(true)
+                .setPerson(person)
+                .apply { if (icon != null) setIcon(icon) }
+                .build()
+            try {
+                ShortcutManagerCompat.pushDynamicShortcut(ctx, shortcut)
+            } catch (e: Exception) {
+                // Some OEMs cap dynamic shortcuts aggressively; the notification
+                // is still worth posting without the conversation promotion.
+                android.util.Log.w("AIWX-NOTIF", "shortcut push failed", e)
+            }
+
+            // The style's own Person is the USER (that is the contract: "who am
+            // I in this thread"), and every message added below is hers.
+            val style = NotificationCompat.MessagingStyle(
+                Person.Builder().setName("我").setKey("self").build(),
+            )
+            for (line in Conversations.lines(ctx, convId)) {
+                style.addMessage(line.text, line.at, person)
+            }
+
+            val replyIntent = Intent(ctx, ReplyReceiver::class.java)
+                .setAction(ACTION_REPLY)
+                .putExtra(EXTRA_CONV_ID, convId)
+                .putExtra(EXTRA_NOTIF_ID, notifId)
+            val replyPi = PendingIntent.getBroadcast(
+                ctx,
+                DeepLink.requestCode("reply_$convId"),
+                replyIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+            )
+            val replyAction = NotificationCompat.Action.Builder(
+                R.drawable.ic_stat_aiwx,
+                "回复",
+                replyPi,
+            ).addRemoteInput(RemoteInput.Builder(KEY_REPLY_TEXT).setLabel("回复").build())
+                .setAllowGeneratedReplies(false)
+                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+                .setShowsUserInterface(false)
+                .build()
+
+            val n = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
+                .setSmallIcon(R.drawable.ic_stat_aiwx)
+                .setStyle(style)
+                .setShortcutId(shortcutId)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(
+                    DeepLink.pendingIntent(ctx, route, DeepLink.requestCode("open_$convId")),
+                )
+                .addAction(replyAction)
+                .build()
+            NotificationManagerCompat.from(ctx).notify(notifId, n)
+            true
+        } catch (e: Exception) {
+            android.util.Log.w("AIWX-NOTIF", "conversation notify failed, falling back", e)
+            notifyMessage(ctx, convId, title, body, notifId)
+        }
     }
 
     /**

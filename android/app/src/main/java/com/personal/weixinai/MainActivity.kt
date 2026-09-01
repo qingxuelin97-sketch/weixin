@@ -6,6 +6,7 @@ import android.os.Bundle
 import com.getcapacitor.BridgeActivity
 import com.personal.weixinai.aiwx.AiwxNativePlugin
 import com.personal.weixinai.aiwx.Notifier
+import com.personal.weixinai.aiwx.WakeWorker
 
 /**
  * Replaces the template MainActivity.java (M-I10). Plugin registration must
@@ -31,6 +32,9 @@ class MainActivity : BridgeActivity() {
         // Creating a channel needs no permission, so this is safe to do
         // unconditionally and idempotent on every later launch.
         Notifier.ensureChannels(this)
+        // M-J4: idempotent (KEEP policy), so every launch self-heals a periodic
+        // chain that a "force stop" or an OEM cleaner cancelled while we slept.
+        WakeWorker.ensureScheduled(this)
     }
 
     override fun onNewIntent(intent: Intent) {

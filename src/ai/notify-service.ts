@@ -34,11 +34,13 @@
 import type { ScheduledAction } from './scheduler';
 import type { ContactVM } from '../data/types';
 import type { ScheduledActionKind as ActionKind } from '../db/schema';
+import { FALLBACK_AVATAR_TINT } from '../data/persona-defaults';
 import type { NotifyKind } from '../lib/notify';
 import {
   notificationId,
   scheduleNotifications,
   cancelAll,
+  canPregenerateBody,
   type ScheduledNotification,
 } from '../lib/notify';
 
@@ -147,6 +149,12 @@ export interface NotifiableAction {
   contactId?: string;
   /** Pre-resolved title (group name); wins over contactId resolution. */
   title?: string;
+  /**
+   * The conversation this belongs to (M-J4). The route already encodes it, but
+   * the native snapshot needs it as a field: MessagingStyle keys its stacked
+   * history and its dynamic shortcut on the conversation, not on a URI.
+   */
+  convId?: string;
   /** Pre-written text; present only when it can be shown verbatim. */
   body?: string;
   /** Explicit grading for non-heartbeat kinds (M-I15); heartbeats derive theirs. */
@@ -219,6 +227,7 @@ export function toNotifiable(
           kind: a.kind,
           fireAt: a.fireAt,
           title,
+          convId,
           notifyKind: 'followup',
           route: chatRoute(convId),
         });
@@ -265,6 +274,7 @@ export function toNotifiable(
           fireAt: a.fireAt,
           contactId: p.contactId,
           body,
+          convId,
           notifyKind: 'reaction',
           // 来电也进聊天页：几小时后才点开的"来电"通知落在响铃页是个陷阱。
           route: chatRoute(convId),
@@ -278,7 +288,7 @@ export function toNotifiable(
         fireAt: a.fireAt,
         contactId: p.contactId,
         body: typeof p.body === 'string' && p.body.trim() ? p.body : undefined,
-        ...(convId ? { route: chatRoute(convId) } : {}),
+        ...(convId ? { convId, route: chatRoute(convId) } : {}),
       });
     } catch {
       /* malformed payload — not worth failing the whole sync over */
@@ -326,6 +336,65 @@ export function buildNotifications(
     });
   }
   return out.sort((x, y) => x.fireAt - y.fireAt);
+}
+
+/* ==================================================================== */
+/* 原生唤醒快照 (M-J4)                                                    */
+/* ==================================================================== */
+
+/** One already-final row for the native snapshot (mirrors native/bridge WakeRow). */
+export interface WakeRow {
+  id: string;
+  fireAt: number;
+  title: string;
+  body: string;
+  convId: string;
+  route: string;
+  tint: string;
+}
+
+/**
+ * Project the queue into rows Kotlin can deliver while the process is dead.
+ *
+ * **Derived from `buildNotifications`, deliberately** — not from a second walk
+ * over the actions. Horizon, dedup, the "already due belongs to the live tick"
+ * rule and above all the CONTENT GRADING therefore cannot drift between the
+ * in-app path and the background one. A snapshot that graded independently
+ * would eventually show a preview the app itself would have withheld, which is
+ * the exact failure the consistency rule exists to prevent.
+ *
+ * `body: ''` is the no-preview grade, passed through as an empty string rather
+ * than as the literal 「[你收到一条消息]」: the wording belongs to the platform
+ * layer, and Kotlin substitutes it. Nothing here ever invents a line.
+ */
+export function buildWakeRows(
+  actions: NotifiableAction[],
+  nameOf: (contactId: string) => string | undefined,
+  tintOf: (contactId: string) => string | undefined,
+  now: number,
+): WakeRow[] {
+  const byNotifId = new Map<number, NotifiableAction>();
+  for (const a of actions) byNotifId.set(notificationId(a.id), a);
+  const out: WakeRow[] = [];
+  for (const n of buildNotifications(actions, nameOf, now)) {
+    const a = byNotifId.get(n.id);
+    // A row with no conversation has nowhere to stack its history and no
+    // shortcut to key on — the moments kinds land here and stay in the
+    // plugin's own pre-scheduled path, which is what already handles them.
+    if (!a?.convId) continue;
+    out.push({
+      id: a.id,
+      fireAt: n.fireAt,
+      title: n.title,
+      // Second application of the same gate (belt and braces, as in
+      // buildNotifications' own comment): anything not showable is empty.
+      body: canPregenerateBody(n.kind) ? n.body : '',
+      convId: a.convId,
+      route: n.route ?? chatRoute(a.convId),
+      tint: (a.contactId ? tintOf(a.contactId) : undefined) ?? FALLBACK_AVATAR_TINT,
+    });
+  }
+  return out;
 }
 
 /**

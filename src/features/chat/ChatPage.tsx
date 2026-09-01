@@ -9,6 +9,7 @@ import {
 } from '../../components/icons';
 import { VoiceInputButton } from './VoiceInput';
 import { saveVoiceClip, voiceClipBlob } from '../../lib/voice';
+import { clearConversationHistory } from '../../native/bridge';
 import { transcribe, isAsrReady } from '../../llm/asr';
 import { Avatar } from '../../components/Avatar';
 import { Badge } from '../../components/Badge';
@@ -93,6 +94,14 @@ export function ChatPage() {
   // 「输入中…停顿…又输入」 on a seeded rhythm (typingRhythm, 铁律 4) instead of
   // burning solid for the whole round trip. The stepper is a UI timer
   // (presentation only, frozen clocks in screenshots never fire it); every
+  // 后台通知的堆叠历史 (M-J4)：打开这个会话＝那些行已经被读了。不清掉的话，
+  // 下一条通知会把用户刚在 App 里读完的几句又在通知栏里重放一遍。
+  useEffect(() => {
+    void clearConversationHistory(convId).catch(() => {
+      /* 通知栏的历史清不掉不该影响聊天 */
+    });
+  }, [convId]);
+
   // duration comes from the seeded pure function.
   const [typingPaused, setTypingPaused] = useState(false);
   useEffect(() => {

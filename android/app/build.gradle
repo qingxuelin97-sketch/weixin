@@ -48,6 +48,12 @@ dependencies {
     // buffers whole bodies and cannot stream. Pinned exact (Maven Central;
     // 4.12.x is the last line supporting Kotlin 1.9 / minSdk < 26 gracefully).
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    // AIWX (M-J4): periodic background wake for aiwx/WakeWorker.kt. WorkManager
+    // is the only scheduler that survives process death, app upgrade AND reboot
+    // without a receiver of its own; OEM battery managers delay it rather than
+    // dropping it silently. Pinned exact (Maven Central; 2.9.x is the last line
+    // that does not require compileSdk 35).
+    implementation "androidx.work:work-runtime-ktx:2.9.1"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

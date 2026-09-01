@@ -99,7 +99,8 @@ import { getRouter } from '../llm/service';
 import { seededRng } from '../lib/money';
 import { playMessageSound, resumeAudio } from '../lib/sound';
 import { requestPermission } from '../lib/notify';
-import { syncNotifications } from '../ai/notify-service';
+import { syncNotifications, toNotifiable, buildWakeRows } from '../ai/notify-service';
+import { writeWakeSnapshot } from '../native/bridge';
 import { drainNativeReplies } from '../native/reply-drain';
 import { syncWidget } from '../native/widget-sync';
 import { startBackgroundNotify } from '../native/background-notify';
@@ -898,6 +899,7 @@ async function runForegroundPass(): Promise<void> {
   }
 
   // 4) Rebuild the lock-screen notifications from the (now current) queue.
+  let wakeInput: { pending: Awaited<ReturnType<typeof pendingActions>>; notifyOpts: Parameters<typeof syncNotifications>[3] } | null = null;
   try {
     // Notifications are scheduled from every PENDING action, not the due ones
     // — so this asks for the pending set directly. It used to call
@@ -918,15 +920,41 @@ async function runForegroundPass(): Promise<void> {
     const groupTitles = new Map(
       s.conversations.filter((c) => c.type === 'group' && !c.isHidden).map((c) => [c.id, c.title]),
     );
-    await syncNotifications(await pendingActions(), s.contacts, now, {
+    const pending = await pendingActions();
+    const notifyOpts = {
       selfMomentIds,
-      groupTitleOf: (convId) => groupTitles.get(convId),
-    });
+      groupTitleOf: (convId: string) => groupTitles.get(convId),
+    };
+    await syncNotifications(pending, s.contacts, now, notifyOpts);
+    wakeInput = { pending, notifyOpts };
   } catch (e) {
     // Notifications are the app's only presence while it is closed, and the
     // plugin-proxy bug that cost three weeks of dead device builds was hidden
     // by exactly this shape of catch. Still non-fatal, now never invisible.
     logError('notify.sync', e);
+  }
+
+  // 4b) 她在后台活着 (M-J4): hand the SAME projection to Kotlin, so the wake
+  // path can deliver it once this process is gone. Derived from the exact
+  // `toNotifiable` output step 4 graded — re-walking the queue here is how the
+  // two halves would drift into showing different text for the same event.
+  //
+  // Its own step, not nested in step 4's try: a failure to reach the native
+  // bridge is a different fault from a failure to schedule notifications, and
+  // sharing one catch would file it under the wrong name in errlog.
+  if (wakeInput) {
+    try {
+      const nameOf = (id: string) => {
+        const c = s.contacts.find((x) => x.id === id);
+        return c ? (c.remark ?? c.name) : undefined;
+      };
+      const tintOf = (id: string) => s.contacts.find((x) => x.id === id)?.avatarColor;
+      await writeWakeSnapshot(
+        buildWakeRows(toNotifiable(wakeInput.pending, wakeInput.notifyOpts), nameOf, tintOf, now),
+      );
+    } catch (e) {
+      logError('wake.snapshot', e);
+    }
   }
 
   // 5) M-I10: refresh the home-screen widget from the now-current world.

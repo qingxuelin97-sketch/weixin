@@ -149,3 +149,55 @@
   manifest、动态 set/复位路径在 MainActivity）。
 - 真机验收追加：锁屏收 AI 来电 → 屏幕自己亮起且铃响页盖在锁屏上（3 的强化版）；
   Android 14 真机上「设置→应用→闹钟与提醒」应显示已允许。
+
+## M-J4 · 她在后台活着（唤醒 + 快照 + 对话式通知）
+
+### 计划里的「Kotlin 现场生成」被砍了，理由是密码学而不是工期
+
+原计划 J4-3 要让 Kotlin 在进程被杀后自己调 chat 端点产消息，前提写的是
+「key 从 Keystore 读，本来就存在原生侧」。**这句是错的**：API key 由
+`src/lib/keystore.ts` 用 **`extractable: false`** 的 WebCrypto AES 主密钥封在
+IndexedDB 里，Kotlin 取不出来——不是难，是密码学上不可能。要让它可能，只能把
+主密钥改成可导出，那等于为了一个功能拆掉铁律 2 对所有 key 的保护。
+
+于是按计划自己写的中止线执行，并且换来一个更好的架构：**JS 决定说什么、什么时候
+说；Kotlin 只负责送到。** 后台路径因此不含任何 LLM 调用，铁律 6 在这条路上成了
+结构性不可违反（没有调用点可以判错 tier），也没有第二个内容生产者去破铁律 5。
+
+### 三层
+
+1. **快照 `Snapshot.kt`**：JS 每次前台 pass 把未来 24h 的**可通知**行整体覆写进
+   SharedPreferences。它是 `scheduled_actions` 的投影，真源不变。行的内容由
+   `buildWakeRows()` 从**同一个** `buildNotifications` 派生——分级/时间窗/去重
+   三件事因此不可能与 App 内路径漂移（转红测试钉死）。无预览档以**空正文**过桥，
+   平台措辞由 Kotlin 补：JS 不替 Kotlin 编词。
+2. **唤醒对 `Wake.kt` / `WakeWorker.kt`**：WorkManager 周期（15 分钟，平台下限）
+   管可靠性——它自己就能扛住进程死亡、升级与重启；AlarmManager
+   `setExactAndAllowWhileIdle` 管准点，只给「下一个到期项」上一个闹钟。
+   两条路都汇进 `deliverDue`，靠 fired 集合幂等。精确闹钟在 12+ 可被用户关掉，
+   `canScheduleExactAlarms()` 每次都查，拒绝就降级为不精确 `set()`——
+   后台抛未捕获异常 = 看不见的崩溃。开机与升级由 `BootReceiver` 重排
+   （闹钟不过重启，快照过）。快照超过 48h 视为陈旧，不再重放：手机关了三天，
+   开机弹昨天的早安比沉默更糟，回填会正确处理那段窗口。
+3. **对话式通知 `Conversations.kt` + `Notifier.notifyConversation`**：
+   MessagingStyle + Person + 动态长效快捷方式三件套齐了才进 Android 11+ 的
+   「对话」分区（可置顶/气泡）；少任何一件都静默降级回普通横幅。堆叠历史按会话
+   有界保存，且只存**已经展示过**的行；打开该聊天即清空（否则通知栏会把用户刚在
+   App 里读完的话重放一遍）。头像用与 `Avatar` 同一条兜底规则画的着色首字——
+   真头像是 IndexedDB 里的 Blob，后台进程够不到。
+
+### 转红清单（`tests/unit/j4-background.test.ts`）
+
+快照必须是投影（每行都能在通知列表里找到对应项）；时间窗/已到期同源；
+无预览档空正文；静默 kind（含 agent_dm 隐藏面）不进快照；**后台四个 Kotlin 文件
+不得出现网络/密钥/端点的任何字样**；接线四条（写快照、周期自愈、开机重排、
+打开聊天清历史）；精确闹钟降级而非崩。
+
+### 未做（诚实清单）
+
+- **FGS 常驻通知**：WorkManager + 精确闹钟已经覆盖了「进程死了也要按时送到」，
+  再挂一个常驻前台服务只是把电池管理器的注意力引过来，收益不抵代价。
+- **列表型桌面小组件（RemoteViewsFactory）**：现有单条小组件已覆盖「未读 + 最近
+  一条」，列表版是锦上添花。
+- **原生录音电平**：波形目前是 CSS 动画。接真电平要把 AudioRecord 的采样跨桥
+  推给 JS，属于 J7 的语音线而不是后台线。

@@ -60,6 +60,25 @@
             android:name=".aiwx.ReplyReceiver"
             android:exported="false" />
 
+        <!-- AIWX (M-J4): the exact alarm lands here, posts what is due and
+             re-arms for the next item. Not exported — only our own alarm
+             PendingIntent targets it. -->
+        <receiver
+            android:name=".aiwx.WakeAlarmReceiver"
+            android:exported="false" />
+
+        <!-- AIWX (M-J4): alarms do not survive a reboot but the snapshot does.
+             Exported=false is correct even for BOOT_COMPLETED: the system
+             delivers protected broadcasts to non-exported receivers. -->
+        <receiver
+            android:name=".aiwx.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- AIWX: home-screen widget (unread count + latest preview). -->
         <receiver
             android:name=".aiwx.AiwxWidgetProvider"
@@ -98,4 +117,8 @@
          在 14+ 自动授予——它有 Play 商店政策限制，但本 App 是个人侧载，不进店。 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- M-J4: re-arm the wake alarms after a reboot. Without it the first
+         message after the user restarts their phone is silently skipped until
+         they next open the app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>

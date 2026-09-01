@@ -65,6 +65,17 @@ export const PERSONA_DEFAULTS: Omit<PersonaVM, 'contactId' | 'core'> = {
 };
 
 /** Build a complete persona from a partial, filling anything unspecified. */
+/**
+ * Fallback placeholder-avatar tint (M-J4). Data, not style: it is handed to the
+ * native notification layer to draw the same tinted initial `Avatar` falls back
+ * to, and only applies when the contact row itself has no `avatarColor` (a
+ * deleted or malformed contact). Lives here because `src/data/` is where this
+ * repo keeps placeholder avatar colours — the hardcoded-colour check exempts
+ * exactly that, and a `--color-*` token would be wrong: this value crosses the
+ * bridge into Kotlin, where CSS variables do not exist.
+ */
+export const FALLBACK_AVATAR_TINT = '#7F7F7F';
+
 export function makePersona(p: Partial<PersonaVM> & Pick<PersonaVM, 'contactId' | 'core'>): PersonaVM {
   return clampPersona({ ...PERSONA_DEFAULTS, ...p });
 }

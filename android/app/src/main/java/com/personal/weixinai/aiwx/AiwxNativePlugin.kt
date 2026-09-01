@@ -304,4 +304,71 @@ class AiwxNativePlugin : Plugin() {
         AiwxWidgetProvider.pushUpdate(context)
         call.resolve()
     }
+
+    // ------------------------------------------------- 后台唤醒 (M-J4)
+
+    /**
+     * Hand Kotlin the next 24h of already-final notification rows.
+     *
+     * Wholesale replace, never merge: the JS side has just re-derived the world
+     * from `scheduled_actions`, and a row it no longer lists must not survive
+     * here (that is how a cancelled heartbeat would keep firing forever).
+     */
+    @PluginMethod
+    fun writeWakeSnapshot(call: PluginCall) {
+        val items = call.getString("items") ?: "[]"
+        Snapshot.write(context, items, System.currentTimeMillis())
+        // Arming here (not only in the worker) means a snapshot written seconds
+        // before the user swipes the app away still has its alarm set.
+        Wake.rearm(context, System.currentTimeMillis())
+        WakeWorker.ensureScheduled(context)
+        call.resolve()
+    }
+
+    /** Diagnostics for 设置→原生增强: what the background half is holding. */
+    @PluginMethod
+    fun wakeStatus(call: PluginCall) {
+        val now = System.currentTimeMillis()
+        val res = JSObject()
+        res.put("items", Snapshot.items(context).size)
+        res.put("fired", Snapshot.firedIds(context).size)
+        res.put("writtenAt", Snapshot.writtenAt(context))
+        res.put("stale", Snapshot.isStale(context, now))
+        res.put("nextFireAt", Snapshot.nextFireAt(context, now) ?: 0L)
+        res.put("exactAllowed", exactAlarmsAllowed())
+        call.resolve(res)
+    }
+
+    /**
+     * The user opened that chat: the shade's stacked history is caught up, so
+     * drop it — otherwise the next notification would re-show lines they have
+     * already read in the app.
+     */
+    @PluginMethod
+    fun clearConversationHistory(call: PluginCall) {
+        val convId = call.getString("convId")
+        if (convId.isNullOrEmpty()) Conversations.clearAll(context) else Conversations.clear(context, convId)
+        call.resolve()
+    }
+
+    /**
+     * Deliver anything already due, right now. Used by the device test (there
+     * is no other way to prove the delivery path works without waiting 15
+     * minutes for WorkManager) and by 设置's 「立即检查」.
+     */
+    @PluginMethod
+    fun wakeNow(call: PluginCall) {
+        val posted = Wake.deliverDue(context, System.currentTimeMillis())
+        val res = JSObject()
+        res.put("posted", posted)
+        call.resolve(res)
+    }
+
+    private fun exactAlarmsAllowed(): Boolean =
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            true
+        } else {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager
+            am?.canScheduleExactAlarms() ?: false
+        }
 }

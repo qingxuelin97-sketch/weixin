@@ -47,6 +47,17 @@ interface AiwxNativePlugin {
     preview: string;
     convId: string;
   }): Promise<void>;
+  writeWakeSnapshot(opts: { items: string }): Promise<void>;
+  wakeStatus(): Promise<{
+    items: number;
+    fired: number;
+    writtenAt: number;
+    stale: boolean;
+    nextFireAt: number;
+    exactAllowed: boolean;
+  }>;
+  clearConversationHistory(opts: { convId?: string }): Promise<void>;
+  wakeNow(): Promise<{ posted: number }>;
   sseStart(opts: { id: string; url: string; headersJson: string; bodyJson: string }): Promise<void>;
   sseCancel(opts: { id: string }): Promise<void>;
   addListener(
@@ -207,6 +218,69 @@ export async function updateWidget(data: {
 }): Promise<void> {
   if (!isNative()) return;
   await withDeadline(plugin.updateWidget(data), 'updateWidget');
+}
+
+// --------------------------------------------------------- 后台唤醒 (M-J4)
+
+/** One already-final notification row, as the Kotlin snapshot stores it. */
+export interface WakeRow {
+  /** Stable per-action id; Kotlin dedupes posted rows on it. */
+  id: string;
+  fireAt: number;
+  title: string;
+  /** '' = the no-preview grade. Kotlin never invents a line to fill it. */
+  body: string;
+  convId: string;
+  route: string;
+  /** Placeholder-avatar tint, so the shade's face matches the app's. */
+  tint: string;
+}
+
+/**
+ * Hand Kotlin the next 24h of notifiable rows (wholesale replace).
+ *
+ * This is a PROJECTION of `scheduled_actions`, never a second source of truth:
+ * every foreground pass re-derives it from the same queue + the same
+ * `buildNotifications` grading the in-app path uses. See Wake.kt for why the
+ * background half only ever delivers, never generates.
+ */
+export async function writeWakeSnapshot(rows: WakeRow[]): Promise<void> {
+  if (!isNative()) return;
+  await withDeadline(
+    plugin.writeWakeSnapshot({ items: JSON.stringify(rows) }),
+    'writeWakeSnapshot',
+  );
+}
+
+export async function wakeStatus(): Promise<{
+  items: number;
+  fired: number;
+  writtenAt: number;
+  stale: boolean;
+  nextFireAt: number;
+  exactAllowed: boolean;
+} | null> {
+  if (!isNative()) return null;
+  return await withDeadline(plugin.wakeStatus(), 'wakeStatus');
+}
+
+/**
+ * The user opened this chat, so the shade's stacked history is caught up.
+ * Omit `convId` to drop every conversation's history (used on full backfill).
+ */
+export async function clearConversationHistory(convId?: string): Promise<void> {
+  if (!isNative()) return;
+  await withDeadline(
+    plugin.clearConversationHistory(convId ? { convId } : {}),
+    'clearConversationHistory',
+  );
+}
+
+/** Force a delivery pass now (device test + 设置's 「立即检查」). */
+export async function wakeNow(): Promise<number> {
+  if (!isNative()) return 0;
+  const r = await withDeadline(plugin.wakeNow(), 'wakeNow');
+  return r.posted;
 }
 
 // ------------------------------------------------------------- SSE (M-J5)

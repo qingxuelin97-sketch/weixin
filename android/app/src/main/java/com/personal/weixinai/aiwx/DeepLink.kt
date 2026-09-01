@@ -39,6 +39,16 @@ object DeepLink {
         )
     }
 
+    /**
+     * The bare VIEW intent for a deep link (M-J4). A ShortcutInfoCompat needs
+     * an Intent, not a PendingIntent — and it must carry an action, or
+     * pushDynamicShortcut throws IllegalArgumentException at runtime.
+     */
+    fun viewIntent(ctx: Context, uri: String): Intent =
+        Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+            .setClass(ctx, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+
     /** Launch a deep link directly (bubble tap — no notification involved). */
     fun launch(ctx: Context, uri: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
