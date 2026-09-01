@@ -11,9 +11,20 @@
  * Pure functions: no storage, no clock. The caller passes in what it already has
  * hydrated in the store.
  */
-import type { ContactVM, ConversationVM, MessageVM, MomentVM } from '../data/types';
+import type { ContactVM, ConversationVM, MessageVM, MomentVM, FavoriteVM } from '../data/types';
+import type { WorldbookEntry } from '../ai/worldbook';
 
-export type SearchKind = 'contact' | 'conversation' | 'message' | 'moment';
+export type SearchKind =
+  | 'contact'
+  | 'conversation'
+  | 'message'
+  | 'moment'
+  /** 世界书条目 (M-J10)。用户亲手写的设定，搜不到等于写完就丢。 */
+  | 'worldbook'
+  /** 收藏 (M-J10)。 */
+  | 'favorite'
+  /** 记忆事实 (M-J10)。 */
+  | 'memory';
 
 export interface SearchHit {
   kind: SearchKind;
@@ -103,6 +114,14 @@ export interface SearchInput {
   /** Keyed by conversation id, as the store holds them. */
   messages: Record<string, MessageVM[]>;
   moments: MomentVM[];
+  /**
+   * 搜索 v3 (M-J10)：这三类以前搜不到，加起来是全 App 一半的文字内容。
+   * 可选，所以既有调用点（会话内搜索、测试）不必全部改写——但缺席就是
+   * 「这次不搜它们」，不是「它们不存在」。
+   */
+  worldbook?: WorldbookEntry[];
+  favorites?: FavoriteVM[];
+  memories?: Array<{ id: string; subjectId: string; text: string; createdAt?: number }>;
 }
 
 /** Newest-first within equal relevance. Shared by the pure and deep passes. */
@@ -115,6 +134,12 @@ const KIND_WEIGHT: Record<SearchKind, number> = {
   conversation: 900,
   message: 100,
   moment: 80,
+  // 用户亲手写的设定排在她说过的话之上：找世界书的人是在找**自己写的东西**，
+  // 那件事他记得很清楚，容不得被一屏聊天记录压下去。
+  worldbook: 700,
+  favorite: 200,
+  // 记忆是**推断**出来的，不是谁说过的原话——放在最低，出现即可，不该抢位置。
+  memory: 60,
 };
 
 /** Cap per kind so one chatty conversation can't crowd out everything else. */
@@ -157,6 +182,9 @@ export function search(input: SearchInput, queryRaw: string): SearchHit[] {
     ...input.conversations.map((c) => c.lastMsgAt ?? 0),
     ...input.moments.map((m) => m.createdAt),
   );
+
+  // 记忆的标题要显示「这是谁的记忆」而不是一个 id。
+  const nameOfContact = new Map(input.contacts.map((c) => [c.id, c.remark ?? c.name]));
 
   // --- Contacts: match display name, real name, and signature ---
   const contactHits: SearchHit[] = [];
@@ -211,17 +239,23 @@ export function search(input: SearchInput, queryRaw: string): SearchHit[] {
     for (const m of list) {
       // A recalled message shows no text in the UI; finding it by its original
       // content would leak what was withdrawn.
-      if (m.isRecalled || !m.content) continue;
-      const r = findRanges(m.content, query);
+      if (m.isRecalled) continue;
+      // 语音转写与文件名 (M-J10)：两者在气泡上都是**看得见的字**，用户当然会
+      // 拿它们去搜。语音的 content 就是转写，所以它一直是可搜的；文件名住在
+      // meta 里，此前完全搜不到——发过来的「合同.pdf」在搜索里不存在。
+      const fileName = typeof m.meta?.fileName === 'string' ? m.meta.fileName : '';
+      const body = m.content || fileName;
+      if (!body) continue;
+      const r = findRanges(body, query);
       if (r.length === 0) continue;
-      const ex = excerpt(m.content, r);
+      const ex = excerpt(body, r);
       msgHits.push({
         kind: 'message',
         id: String(m.id),
         title: convTitle.get(convId) ?? convId,
         subtitle: ex.text,
         ranges: ex.ranges,
-        score: scoreOf('message', m.content, r, recencyScore(m.createdAt, newest)),
+        score: scoreOf('message', body, r, recencyScore(m.createdAt, newest)),
         convId,
         createdAt: m.createdAt,
       });
@@ -246,7 +280,66 @@ export function search(input: SearchInput, queryRaw: string): SearchHit[] {
     });
   }
 
-  for (const group of [contactHits, convHits, msgHits, momentHits]) {
+  // --- 世界书 / 收藏 / 记忆 (M-J10) ---
+  const wbHits: SearchHit[] = [];
+  for (const w of input.worldbook ?? []) {
+    // 关键词与正文都搜：用户经常只记得自己设的那个触发词。
+    const fields = [w.content, w.keywords.join(' ')].filter(Boolean);
+    let best: { field: string; ranges: Array<[number, number]> } | null = null;
+    for (const f of fields) {
+      const r = findRanges(f, query);
+      if (r.length > 0 && !best) best = { field: f, ranges: r };
+    }
+    if (!best) continue;
+    const ex = excerpt(best.field, best.ranges);
+    wbHits.push({
+      kind: 'worldbook',
+      id: w.id,
+      title: w.keywords[0] ?? '世界书',
+      subtitle: ex.text,
+      ranges: ex.ranges,
+      score: scoreOf('worldbook', best.field, best.ranges),
+    });
+  }
+
+  const favHits: SearchHit[] = [];
+  for (const f of input.favorites ?? []) {
+    // 收藏来自某个会话；隐藏会话的收藏本来就进不了 repo.getFavorites()，
+    // 但这里再挡一次——两道过滤的成本是一个 Set 查询。
+    if (f.convId && hiddenIds.has(f.convId)) continue;
+    const body = f.content ?? '';
+    if (!body) continue;
+    const r = findRanges(body, query);
+    if (r.length === 0) continue;
+    const ex = excerpt(body, r);
+    favHits.push({
+      kind: 'favorite',
+      id: f.id,
+      title: '收藏',
+      subtitle: ex.text,
+      ranges: ex.ranges,
+      score: scoreOf('favorite', body, r, recencyScore(f.createdAt, newest)),
+      createdAt: f.createdAt,
+    });
+  }
+
+  const memHits: SearchHit[] = [];
+  for (const f of input.memories ?? []) {
+    const r = findRanges(f.text, query);
+    if (r.length === 0) continue;
+    const ex = excerpt(f.text, r);
+    memHits.push({
+      kind: 'memory',
+      id: f.id,
+      title: nameOfContact.get(f.subjectId) ?? '记忆',
+      subtitle: ex.text,
+      ranges: ex.ranges,
+      score: scoreOf('memory', f.text, r, recencyScore(f.createdAt ?? 0, newest)),
+      createdAt: f.createdAt,
+    });
+  }
+
+  for (const group of [contactHits, convHits, msgHits, momentHits, wbHits, favHits, memHits]) {
     hits.push(...group.sort(byScore).slice(0, PER_KIND_LIMIT));
   }
   return hits.sort(byScore);
@@ -259,6 +352,9 @@ export function groupByKind(hits: SearchHit[]): Array<{ kind: SearchKind; label:
     ['conversation', '聊天'],
     ['message', '聊天记录'],
     ['moment', '朋友圈'],
+    ['worldbook', '世界书'],
+    ['favorite', '收藏'],
+    ['memory', '记忆'],
   ];
   return LABELS.map(([kind, label]) => ({
     kind,

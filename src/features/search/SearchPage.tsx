@@ -25,6 +25,8 @@ import {
 } from '../../lib/search';
 import { momentTimestamp } from '../../lib/time';
 import { repo } from '../../db/repo';
+import type { WorldbookEntry } from '../../ai/worldbook';
+import type { FavoriteVM } from '../../data/types';
 import { logError } from '../../lib/errlog';
 import { useNow } from '../../lib/useNow';
 import './search.css';
@@ -73,13 +75,64 @@ export function SearchPage() {
     if (!scopeConvId) void loadMoments();
   }, [loadMoments, scopeConvId]);
 
+  /**
+   * 搜索 v3 (M-J10)：世界书 / 收藏 / 记忆这三类不在 store 里，要从 repo 拉。
+   *
+   * 只在**有查询词时**拉一次，且与查询词无关（拉的是全量，匹配在纯函数里做）
+   * ——所以敲字的过程中不会每个键都打一次库。作用域搜索（会话内）跳过：
+   * 这三类都不属于某一个会话。
+   */
+  const [extra, setExtra] = useState<{
+    worldbook: WorldbookEntry[];
+    favorites: FavoriteVM[];
+    memories: Array<{ id: string; subjectId: string; text: string; createdAt?: number }>;
+  } | null>(null);
+  const wantExtra = !scopeConvId && query.trim().length > 0;
+  useEffect(() => {
+    if (!wantExtra || extra) return;
+    let alive = true;
+    void (async () => {
+      // getFavorites 在 repo 内部就滤掉了隐藏会话的行（与 search() 同一条规矩）。
+      const [worldbook, favorites, contactsNow] = await Promise.all([
+        repo.getWorldbook(),
+        repo.getFavorites(),
+        repo.getContacts(),
+      ]);
+      const mems: Array<{ id: string; subjectId: string; text: string; createdAt?: number }> = [];
+      for (const c of contactsNow) {
+        if (c.type !== 'ai') continue;
+        for (const f of await repo.getMemory(c.id)) {
+          // 归档的记忆不上屏：它在 prompt 里已经不参与了，搜出来只会让人
+          // 以为「她还记得」。
+          if (f.status === 'archived') continue;
+          mems.push({ id: f.id, subjectId: c.id, text: f.fact, createdAt: f.createdAt });
+        }
+      }
+      if (alive) setExtra({ worldbook, favorites, memories: mems });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [wantExtra, extra]);
+
   // The in-memory pass renders instantly off what the store already holds.
   const shallow = useMemo(
     () =>
       scopeConvId
         ? searchConversation({ contacts, conversations, messages, moments }, scopeConvId, query)
-        : search({ contacts, conversations, messages, moments }, query),
-    [contacts, conversations, messages, moments, query, scopeConvId],
+        : search(
+            {
+              contacts,
+              conversations,
+              messages,
+              moments,
+              worldbook: extra?.worldbook,
+              favorites: extra?.favorites,
+              memories: extra?.memories,
+            },
+            query,
+          ),
+    [contacts, conversations, messages, moments, query, scopeConvId, extra],
   );
 
   // …then the database pass replaces it, reaching history hydration never
