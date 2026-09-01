@@ -77,13 +77,19 @@ src/
   记忆 → 场景。改顺序=改行为，需评审。
 - **`scheduledActions` 表**：见铁律 5。新增时间驱动行为 = 在 `SCHEDULED_ACTION_KINDS`
   （`src/db/schema.ts`，**唯一那份列表**，`ActionKind` 由它派生）加一项 + `registerHandler`，
-  **不要**新建计时器。M-I 轮结束时共 **21 种**：heartbeat / rp_grab / transfer_accept /
+  **不要**新建计时器。M-J 轮结束时共 **24 种**：heartbeat / rp_grab / transfer_accept /
   moment_post / moment_like / moment_comment / group_msg / agent_dm / recall /
   mem_extract / story_tick / ai_money / ai_call / joint_plan / agent_forward /
   group_event / agent_invite / moment_repost / auto_backup / sticker_reply /
-  transfer_return。自续链的那几种用
+  transfer_return / **rp_return / bill_pay / group_chatter**（后三个 M-J8/J2 新增）。
+  自续链的那几种用
   `registerChainedHandler`（先续链后干活，失败只暂停不终结），并且必须进 wiring 测试的
   SELF_CHAINING 清单。
+- **`NOTIFY_STANCE` 台账**（`src/ai/notify-service.ts`，M-J4）：每个 kind 还必须表态
+  「App 关着时该不该出通知」——`Record<ActionKind, eligible | silent+why>` 编译期强制
+  全覆盖，守卫再断言键集合与 `SCHEDULED_ACTION_KINDS` 相等。**加 kind 不表态即转红**。
+  eligible 的准入是一致性铁律（通知正文必须在排期时刻就完全可知，或降 followup
+  无预览档）；silent 必须写明理由（保真/隐藏面/fire 时才定成败/payload 无人可显示）。
 - **一次性动作问「有没有过」，自续链问「是不是干完了」**（M-I18）：`enqueue` 按 id upsert，
   所以 nudge 那类「一辈子只发一次」的必须 `actionExists(id)`（任何状态都算数）。但自续链
   用同一个判据就会把**取消**当成终结——`auto_backup` 的 `setAutoBackupFreq` 先取消再重排，
@@ -177,6 +183,15 @@ src/
   从卡片里打开的全屏图片查看器渲染成卡内 390×276 小窗。现象离病因极远（去查了查看器的 CSS、
   z-index、portal，全都是对的）。规则：淡入类用 `backwards`；WAAPI（`springTo` 默认
   `fill: both`）收尾先把值落成 inline style 再 `cancel()`。详见 `specs/motion.md`。
+- **体积棘轮统计的是总 gzip（含懒 chunk），拆懒一个字节都不降**（M-J）。把模块拆成
+  lazy chunk 仍然值得做（冷启动更快），但想让 `check:size` 的数字变小只有删代码或删
+  依赖。「拆懒 → 数字没动 → 以为拆失败了」会重复发生，直到棘轮拆成主/懒双账本。
+- **`useMedia(refs)` 只做预热，不回传 URL**（返回 `void`）：URL 要另外走
+  `resolveImageRef(ref).url`（`src/data/moments-images.ts`，Avatar/MessageBubble 都是
+  这个配法）。写成 `const url = useMedia(x)` 会拿到 undefined 然后静默画占位图。
+- **`@keyframes` 里用独立 `translate` 属性要进 `KEYFRAME_EXEMPTIONS`**（motion 守卫
+  只认 transform/opacity）。它本身是合成类属性、截图门禁同样冻结，用它是为了让平移
+  与 `transform: scale` 在同一元素上叠加而不互相覆盖——但豁免必须有名有由地登记。
 - **不要为"截图稳定"冻结业务时钟**：组件里硬编码 NOW 常量意味着真机上所有相对时间戳
   永远错（diffDays 为负渲染成「星期六」）。确定性归测试侧：Playwright
   `page.clock.setFixedTime(种子纪元)`，业务代码用真实时钟（`useNow()` 分钟级 tick）。
