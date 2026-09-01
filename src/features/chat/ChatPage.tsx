@@ -24,6 +24,9 @@ import { recordUserSticker, agentStickerPool } from '../../ai/sticker-taste';
 import { battleReply, stickerStreak } from '../../ai/sticker-battle';
 import { totalUnread as totalUnreadOf } from '../../lib/unread';
 import { enqueue } from '../../ai/scheduler';
+import { patLine, shouldPatBack, patBackDelayMs, PAT_SUFFIX_KEY } from '../../ai/pat';
+import { translateText } from '../../ai/translate';
+import { tierOfConversation } from '../../lib/nsfw-tier';
 import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { logError } from '../../lib/errlog';
 import { ComposerPanels } from './ComposerPanels';
@@ -875,6 +878,51 @@ export function ChatPage() {
   };
 
   /**
+   * 拍一拍 (M-J7)：双击对方头像。
+   *
+   * 一条灰色系统行，不是消息——不计未读、不出通知、不进投影的对话历史
+   * （render-msg 的 system 分支本来就返回空）。她可能回拍，可能不回：
+   * 种子化的一次硬币（同一条消息重放结果相同），延迟走队列而不是
+   * setTimeout——回拍的妙处正在于晚两秒，而那两秒里用户常常已经离开页面。
+   */
+  const patPeer = async (m: MessageVM) => {
+    if (!conv) return;
+    const peer = contactById(m.senderId);
+    if (!peer) return;
+    const suffix = (await repo.getSetting<string>(PAT_SUFFIX_KEY).catch(() => undefined)) ?? '';
+    const at = Date.now();
+    try {
+      await appendMessage({
+        convId,
+        senderId: 'system',
+        type: 'system',
+        content: patLine('你', peer.remark ?? peer.name, suffix),
+        status: 'sent',
+        createdAt: at,
+      });
+    } catch {
+      showToast('拍一拍失败');
+      return;
+    }
+    const persona = personaFor(peer.id);
+    if (!persona) return;
+    const seed = `${convId}:${m.id}:${at}`;
+    if (!shouldPatBack(persona, seed)) return;
+    const fireAt = at + patBackDelayMs(persona, seed);
+    await enqueue({
+      kind: 'pat_back',
+      fireAt,
+      payload: {
+        convId,
+        line: patLine(peer.remark ?? peer.name, '你', ''),
+        at: fireAt,
+      },
+      now: at,
+      id: `patback_${convId}_${m.id}_${at}`,
+    });
+  };
+
+  /**
    * 发语音消息 (M-J7a): the clip lands in the media library (kind 'voice' —
    * durable, backed up, outside the TTS cache's eviction), the message carries
    * the ref, and a SILENT transcription fills `content` when ASR is around —
@@ -1130,6 +1178,34 @@ export function ChatPage() {
           })(),
       });
     }
+    // 翻译 (M-J7)：结果落 meta 持久化，和转文字同一形态——展开过就一直在。
+    if (isText && !m.isRecalled) {
+      items.push({
+        label: m.meta?.translation ? '收起翻译' : '翻译',
+        onSelect: () =>
+          void (async () => {
+            if (m.meta?.translation) {
+              await updateMessage({ ...m, meta: { ...m.meta, translation: undefined } });
+              return;
+            }
+            // 铁律 6：消息正文就是会话内容，tier 一律推导，不许调用点自造。
+            const memberIds = conv.type === 'group'
+              ? (conv.memberIds ?? [])
+              : conv.peerId
+                ? [conv.peerId]
+                : [];
+            const tier = await tierOfConversation(memberIds, personaFor).catch(
+              () => 'off' as const,
+            );
+            const out = await translateText(m.content ?? '', tier, convId);
+            if (!out) {
+              showToast('翻译失败');
+              return;
+            }
+            await updateMessage({ ...m, meta: { ...m.meta, translation: out } });
+          })(),
+      });
+    }
     items.push({
       label: '多选',
       onSelect: () => {
@@ -1277,6 +1353,7 @@ export function ChatPage() {
                   onImageTap={onImageTap}
                   onMergedTap={(m) => navigate(`/merged/${convId}/${m.id}`)}
                   onQuoteTap={onQuoteTap}
+                  onAvatarPat={(m) => void patPeer(m)}
                   onContactTap={(m) => {
                     const cid = m.meta?.contactId as string | undefined;
                     if (cid && contactById(cid)) navigate(`/contact/${cid}`);

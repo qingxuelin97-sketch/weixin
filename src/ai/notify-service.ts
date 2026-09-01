@@ -121,6 +121,10 @@ export const NOTIFY_STANCE: Record<ActionKind, NotifyStance> = {
     via: 'silent',
     why: '秒级斗图节拍，只在用户正看着聊天页时才会排——给盯着屏幕的人弹横幅是骚扰。',
   },
+  pat_back: {
+    via: 'silent',
+    why: '真微信的拍一拍不产生通知也不计未读——它是条灰色系统行，不是消息。而且它只在用户刚拍完的几秒内排，人就在屏幕前。',
+  },
 };
 
 /** The fixed like line. The act is the content; nothing here can go stale. */

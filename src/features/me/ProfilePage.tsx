@@ -4,12 +4,14 @@
  * but nothing called it). Writes through the store so every surface that
  * renders the self contact (Me page, moments, group prompts) updates at once.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { MediaPicker } from '../../components/MediaPicker';
 import { useAppStore } from '../../store/appStore';
+import { repo } from '../../db/repo';
+import { PAT_SUFFIX_KEY, PAT_SUFFIX_MAX } from '../../ai/pat';
 import { AVATAR_PALETTE } from '../../data/avatar-palette';
 import { useGuard } from '../../app/useGuard';
 import '../settings/settings.css';
@@ -28,6 +30,15 @@ export function ProfilePage() {
   const [avatarRef, setAvatarRef] = useState(me?.avatarRef);
   const [wxid, setWxid] = useState(me?.wxid ?? '');
   const [picking, setPicking] = useState(false);
+  // 拍一拍后缀 (M-J7)：微信把它放在「个人信息」里，因为它属于"你自己"——
+  // 别人拍你时显示的是**你**设的后缀。
+  const [patSuffix, setPatSuffix] = useState('');
+  useEffect(() => {
+    void repo
+      .getSetting<string>(PAT_SUFFIX_KEY)
+      .then((v) => setPatSuffix(v ?? ''))
+      .catch(() => setPatSuffix(''));
+  }, []);
 
   const save = async () => {
     if (!me) return;
@@ -44,6 +55,7 @@ export function ProfilePage() {
       avatarRef,
       wxid: wxid.trim() || me.wxid,
     });
+    await repo.putSetting(PAT_SUFFIX_KEY, patSuffix.trim().slice(0, PAT_SUFFIX_MAX));
     showToast('已保存');
     navigate(-1);
   };
@@ -94,7 +106,7 @@ export function ProfilePage() {
               placeholder="默认取昵称首字"
             />
           </div>
-          <div className="field">
+          <div className="field field--divided">
             <span className="field__label">微信号</span>
             <input
               className="field__input"
@@ -102,6 +114,16 @@ export function ProfilePage() {
               onChange={(e) => setWxid(e.target.value)}
               maxLength={20}
               spellCheck={false}
+            />
+          </div>
+          <div className="field">
+            <span className="field__label">拍一拍</span>
+            <input
+              className="field__input"
+              value={patSuffix}
+              onChange={(e) => setPatSuffix(e.target.value)}
+              maxLength={PAT_SUFFIX_MAX}
+              placeholder="的脑袋"
             />
           </div>
         </div>

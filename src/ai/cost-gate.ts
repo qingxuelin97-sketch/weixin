@@ -197,6 +197,8 @@ export const ACTION_LLM_BOUND: Record<ScheduledActionKind, boolean> = {
   moment_repost: true,
   auto_backup: false,
   sticker_reply: false,
+  // 拍一拍回拍 (M-J7)：一句模板，零生成。
+  pat_back: false,
   transfer_return: false,
   rp_return: false, // pure bookkeeping: status flip + ledger row + template line
   bill_pay: false, // amount/roster fixed at creation; delivery only

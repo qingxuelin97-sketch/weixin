@@ -442,6 +442,17 @@ export const SCHEDULED_ACTION_KINDS = [
    * sendGroupProactiveMessage the offline planner uses.
    */
   'group_chatter',
+  /**
+   * 拍一拍的回拍 (M-J7). Queued when the user double-taps her avatar; a
+   * seeded coin-flip decides whether it exists at all, so most pats simply
+   * do not get one. Zero LLM — the line is a template.
+   *
+   * It goes through the queue rather than a setTimeout for the ordinary
+   * reason (rule #5): the charm of a pat-back is that it lands a couple of
+   * seconds later, which is exactly the window in which the user might leave
+   * the chat — and a timer would lose it.
+   */
+  'pat_back',
 ] as const;
 
 export type ScheduledActionKind = (typeof SCHEDULED_ACTION_KINDS)[number];

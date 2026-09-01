@@ -40,6 +40,7 @@ export function ChatInfoPage() {
   const putPersona = useAppStore((s) => s.putPersona);
   const patchConversation = useAppStore((s) => s.patchConversation);
   const deleteConversation = useAppStore((s) => s.deleteConversation);
+  const clearMessages = useAppStore((s) => s.clearMessages);
   const showToast = useAppStore((s) => s.showToast);
   const [, bump] = useState(0);
   /** Tapping a member removes them instead of opening their card. */
@@ -280,6 +281,20 @@ export function ChatInfoPage() {
     await saveCfg({ ...cfg, topics: next.split(/[、,，\s]+/).filter(Boolean).slice(0, 5) });
   };
 
+  const clearHistory = async () => {
+    // Distinct from 删除该聊天 and worth the second confirm: the thread stays in
+    // the list, the persona and her memories survive, only what was said is gone.
+    const ok = await showConfirm({
+      title: '清空聊天记录',
+      body: '本会话的消息将被清空，且无法恢复。（她的人设与记忆不受影响）',
+      confirmText: '清空',
+      danger: true,
+    });
+    if (!ok) return;
+    await clearMessages(conv.id);
+    showToast('已清空');
+  };
+
   const removeChat = async () => {
     // The old row destroyed the whole thread on a single tap — the only
     // destructive action in the app with no confirmation at all.
@@ -448,6 +463,16 @@ export function ChatInfoPage() {
           <div className="settings__row" onClick={() => guard('chatinfo.mute', () => toggle('isMuted'))}>
             <span className="settings__label">消息免打扰</span>
             <Switch on={conv.isMuted} onChange={() => guard('chatinfo.mute', () => toggle('isMuted'))} />
+          </div>
+        </div>
+
+        <div className="settings__group">
+          <div
+            className="settings__row"
+            onClick={() => guard('chatinfo.clear', clearHistory)}
+          >
+            <span className="settings__label">清空聊天记录</span>
+            <span className="settings__chevron">›</span>
           </div>
         </div>
 

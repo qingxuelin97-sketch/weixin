@@ -72,6 +72,7 @@ import {
   handleRpReturn,
   handleBillPay,
   handleStickerReply,
+  handlePatBack,
   handleRecall,
   handleGroupMsg,
   handleMemExtract,
@@ -279,6 +280,7 @@ export function useSchedulerRuntime(enabled: boolean): void {
     // 斗图 (M-I18): the seeded comeback, delivered off the queue rather than a
     // bare setTimeout — leaving the chat mid-window used to eat the reply.
     registerHandler('sticker_reply', (p) => handleStickerReply(deps, p));
+    registerHandler('pat_back', (p) => handlePatBack(deps, p));
     registerHandler('recall', (p) => handleRecall(deps, p));
     registerHandler('group_msg', (p, a) => handleGroupMsg(deps, p, a));
     registerHandler('mem_extract', (p) => handleMemExtract(deps, p));

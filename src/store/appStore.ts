@@ -137,6 +137,8 @@ interface AppState {
   deleteConversation: (id: string) => Promise<void>;
   /** Delete one message locally and recompute the conversation preview. */
   deleteMessage: (convId: string, msgId: number) => Promise<void>;
+  /** 清空聊天记录 (M-J7): empty the thread, keep the conversation. */
+  clearMessages: (convId: string) => Promise<void>;
   /** Insert a conversation (used for hidden AI↔AI DM threads). Idempotent by id. */
   addConversation: (c: ConversationVM) => Promise<void>;
   putPersona: (p: PersonaVM) => Promise<void>;
@@ -443,6 +445,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       delete messages[id];
       return { conversations: s.conversations.filter((c) => c.id !== id), messages };
     });
+  },
+
+  clearMessages: async (convId) => {
+    await repo.clearMessages(convId);
+    set((s) => ({ messages: { ...s.messages, [convId]: [] } }));
+    // The list row survives but must stop advertising a message that is gone.
+    await get().patchConversation(convId, { lastMsgPreview: '', unreadCount: 0 });
   },
 
   deleteMessage: async (convId, msgId) => {

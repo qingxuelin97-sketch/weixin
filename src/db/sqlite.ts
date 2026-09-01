@@ -316,6 +316,11 @@ export class SqliteRepo implements Repo {
   async putConversation(c: ConversationVM) {
     await this.kvPut('conversations', c);
   }
+  async clearMessages(convId: string) {
+    // Messages + summary, conversation row survives (M-J7).
+    await this.db.run(`DELETE FROM messages WHERE conv_id = ?`, [convId], false);
+    await this.kvDelete('conv_summaries', convId);
+  }
   async deleteConversation(id: string) {
     // Messages + summary + row, same order as the IDB driver.
     await this.db.run(`DELETE FROM messages WHERE conv_id = ?`, [id], false);

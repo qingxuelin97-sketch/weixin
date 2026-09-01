@@ -31,7 +31,11 @@ import { join } from 'node:path';
  * own doctrine; J13 will split the ratchet into main-chunk vs lazy budgets so
  * the number stops punishing code that never blocks cold start.
  */
-const BUDGET_KB = 375;
+// M-J7: 375→385. 拍一拍/翻译/清空 三项都是首方主 chunk 代码，零新依赖；
+// 上一轮就已经卡在 0 KB 余量上（拆懒不降总量，见 CLAUDE.md §3.5），所以按
+// 棘轮章程「同一提交显式上调即为决策记录」办理。J10 把口径拆成主/懒双账本
+// 之后，这个数字会重新标定到主 chunk 上。
+const BUDGET_KB = 385;
 
 const dir = 'dist/assets';
 let entries;

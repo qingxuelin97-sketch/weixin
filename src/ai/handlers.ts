@@ -286,6 +286,29 @@ export async function handleStickerReply(
   d.playMessageSound(at);
 }
 
+/**
+ * 她回拍你 (M-J7). A system line, not a message: no unread, no sound, no
+ * notification — the same weight WeChat gives it.
+ */
+export async function handlePatBack(
+  d: HandlerDeps,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const convId = str(payload.convId);
+  const line = str(payload.line);
+  if (!convId || !line) return;
+  // The conversation may have been deleted inside the few-second window.
+  if (!d.conversationExists(convId)) return;
+  await d.hooks.appendMessage({
+    convId,
+    senderId: 'system',
+    type: 'system',
+    content: line,
+    status: 'sent',
+    createdAt: optNum(payload.at) ?? d.now(),
+  });
+}
+
 /* ---------------------------- heartbeat ---------------------------- */
 
 /**

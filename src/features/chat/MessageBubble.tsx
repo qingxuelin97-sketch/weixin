@@ -56,6 +56,8 @@ interface Props {
    * from before M-J0 stored only the text and stay inert.
    */
   onQuoteTap?: (quotedId: number) => void;
+  /** 拍一拍 (M-J7): double-tap a peer's avatar in the thread. */
+  onAvatarPat?: (msg: MessageVM) => void;
   /**
    * 「已读」 marker on one's own message (M-I16, opt-in via the readReceipts
    * setting — WeChat itself has no read receipts, so this defaults off).
@@ -64,7 +66,7 @@ interface Props {
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onBillTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark, onQuoteTap }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onBillTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark, onQuoteTap, onAvatarPat }: Props) {
   // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
   // movement and had no fired guard, so releasing a long press on an image
   // ALSO opened the viewer. The hook fixes both.
@@ -104,7 +106,12 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
       {...pressHandlers}
     >
       {!isSelf && (
-        <div className="msg-row__avatar">
+        // 拍一拍 (M-J7)：双击头像。onDoubleClick 而不是自制双击检测——单击
+        // 头像本来就没有别的动作，所以两者不会互相吃掉手势。
+        <div
+          className="msg-row__avatar"
+          onDoubleClick={onAvatarPat ? () => onAvatarPat(msg) : undefined}
+        >
           <Avatar color={sender?.avatarColor ?? 'var(--color-brand)'} text={sender?.avatarText ?? '?'} imageRef={sender?.avatarRef} size={40} />
         </div>
       )}
@@ -320,6 +327,15 @@ function BubbleContent({
               </div>
               <div className="invite-card__footer">群聊邀请</div>
             </div>
+          </div>
+        );
+      }
+      // 翻译 (M-J7)：译文挂在气泡下方，和语音的转文字同一形态——展开过就一直在。
+      if (typeof msg.meta?.translation === 'string' && msg.meta.translation) {
+        return (
+          <div className="bubble-wrap">
+            <div className={`bubble bubble--${side}`}>{msg.content}</div>
+            <div className="msg-translation">{msg.meta.translation}</div>
           </div>
         );
       }

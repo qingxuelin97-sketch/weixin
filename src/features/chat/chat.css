@@ -273,6 +273,22 @@
   font-size: var(--fs-cell-sub);
   line-height: 1.4;
 }
+/* 翻译 (M-J7)：与转文字同一形态——附在气泡下方的浅底小块。
+   `.bubble-wrap` 只是纵向容器，气泡本身的样式一点没动。 */
+.bubble-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: inherit;
+}
+.msg-translation {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--color-cell-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-cell-sub);
+  line-height: 1.4;
+}
 .voice-unplayed {
   width: 8px;
   height: 8px;

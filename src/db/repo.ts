@@ -61,6 +61,14 @@ export interface Repo {
   getConversation(id: string): Promise<ConversationVM | undefined>;
   putConversation(c: ConversationVM): Promise<void>;
   deleteConversation(id: string): Promise<void>;
+  /**
+   * 清空聊天记录 (M-J7): drop every message but KEEP the conversation.
+   *
+   * Distinct from deleteConversation on purpose — WeChat has both, and they
+   * mean different things: this one leaves the thread in your list (and the
+   * contact, the persona, the memories) and only empties what was said.
+   */
+  clearMessages(convId: string): Promise<void>;
 
   // messages (autoincrement id; per-conversation cursor pagination)
   getMessages(convId: string, opts?: { limit?: number; beforeId?: number }): Promise<MessageVM[]>;
@@ -333,6 +341,9 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
   nativeIncomingCall: { scope: 'global', row: 'exempt', why: '原生特性开关' },
   momentsSeenAt: { scope: 'global', row: 'exempt', why: '朋友圈红点水位' },
   momentsCoverRef: { scope: 'global', row: 'exempt', why: '本人朋友圈封面' },
+  // 拍一拍后缀 (M-J7)：属于**用户自己**（别人拍你时显示的是你设的后缀），
+  // 与任何联系人无关，所以删联系人不动它。
+  patSuffix: { scope: 'global', row: 'exempt', why: '本人的拍一拍后缀' },
   ttsModel: { scope: 'global', row: 'exempt', why: 'App 级 TTS 配置' },
   ttsConfig: { scope: 'global', row: 'exempt', why: 'App 级 TTS 来源配置（槽位绑定/独立密钥），只存 alias 不存 key' },
   visionEnabled: { scope: 'global', row: 'exempt', why: 'App 级开关' },
@@ -659,6 +670,14 @@ export class IdbRepo implements Repo {
    * old messages reappeared inside the new thread. `byConv` still indexed them,
    * so search could surface deleted content too.
    */
+  async clearMessages(convId: string) {
+    // Same single-cursor delete as deleteConversation's first step. The
+    // rolling summary goes too: a summary of messages that no longer exist
+    // would keep feeding her lines about a conversation the user just erased.
+    await idbDeleteByIndex('messages', 'byConv', convId);
+    await idbDelete('conv_summaries', convId);
+  }
+
   async deleteConversation(id: string) {
     // One cursor, one transaction. This used to load every message and delete
     // them one at a time, each in its own transaction — so a long thread took
