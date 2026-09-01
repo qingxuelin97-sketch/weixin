@@ -181,4 +181,23 @@ describe('接线扫描（写了没接线 = 没做）', () => {
     expect(src).toContain('PAT_SUFFIX_KEY');
     expect(src).toContain('putSetting(PAT_SUFFIX_KEY');
   });
+
+  /**
+   * 群公告弹窗 (M-J7)：**先写水位，再 await 对话框**。
+   *
+   * 反过来写的后果不是「少弹一次」而是「永远弹」：用户在弹窗上把 App 切走/杀掉，
+   * await 永远不返回，水位永远没写，下次进来又弹——而且用户没有任何办法让它停。
+   * 这是个顺序 bug，类型系统和渲染测试都看不见它，只能扫源码顺序。
+   */
+  it('群公告弹窗先落水位再弹（否则在弹窗上杀掉 App 会让它永远弹）', () => {
+    const src = readFileSync(resolve(__dirname, '../../src/features/chat/ChatPage.tsx'), 'utf8');
+    // 两个下标都从 0 找起，并且弹窗认的是它自己的标题而不是 `showConfirm(`
+    // ——ChatPage 里不止一个 showConfirm，而「从写入点往后找」会在顺序真的
+    // 反了的时候返回 -1，于是断言照样红、但报的是「找不到弹窗」这种假原因。
+    const put = src.indexOf('putSetting(`announceSeen:');
+    const show = src.indexOf("title: '群公告'");
+    expect(put, '找不到群公告水位的写入点').toBeGreaterThan(0);
+    expect(show, '找不到公告弹窗').toBeGreaterThan(0);
+    expect(show, '弹窗排在写水位之前——在弹窗上杀掉 App 就会永远弹').toBeGreaterThan(put);
+  });
 });

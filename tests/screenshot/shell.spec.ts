@@ -27,6 +27,15 @@ test('single chat page', async ({ page }) => {
 test('group chat page', async ({ page }) => {
   await page.goto('/#/chat/conv_group');
   await settle(page);
+  // 群公告弹窗 (M-J7): a fresh install has never seen this group's announcement,
+  // so the popup is up on first open — by design. This shot is about the
+  // THREAD, so acknowledge it first; leaving it would turn a golden that
+  // watches the message list into one that watches a dialog.
+  const ack = page.getByRole('button', { name: '我知道了' });
+  if (await ack.isVisible().catch(() => false)) {
+    await ack.click();
+    await settle(page);
+  }
   await expect(page).toHaveScreenshot('chat-group.png', { fullPage: false });
 });
 
