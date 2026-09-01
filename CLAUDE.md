@@ -148,6 +148,14 @@ src/
 - **本容器构建不了 APK**：`dl.google.com` 被出网策略 403（Android SDK 与 Google Maven 都在
   这一个域名下），且无 `/dev/kvm`/`vmx`/`emulator`。APK 只能由 GitHub Actions 产出，
   见 `.github/workflows/release.yml`。
+- **源码文本守卫必须先剥注释**（M-J7 一轮里踩了三次）：这类守卫扫的是「源码里
+  不许出现 X」，而**解释 X 的注释本身含有 X**。三次分别是：朋友权限新页在头注释里
+  写「规则住在数据层，不在这里做 `canSeeMoment`」，被「UI 不许持有可见性规则」判违规；
+  J11 从源码切 `MessageType` 联合时按第一个 `;` 截断，而成员注释里带分号；状态胶囊
+  注释写「这里以前是暂未开放」，被「死入口 toast 不许回来」判违规。
+  最坏的一点是它教反了：**删掉解释就绿了**。写法固定为
+  `src.replace(/\/\*[\s\S]*?\*\//g,'').replace(/(^|\s)\/\/[^\n]*/g,'$1')`，
+  剥完再扫，剥完再变异验证一次（剥注释不会削弱守卫——真调用点活得过剥离）。
 - **写了没接线 = 没做**：M2 的 heartbeat、M4 的 notify、M2 的 relations 层都曾
   「写完、有测试、零调用方」。交付前 `grep -rn "from '.*<新模块>'" src/` 确认真有调用方。
 - **`enqueue` 按 id upsert**：给「一辈子只发一次」的动作（nudge）复用稳定 id 前必须

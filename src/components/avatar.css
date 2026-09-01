@@ -38,3 +38,23 @@
   object-fit: cover;
   display: block;
 }
+
+/* 状态圈 (M-J7)：有「状态」的人头像外面一圈色环 + 右下角 emoji 角标。
+   包一层 span 而不是给 .avatar 加 class，是因为角标要溢出到头像外面，
+   而 .avatar 自己是 overflow:hidden 的（圆形裁切靠它）。 */
+.avatar-status {
+  position: relative;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--status-tint);
+}
+.avatar-status__badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  line-height: 1;
+  border-radius: 50%;
+  background: var(--color-cell-bg);
+  padding: 1px;
+}

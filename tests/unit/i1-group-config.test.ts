@@ -632,7 +632,7 @@ describe('the deleteContact ledger', () => {
 
   /**
    * Rows whose VALUE is an id-keyed map need bespoke surgery, so each one needs
-   * its own test. There are four, and all four have one below. A fifth turns
+   * its own test. There are five, and all five have one below. A sixth turns
    * this red until someone writes its test too.
    */
   it('pins the rows that need per-entry surgery', () => {
@@ -640,7 +640,13 @@ describe('the deleteContact ledger', () => {
       .filter(([, r]) => r.entries)
       .map(([k]) => k)
       .sort();
-    expect(withEntries).toEqual(['contactTags', 'friendPerms', 'groupNick:', 'rel_edges']);
+    expect(withEntries).toEqual([
+      'contactStatus',
+      'contactTags',
+      'friendPerms',
+      'groupNick:',
+      'rel_edges',
+    ]);
   });
 
   it('refuses to delete the user', async () => {
@@ -793,6 +799,12 @@ describe('deleteContact cascade', () => {
       [FRIEND]: { hideMine: true },
     });
     await repo.putSetting('contactTags', { [VICTIM]: ['同事'], [FRIEND]: ['同事', '球友'] });
+    await repo.putSetting('contactStatus', {
+      [VICTIM]: { optionId: 'busy', at: T0 },
+      [FRIEND]: { optionId: 'coffee', at: T0 },
+      // 'self' shares the row: the surgery must not touch the user's own状态.
+      self: { optionId: 'gaming', at: T0 },
+    });
 
     // Relationship edges, written through the REAL engine so the test proves
     // the actual read path (one settings row holding every pair).
@@ -981,6 +993,12 @@ describe('deleteContact cascade', () => {
     const tags = await repo.getSetting<Record<string, string[]>>('contactTags');
     expect(tags![VICTIM]).toBeUndefined();
     expect(tags![FRIEND]).toEqual(['同事', '球友']);
+
+    const statuses = await repo.getSetting<Record<string, { optionId: string }>>('contactStatus');
+    expect(statuses![VICTIM]).toBeUndefined();
+    expect(statuses![FRIEND]?.optionId).toBe('coffee');
+    // 用户自己的状态住在同一行里，删别人不能把它带走。
+    expect(statuses!.self?.optionId).toBe('gaming');
   });
 
   /**

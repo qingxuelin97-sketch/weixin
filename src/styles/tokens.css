@@ -83,6 +83,17 @@
   --color-brand-pressed: var(--wx-green-pressed);
   --color-badge: var(--wx-red);
   --color-link: var(--wx-link-blue);
+
+  /* 微信「状态」的五种色调 (M-J7)。前缀是 wxstatus 而不是 status：本文件下面
+     已经有一组 --color-status-track/pos/neg，那是「她的状态」（智能体内在状态
+     页）的，两个功能同名会让改错的人以为自己改对了。
+     复用 dc 那组已有原始色而不是新采样一批——状态胶囊在真机上就是这几个
+     饱和度，而多一个原始色就多一处要对齐的地方。 */
+  --color-wxstatus-blue: var(--wx-dc-blue);
+  --color-wxstatus-green: var(--wx-dc-green);
+  --color-wxstatus-violet: var(--wx-dc-purple);
+  --color-wxstatus-amber: var(--wx-dc-orange);
+  --color-wxstatus-pink: var(--wx-dc-red);
   --color-money: var(--wx-gold);
 
   --color-bubble-self: var(--wx-bubble-self);

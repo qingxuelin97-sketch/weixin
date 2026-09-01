@@ -54,6 +54,7 @@ import {
 } from './features/contacts/ContactListPages';
 import { FriendPermPage } from './features/contacts/FriendPermPage';
 import { QrCodePage } from './features/me/QrCodePage';
+import { StatusSetPage } from './features/me/StatusSetPage';
 import { SearchPage } from './features/search/SearchPage';
 import { NativePage } from './features/settings/NativePage';
 import { UsagePage } from './features/settings/UsagePage';
@@ -222,6 +223,7 @@ export function App() {
               <Route path="/contacts-tags/:tag" element={<Push><TagMembersPage /></Push>} />
               <Route path="/contact/:contactId/perm" element={<Push><FriendPermPage /></Push>} />
               <Route path="/qrcode" element={<Push><QrCodePage /></Push>} />
+              <Route path="/status-set" element={<Push><StatusSetPage /></Push>} />
               <Route path="/call/:convId" element={<Push><CallPage /></Push>} />
               <Route path="/group-call/:convId" element={<Push><GroupCallPage /></Push>} />
               <Route path="/rp/send/:convId" element={<Push><RedPacketSendPage /></Push>} />

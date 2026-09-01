@@ -3,6 +3,7 @@
  * tick. Lives in the app shell so `scheduler.ts` stays dependency-free and
  * unit-testable, while handlers can reach the store/Repo freely.
  */
+import type { StatusVM } from '../lib/status';
 import { useEffect } from 'react';
 import {
   registerHandler,
@@ -258,6 +259,11 @@ export function useSchedulerRuntime(enabled: boolean): void {
       // 换头像 (M-J3): through the store so an open chat list repaints the new
       // face immediately; the store writes through to the Repo.
       updateContact: (c: ContactVM) => useAppStore.getState().putContact(c),
+      // 微信「状态」 (M-J7): through the STORE, so an open me/contacts page
+      // shows her new status without a reload — same write-through shape as
+      // updateContact above.
+      setStatus: (contactId: string, st: StatusVM) =>
+        useAppStore.getState().setStatusFor(contactId, st, st.at),
       now: () => Date.now(),
     };
 

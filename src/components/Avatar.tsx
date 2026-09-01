@@ -14,13 +14,38 @@ interface AvatarProps {
   imageRef?: string;
   /** Group avatar: up to 9 sub-avatars composited in a grid, like WeChat. */
   members?: Array<{ color: string; text: string; imageRef?: string }>;
+  /**
+   * 状态圈 (M-J7): a colored ring + emoji badge when this person has a live
+   * 「状态」. Pass the token NAME (e.g. `--color-wxstatus-blue`), not a color —
+   * 铁律 1, and the catalog in src/lib/status.ts stores names for this reason.
+   *
+   * Undefined means no ring, which is what every existing call site gets — the
+   * markup below is byte-identical without it, so no golden moves.
+   */
+  status?: { tint: string; emoji: string };
 }
 
 function refUrl(ref?: string): string | undefined {
   return ref ? resolveImageRef(ref).url : undefined;
 }
 
-export function Avatar({ color, text, size = 48, imageRef, members }: AvatarProps) {
+export function Avatar({ color, text, size = 48, imageRef, members, status }: AvatarProps) {
+  const inner = AvatarBody({ color, text, size, imageRef, members });
+  if (!status) return inner;
+  return (
+    <span
+      className="avatar-status"
+      style={{ '--status-tint': `var(${status.tint})` } as React.CSSProperties}
+    >
+      {inner}
+      <span className="avatar-status__badge" style={{ fontSize: Math.max(9, size * 0.28) }}>
+        {status.emoji}
+      </span>
+    </span>
+  );
+}
+
+function AvatarBody({ color, text, size = 48, imageRef, members }: AvatarProps) {
   if (members && members.length > 1) {
     const shown = members.slice(0, 9);
     const cols = shown.length <= 4 ? 2 : 3;

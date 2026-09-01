@@ -68,6 +68,8 @@ const RUNTIME_SET_VARS: Record<string, string> = {
   '--roll-delay': '红包金额数字滚动的逐位延迟，由 money 页内联设置',
   '--msg-origin': '气泡进场动画的 transform-origin，由 MessageBubble 按左右内联设置',
   '--stagger-delay': '列表错峰进场的第 n 项延迟，由列表容器内联设置',
+  '--chip-tint': '微信「状态」胶囊/格子的色调（M-J7），由 StatusSetPage/MePage/资料页内联设置',
+  '--status-tint': '头像状态圈的色调（M-J7），由 Avatar 按 status.tint 内联设置',
 };
 
 describe('CSS 变量引用完整性', () => {

@@ -12,6 +12,13 @@ import {
   type FriendPerm,
   type FriendPermMap,
 } from '../lib/friend-perms';
+import {
+  NO_STATUS,
+  pruneStatuses,
+  setStatus,
+  type StatusMap,
+  type StatusVM,
+} from '../lib/status';
 import { create } from 'zustand';
 import type {
   ContactVM,
@@ -106,6 +113,14 @@ interface AppState {
    */
   friendPerms: FriendPermMap;
   contactTags: ContactTagMap;
+  /**
+   * 微信「状态」 (M-J7)。One row keyed by contactId, self included.
+   * Expiry is NOT stored — `liveStatus(statuses, id, now)` decides, so a status
+   * set while the app was closed still ages correctly (see src/lib/status.ts).
+   */
+  statuses: StatusMap;
+  /** Set (or clear, with null) one person's status. Prunes expired rows on write. */
+  setStatusFor: (contactId: string, next: StatusVM | null, now: number) => Promise<void>;
   /** Merge one contact's permission switches (clears the entry when all are off). */
   setFriendPerm: (contactId: string, patch: FriendPerm) => Promise<void>;
   /** Replace one contact's tag list (clears the entry when empty). */
@@ -275,9 +290,10 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
     if (item.kind === 'avatar') materializeMedia(item.id, item.blob);
   }
   conversations.sort(sortConversations);
-  const [friendPerms, contactTags] = await Promise.all([
+  const [friendPerms, contactTags, statuses] = await Promise.all([
     repo.getFriendPerms(),
     repo.getSetting<ContactTagMap>('contactTags'),
+    repo.getSetting<StatusMap>('contactStatus'),
   ]);
   set({
     hydrated: true,
@@ -287,6 +303,7 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
     personas,
     friendPerms,
     contactTags: contactTags ?? NO_TAGS,
+    statuses: statuses ?? NO_STATUS,
   });
 }
 
@@ -295,6 +312,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   hydrateError: null,
   friendPerms: NO_FRIEND_PERMS,
   contactTags: NO_TAGS,
+  statuses: NO_STATUS,
   contacts: [],
   conversations: [],
   messages: {},
@@ -730,6 +748,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = setPerm(get().friendPerms, contactId, patch);
     await repo.putSetting('friendPerms', next);
     set({ friendPerms: next });
+  },
+
+  setStatusFor: async (contactId, next, now) => {
+    // Prune on write, not on a timer: expired rows are already invisible to
+    // readers, but they would ride along in every backup and give the delete
+    // cascade rows nobody can see. See src/lib/status.ts.
+    const merged = setStatus(pruneStatuses(get().statuses, now), contactId, next);
+    await repo.putSetting('contactStatus', merged);
+    set({ statuses: merged });
   },
 
   setContactTags: async (contactId, tags) => {

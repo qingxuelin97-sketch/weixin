@@ -7,6 +7,9 @@ import { useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { parseTags, permLabel } from '../../lib/friend-perms';
+import { liveStatus, statusLabel } from '../../lib/status';
+import { useNow } from '../../lib/useNow';
+import '../me/me.css';
 import { Avatar } from '../../components/Avatar';
 import { FLIP_KEYS } from '../../lib/flip';
 import { useFlipEnter } from '../../lib/useFlipEnter';
@@ -35,6 +38,9 @@ export function ContactProfilePage() {
   const tags = useAppStore((s) => s.contactTags);
   const perms = useAppStore((s) => s.friendPerms);
   const setContactTags = useAppStore((s) => s.setContactTags);
+  const statuses = useAppStore((s) => s.statuses);
+  const now = useNow();
+  const herStatus = liveStatus(statuses, contactId, now);
   const addConversation = useAppStore((s) => s.addConversation);
   const deleteContact = useAppStore((s) => s.deleteContact);
   const showToast = useAppStore((s) => s.showToast);
@@ -104,10 +110,29 @@ export function ContactProfilePage() {
               is measured against, and putting the ref on <Avatar/> would mean
               threading one through a component every other call site shares. */}
           <div className="contact-card__avatar" ref={avatarRef}>
-            <Avatar color={contact.avatarColor} text={contact.avatarText} imageRef={contact.avatarRef} size={64} />
+            <Avatar
+              color={contact.avatarColor}
+              text={contact.avatarText}
+              imageRef={contact.avatarRef}
+              size={64}
+              // 状态圈 (M-J7): only when she actually has a live one — an
+              // expired status draws nothing (liveStatus decides, not a timer).
+              status={
+                herStatus ? { tint: herStatus.option.tint, emoji: herStatus.option.emoji } : undefined
+              }
+            />
           </div>
           <div className="contact-card__id">
             <div className="contact-card__name">{contact.remark ?? contact.name}</div>
+            {herStatus && (
+              <div
+                className="contact-card__meta status-chip"
+                style={{ '--chip-tint': `var(${herStatus.option.tint})` } as React.CSSProperties}
+              >
+                <span className="status-chip__emoji">{herStatus.option.emoji}</span>
+                {statusLabel(herStatus)}
+              </div>
+            )}
             {contact.wxid && <div className="contact-card__meta">微信号：{contact.wxid}</div>}
             {contact.signature && <div className="contact-card__meta">个性签名：{contact.signature}</div>}
           </div>

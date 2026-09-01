@@ -356,6 +356,13 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
     entries: 'id',
     why: '联系人标签表存在一行里：同上，按 id 逐条删',
   },
+  contactStatus: {
+    scope: 'global',
+    row: 'exempt',
+    entries: 'id',
+    // 'self' 的状态也在这一行里，所以删行还会顺手把用户自己的状态删掉。
+    why: 'J7 微信「状态」表存在一行里（含 self）：按 id 逐条删',
+  },
   rel_edges: {
     scope: 'global',
     row: 'exempt',

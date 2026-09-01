@@ -37,6 +37,9 @@ const SHOTS: Array<[name: string, path: string]> = [
   // from seededRng('qr:' + wxid), so the same seeded profile draws the same
   // code every run — no clock, no Math.random for the diff to chase.
   ['qrcode', '/qrcode'],
+  // 我的状态 (M-J7). Static: the grid is a constant catalog and no status is
+  // seeded, so nothing here depends on the clock.
+  ['status-set', '/status-set'],
 ];
 
 for (const [name, path] of SHOTS) {

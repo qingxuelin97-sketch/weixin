@@ -1,3 +1,5 @@
+import { liveStatus, statusLabel } from '../../lib/status';
+import { useNow } from '../../lib/useNow';
 import { useNavigate } from 'react-router-dom';
 import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
@@ -98,6 +100,9 @@ export function MePage() {
   const me = useAppStore((s) => s.contactById('self'));
   const showToast = useAppStore((s) => s.showToast);
   const navigate = useNavigate();
+  const now = useNow();
+  const statuses = useAppStore((s) => s.statuses);
+  const myStatus = liveStatus(statuses, 'self', now);
   return (
     <>
       <NavBar title="" />
@@ -110,15 +115,32 @@ export function MePage() {
               <span className="me__wxid">微信号：{me?.wxid ?? '—'}</span>
             </div>
             <div className="me__pills">
-              <button
-                className="me__pill"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  showToast('暂未开放');
-                }}
-              >
-                ＋ 状态
-              </button>
+              {/* 微信「状态」 (M-J7). This pill has shown 「暂未开放」 since M1 —
+                  the same dead entry as the mic button before J7a: it is on the
+                  screen, and pressing it tells you it is not there. */}
+              {myStatus ? (
+                <button
+                  className="me__pill status-chip"
+                  style={{ '--chip-tint': `var(${myStatus.option.tint})` } as React.CSSProperties}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate('/status-set');
+                  }}
+                >
+                  <span className="status-chip__emoji">{myStatus.option.emoji}</span>
+                  {statusLabel(myStatus)}
+                </button>
+              ) : (
+                <button
+                  className="me__pill"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate('/status-set');
+                  }}
+                >
+                  ＋ 状态
+                </button>
+              )}
               <button
                 className="me__pill"
                 onClick={(e) => {

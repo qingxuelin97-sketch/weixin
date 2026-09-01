@@ -21,6 +21,7 @@ import {
 import { repostMoment } from './moment-repost';
 import { generateToLibrary } from './gen-media';
 import { canSeeMoment } from '../lib/moment-visibility';
+import { STATUS_POST_RATE, pickStatus, type StatusVM } from '../lib/status';
 import { recordStance, hostileTone, STANCE_CLASH_DELTA } from './relationship';
 import { seededRng } from '../lib/money';
 import { repo } from '../db/repo';
@@ -36,6 +37,12 @@ export interface MomentsHooks {
    * happens, which is the correct degraded shape for an optional flourish.
    */
   updateContact?: (c: ContactVM) => Promise<void>;
+  /**
+   * 微信「状态」 (M-J7). Optional for the same reason as `updateContact`:
+   * absent hook = she simply never sets one, which is the right degraded shape
+   * for a flourish nobody's data depends on.
+   */
+  setStatus?: (contactId: string, s: StatusVM) => Promise<void>;
   now: () => number;
 }
 
@@ -141,6 +148,39 @@ export async function runMomentPost(
   // new action kind, no second timer, and offline backfill reaches it through
   // the same materialized `moment_post` row as everything else.
   await maybeAvatarSwap(persona, peer, contacts, personaFor, hooks, stamp);
+  // 换个状态 (M-J7): rides the SAME tail, for the same reasons — no 26th
+  // action kind, and offline backfill reaches it through the materialized
+  // `moment_post` row like everything else. Unlike the avatar swap this one is
+  // free (no generation call), which is why its rate is an order of magnitude
+  // higher: a status is supposed to change often.
+  await maybeStatusChange(persona, peer, hooks, stamp);
+}
+
+/**
+ * Occasionally give her a fresh 「状态」 on the back of a post she just made.
+ *
+ * Seeded and LLM-free: the whole payload is one catalog entry, so a generation
+ * round would buy nothing and would make replay non-deterministic.
+ */
+export async function maybeStatusChange(
+  persona: PersonaVM,
+  peer: ContactVM,
+  hooks: MomentsHooks,
+  stamp: number,
+): Promise<void> {
+  if (!hooks.setStatus) return;
+  if (seededRng(`statuspost:${peer.id}:${stamp}`)() >= STATUS_POST_RATE) return;
+  const d = new Date(stamp);
+  const option = pickStatus(
+    {
+      contactId: peer.id,
+      proactivity: persona.proactivity,
+      hour: d.getHours(),
+      day: Math.floor(stamp / 86_400_000),
+    },
+    seededRng,
+  );
+  await hooks.setStatus(peer.id, { optionId: option.id, at: stamp });
 }
 
 /**
