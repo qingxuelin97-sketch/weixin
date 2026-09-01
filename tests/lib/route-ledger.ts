@@ -115,6 +115,9 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
     // for a tag whose last member lost it, exactly as /moments/:id does.
     smoke: { path: '/contacts-tags/smoke_missing' },
   },
+  // pendingCast: 接线已完成（shell.spec.ts 有这一张），基线等 CI 的
+  // regen-goldens 铸——本容器铸出来的与 CI 的 Chromium 构建对不上（CLAUDE.md §3.5）。
+  '/qrcode': { golden: 'qrcode', pendingCast: true, smoke: { path: '/qrcode' } },
   '/contact/:contactId/perm': {
     exempt: 'four switches over one settings row; behavior is unit-tested at the chokepoint',
     smoke: { path: '/contact/ai_lin/perm' },

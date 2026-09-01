@@ -1,3 +1,4 @@
+import type { Mentionable } from '../../lib/mention';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -1062,6 +1063,65 @@ export function ChatPage() {
   // manual URL, an anchored search jump), so one check covers all of them.
   // Saying "会话不存在" rather than "不可查看" matters too — acknowledging that
   // the thread exists is itself the tell.
+  /**
+   * @ 可点 (M-J7): who this thread's @ names can resolve to. Group members
+   * plus the user — 「@我」 must light up too, and the user's own name is the
+   * one an AI actually types when it addresses them.
+   *
+   * Built from the CONVERSATION's roster, never from all contacts: matching a
+   * name that is not in this room would light up an @ that means nothing here.
+   * Above the「会话不存在」early return, like every other hook here.
+   */
+  const mentionable = useMemo(() => {
+    if (conv?.type !== 'group') return undefined;
+    const out: Mentionable[] = [];
+    const me = contactById('self');
+    out.push({ id: 'self', name: me?.remark ?? me?.name ?? '我' });
+    for (const id of conv.memberIds ?? []) {
+      const c = contactById(id);
+      if (c) out.push({ id, name: c.remark ?? c.name });
+    }
+    return out;
+  }, [conv?.type, conv?.memberIds, contactById]);
+
+  /**
+   * 群公告弹窗 (M-J7). WeChat shows the announcement as a popup the first time
+   * you open the group after it changes, and as the banner every time after.
+   * The banner alone (M-I6) is easy to walk straight past — which is the whole
+   * reason WeChat has the popup.
+   *
+   * 「Changed」 is keyed on the TEXT, not on a timestamp: an announcement
+   * re-saved with identical wording is not news, and a timestamp would pop the
+   * dialog again for a stray tap in the edit sheet. Storing the text also means
+   * an announcement reverted to a previous wording that this user already
+   * dismissed stays dismissed, which is the behaviour that surprises nobody.
+   */
+  const announcement = conv?.type === 'group' ? conv.announcement : undefined;
+  useEffect(() => {
+    if (!announcement || !convId) return;
+    let alive = true;
+    void (async () => {
+      // The key is written INLINE at both calls rather than hoisted into a
+      // variable: the cascade's source scanner reads the literal at the call
+      // site, and a hoisted key is invisible to it — which is exactly how a
+      // per-conversation key survives 删除会话 unnoticed (M-I18's five).
+      const seen = await repo.getSetting<string>(`announceSeen:${convId}`);
+      if (!alive || seen === announcement) return;
+      // Write BEFORE awaiting the dialog: the user closing the app on the
+      // popup should not queue it up to reappear forever.
+      await repo.putSetting(`announceSeen:${convId}`, announcement);
+      await showConfirm({
+        title: '群公告',
+        body: announcement,
+        confirmText: '我知道了',
+        acknowledgeOnly: true,
+      });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [announcement, convId]);
+
   if (!conv || conv.isHidden) {
     return (
       <div className="chat-page">
@@ -1351,6 +1411,10 @@ export function ChatPage() {
                   sender={senderFor(row.msg.senderId)}
                   isSelf={row.msg.senderId === 'self'}
                   showNickname={isGroup}
+                  mentionable={mentionable}
+                  onMentionTap={(cid) => {
+                    if (cid !== 'self' && contactById(cid)) navigate(`/contact/${cid}`);
+                  }}
                   onMoneyTap={onMoneyTap}
                   onBillTap={onBillTap}
                   onImageTap={onImageTap}

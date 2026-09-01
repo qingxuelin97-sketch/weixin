@@ -130,4 +130,41 @@ describe('route ↔ smoke ledger (M-J0 — the two lists must never fork again)'
       /const ROUTES\s*[:=]/,
     );
   });
+  /**
+   * 懒加载的页不许带 golden (M-J7).
+   *
+   * `React.lazy` 的第一帧是 Suspense 兜底，而截图基线拍的正是首帧——把一个有
+   * golden 的页改成懒加载，CI 的下一次 regen 会安安静静地铸出一张**空白**基线，
+   * 从此那一页的门禁永远为真、永远什么也没在看。做 M-J7 的懒拆时我就是靠
+   * 「只挑 exempt 的路由」绕开这件事的，那条判据必须变成机器强制的，否则它
+   * 只活在一次提交信息里。
+   *
+   * 想让某个懒页也有 golden：得先给截图 helper 加一个「等 Suspense 落地」的
+   * 等待，然后再来放开这条。
+   */
+  it('带 golden 的路由不许走 React.lazy（懒页首帧是空的，基线会拍到空白）', () => {
+    const app = readFileSync(join(ROOT, 'src', 'App.tsx'), 'utf8');
+    // `const Foo = lazyPage(...)` / `const Foo = lazy(...)` — the names of the
+    // components that arrive late.
+    const lazyNames = new Set(
+      [...app.matchAll(/const\s+(\w+)\s*=\s*lazy(?:Page)?\(/g)].map((m) => m[1]),
+    );
+    if (lazyNames.size === 0) return; // no lazy routes at all — nothing to police
+    const offenders: string[] = [];
+    for (const [route, row] of Object.entries(ROUTE_LEDGER)) {
+      if (!('golden' in row)) continue;
+      // Find the <Route path="..."> element and see which component it renders.
+      const m = app.match(
+        new RegExp(`path="${route.replace(/[.*+?^$()|[\]\\]/g, '\\$&')}"[^\n]*`),
+      );
+      if (!m) continue;
+      for (const name of lazyNames) {
+        if (new RegExp(`<${name}\\b`).test(m[0])) offenders.push(`${route} → ${name}`);
+      }
+    }
+    expect(
+      offenders,
+      '这些路由既登记了 golden 又是懒加载——基线会拍到 Suspense 兜底的空白页',
+    ).toEqual([]);
+  });
 });

@@ -9,6 +9,7 @@ import { resolveImageRef } from '../../data/moments-images';
 import { RPS_GLYPHS, diceResult, rpsResult } from '../../lib/game';
 import { humanSize } from '../../ai/bubble-materialize';
 import { parseSuggestGroup, inviteCardNames } from '../../ai/agent-invite';
+import { splitMentions, type Mentionable } from '../../lib/mention';
 import type { MessageVM, ContactVM } from '../../data/types';
 
 interface Props {
@@ -59,6 +60,15 @@ interface Props {
   /** 拍一拍 (M-J7): double-tap a peer's avatar in the thread. */
   onAvatarPat?: (msg: MessageVM) => void;
   /**
+   * @ 可点 (M-J7). The roster this message's @ names are matched against —
+   * a NAME LIST rather than a regex, because Chinese has no word boundaries
+   * and「@小雨我们走吧」has no punctuation to stop at. Absent (single chats)
+   * means no highlighting at all, which is right: there is nobody to @.
+   */
+  mentionable?: readonly Mentionable[];
+  /** Tapping an @ name — the page navigates to that contact's profile. */
+  onMentionTap?: (contactId: string) => void;
+  /**
    * 「已读」 marker on one's own message (M-I16, opt-in via the readReceipts
    * setting — WeChat itself has no read receipts, so this defaults off).
    */
@@ -66,7 +76,7 @@ interface Props {
 }
 
 /** Renders one message row: system lines centered; otherwise avatar + bubble. */
-export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onBillTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark, onQuoteTap, onAvatarPat }: Props) {
+export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, onBillTap, onImageTap, onMergedTap, onContactTap, onSuggestGroupTap, nameOf, onLongPress, onReEdit, onRetry, readMark, onQuoteTap, onAvatarPat, mentionable, onMentionTap }: Props) {
   // Shared long-press physics (M-I0): this copy used to cancel on ANY pointer
   // movement and had no fired guard, so releasing a long press on an image
   // ALSO opened the viewer. The hook fixes both.
@@ -176,7 +186,14 @@ export function MessageBubble({ msg, sender, isSelf, showNickname, onMoneyTap, o
                     : undefined
           }
         >
-          <BubbleContent msg={msg} isSelf={isSelf} suggestIds={suggestIds} nameOf={nameOf} />
+          <BubbleContent
+            msg={msg}
+            isSelf={isSelf}
+            suggestIds={suggestIds}
+            nameOf={nameOf}
+            mentionable={mentionable}
+            onMentionTap={onMentionTap}
+          />
         </div>
         {msg.meta?.quote != null && (
           <div
@@ -281,16 +298,60 @@ function ImageBubble({ refImage }: { refImage: string }) {
   );
 }
 
+/**
+ * Text with its @ names picked out and made tappable.
+ *
+ * Returns the raw string when nothing matched, so the overwhelmingly common
+ * case (single chats, and every group message without an @) renders exactly
+ * the node it always did — no extra spans for the golden screenshots to move.
+ */
+function MentionText({
+  text,
+  people,
+  onTap,
+}: {
+  text: string;
+  people?: readonly Mentionable[];
+  onTap?: (contactId: string) => void;
+}) {
+  if (!people?.length || !text.includes('@')) return <>{text}</>;
+  const segs = splitMentions(text, people);
+  if (!segs.some((s) => s.kind === 'mention')) return <>{text}</>;
+  return (
+    <>
+      {segs.map((seg, i) =>
+        seg.kind === 'mention' ? (
+          <span
+            key={i}
+            className="msg-mention"
+            // 「@所有人」 carries no id — highlighted, not tappable, because
+            // there is no one profile to open.
+            onClick={seg.id ? (e) => { e.stopPropagation(); onTap?.(seg.id); } : undefined}
+          >
+            {seg.text}
+          </span>
+        ) : (
+          <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 function BubbleContent({
   msg,
   isSelf,
   suggestIds,
   nameOf,
+  mentionable,
+  onMentionTap,
 }: {
   msg: MessageVM;
   isSelf: boolean;
   suggestIds?: string[] | null;
   nameOf?: (contactId: string) => string | undefined;
+  mentionable?: readonly Mentionable[];
+  onMentionTap?: (contactId: string) => void;
 }) {
   const side = isSelf ? 'self' : 'other';
   switch (msg.type) {
@@ -334,12 +395,18 @@ function BubbleContent({
       if (typeof msg.meta?.translation === 'string' && msg.meta.translation) {
         return (
           <div className="bubble-wrap">
-            <div className={`bubble bubble--${side}`}>{msg.content}</div>
+            <div className={`bubble bubble--${side}`}>
+              <MentionText text={msg.content ?? ''} people={mentionable} onTap={onMentionTap} />
+            </div>
             <div className="msg-translation">{msg.meta.translation}</div>
           </div>
         );
       }
-      return <div className={`bubble bubble--${side}`}>{msg.content}</div>;
+      return (
+        <div className={`bubble bubble--${side}`}>
+          <MentionText text={msg.content ?? ''} people={mentionable} onTap={onMentionTap} />
+        </div>
+      );
 
     case 'sticker': {
       // Custom sticker (M-I15): content is a media ref, drawn as an image.

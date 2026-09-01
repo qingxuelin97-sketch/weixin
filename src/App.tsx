@@ -1,8 +1,11 @@
-import { useEffect, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, type ComponentType, type ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './app/ErrorBoundary';
 import { TabScaffold } from './app/TabScaffold';
 import { PageStack } from './app/PageStack';
+// 有 golden 的页留在主包里：懒页首帧是 Suspense 兜底，基线会拍到空白（守卫在
+// route-goldens.test.ts 里，我自己就先把这一页拆错了一次）。
+import { NotifyTestPage } from './features/settings/NotifyTestPage';
 import { Toast } from './components/Toast';
 import { IncomingCall } from './features/call/IncomingCall';
 import { MiniCallPill } from './features/call/MiniCallPill';
@@ -30,23 +33,17 @@ import { MomentRepostPage } from './features/moments/MomentRepostPage';
 import { MomentTopicPage } from './features/moments/MomentTopicPage';
 import { MomentAlbumPage } from './features/moments/MomentAlbumPage';
 import { BackupPage } from './features/settings/BackupPage';
-import { NotifyTestPage } from './features/settings/NotifyTestPage';
 import { EnvDiagPage } from './features/settings/EnvDiagPage';
 import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
 import { WorldbookPage } from './features/settings/WorldbookPage';
-import { MergedViewPage } from './features/chat/MergedViewPage';
 import { StoryPage } from './features/story/StoryPage';
-import { ScriptDetailPage } from './features/story/ScriptDetailPage';
-import { StoryRunPage } from './features/story/StoryRunPage';
 import { ContactProfilePage } from './features/contacts/ContactProfilePage';
 import { StatusPage } from './features/contacts/StatusPage';
 import { YearReportPage } from './features/me/YearReportPage';
 import { FavoritesPage } from './features/favorites/FavoritesPage';
 import { NewContactPage } from './features/contacts/NewContactPage';
-import { PersonaGeneratePage } from './features/contacts/PersonaGeneratePage';
 import { GroupCreatePage } from './features/contacts/GroupCreatePage';
-import { GroupGeneratePage } from './features/contacts/GroupGeneratePage';
 import { ChatInfoPage } from './features/chat/ChatInfoPage';
 import {
   ChatOnlyListPage,
@@ -56,8 +53,7 @@ import {
   TagMembersPage,
 } from './features/contacts/ContactListPages';
 import { FriendPermPage } from './features/contacts/FriendPermPage';
-import { CallPage } from './features/call/CallPage';
-import { GroupCallPage } from './features/call/GroupCallPage';
+import { QrCodePage } from './features/me/QrCodePage';
 import { SearchPage } from './features/search/SearchPage';
 import { NativePage } from './features/settings/NativePage';
 import { UsagePage } from './features/settings/UsagePage';
@@ -67,6 +63,30 @@ import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
 import { useDeepLinks } from './app/useDeepLinks';
 import { MomentDetailPage } from './features/moments/MomentDetailPage';
+
+/**
+ * 冷路由懒加载 (M-J7)。
+ *
+ * J10 把体积棘轮拆成主/懒双账本后，第一件事就看出来了：**主 361KB / 懒 14KB**，
+ * 几乎整个 App 都躺在冷启动重量里。这八条路由是最该出去的那批——通话、剧情运行、
+ * AI 代写、合并转发查看——没有一条是「打开 App 先看到的东西」，而通话那两页还
+ * 顺带把 TTS/ASR/通话会话整条栈拖进了首屏。
+ *
+ * 只挑 route-ledger 里标了 `exempt`（没有 golden）的页：懒加载会让首帧短暂是
+ * Suspense 兜底，而截图基线正是首帧。有 golden 的页留在主包里，不拿基线冒险
+ * ——这条判据现在由 route-goldens.test.ts 机器强制，因为我写这一批时就把
+ * `/settings/notify-test` 拆错了（它有 golden），是那条守卫当场抓住的。
+ */
+const lazyPage = <T, K extends keyof T>(load: () => Promise<T>, key: K) =>
+  lazy(() => load().then((m) => ({ default: m[key] as ComponentType })));
+
+const MergedViewPage = lazyPage(() => import('./features/chat/MergedViewPage'), 'MergedViewPage');
+const ScriptDetailPage = lazyPage(() => import('./features/story/ScriptDetailPage'), 'ScriptDetailPage');
+const StoryRunPage = lazyPage(() => import('./features/story/StoryRunPage'), 'StoryRunPage');
+const PersonaGeneratePage = lazyPage(() => import('./features/contacts/PersonaGeneratePage'), 'PersonaGeneratePage');
+const GroupGeneratePage = lazyPage(() => import('./features/contacts/GroupGeneratePage'), 'GroupGeneratePage');
+const CallPage = lazyPage(() => import('./features/call/CallPage'), 'CallPage');
+const GroupCallPage = lazyPage(() => import('./features/call/GroupCallPage'), 'GroupCallPage');
 
 /** Mounts the Android hardware-back handler; needs the router context. */
 function BackButtonBridge() {
@@ -83,7 +103,17 @@ function BackButtonBridge() {
  * now just the layout box; `PageStack` animates both sides.
  */
 function Push({ children }: { children: ReactNode }) {
-  return <div className="page-push">{children}</div>;
+  // The Suspense boundary sits INSIDE the layout box, so a lazy page's chunk
+  // arriving does not remount the box PageStack is animating — the transition
+  // plays over an empty page-push and the content lands inside it. `null` as
+  // the fallback rather than a spinner: the chunk is same-origin and already
+  // in the browser cache after the first visit, so a spinner would mostly be a
+  // one-frame flash of loading state on a page that is already there.
+  return (
+    <div className="page-push">
+      <Suspense fallback={null}>{children}</Suspense>
+    </div>
+  );
 }
 
 /**
@@ -191,6 +221,7 @@ export function App() {
               <Route path="/contacts-tags" element={<Push><TagListPage /></Push>} />
               <Route path="/contacts-tags/:tag" element={<Push><TagMembersPage /></Push>} />
               <Route path="/contact/:contactId/perm" element={<Push><FriendPermPage /></Push>} />
+              <Route path="/qrcode" element={<Push><QrCodePage /></Push>} />
               <Route path="/call/:convId" element={<Push><CallPage /></Push>} />
               <Route path="/group-call/:convId" element={<Push><GroupCallPage /></Push>} />
               <Route path="/rp/send/:convId" element={<Push><RedPacketSendPage /></Push>} />

@@ -31,6 +31,12 @@ interface ConfirmOpts {
   cancelText?: string;
   /** Red confirm button for destructive actions. */
   danger?: boolean;
+  /**
+   * One button instead of two — an ANNOUNCEMENT, not a decision (M-J7).
+   * A 「取消」 next to 「我知道了」 offers a choice that does not exist, and
+   * whichever the user picks the dialog closes anyway.
+   */
+  acknowledgeOnly?: boolean;
 }
 
 interface PromptOpts {
@@ -184,9 +190,11 @@ function ModalView({ entry }: { entry: Active }) {
           />
         )}
         <div className="dlg__buttons">
-          <button className="dlg__btn" onClick={cancel}>
-            {opts.cancelText ?? '取消'}
-          </button>
+          {!(entry.opts as ConfirmOpts).acknowledgeOnly && (
+            <button className="dlg__btn" onClick={cancel}>
+              {opts.cancelText ?? '取消'}
+            </button>
+          )}
           <button
             className={`dlg__btn dlg__btn--primary${(entry.opts as ConfirmOpts).danger ? ' dlg__btn--danger' : ''}`}
             disabled={confirmDisabled}

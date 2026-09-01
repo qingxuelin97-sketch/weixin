@@ -33,6 +33,10 @@ const SHOTS: Array<[name: string, path: string]> = [
   ['settings-tts', '/settings/tts'],
   ['settings-notify-test', '/settings/notify-test'],
   ['moment-detail', '/moments/mo_seed_lin'],
+  // 我的二维码 (M-J7). Deterministic by construction: the module grid comes
+  // from seededRng('qr:' + wxid), so the same seeded profile draws the same
+  // code every run — no clock, no Math.random for the diff to chase.
+  ['qrcode', '/qrcode'],
 ];
 
 for (const [name, path] of SHOTS) {

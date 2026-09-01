@@ -1234,3 +1234,9 @@
   color: var(--color-text-placeholder);
   border-top: var(--hairline-width) solid var(--color-hairline);
 }
+
+/* @ 提及 (M-J7)：命中名单的那一段画成微信的蓝，指向那个人的资料页。
+   只改颜色不改字号/字重——加粗会让同一句话在有无 @ 时行宽不同。 */
+.msg-mention {
+  color: var(--color-link);
+}

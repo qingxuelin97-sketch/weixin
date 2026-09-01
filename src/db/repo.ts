@@ -320,6 +320,11 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
     why: 'J8 群收款结算状态（billId→状态 map），随会话消亡；钱的痕迹在 wallet_tx 账本里',
   },
   'memext:': { scope: 'conv', row: 'cascade', why: '记忆抽取水位（msgId），随会话消亡' },
+  'announceSeen:': {
+    scope: 'conv',
+    row: 'cascade',
+    why: 'J7 群公告弹窗「这条我看过了」的水位（存的是公告原文），随会话消亡',
+  },
   'groupNick:': {
     scope: 'conv',
     row: 'cascade',

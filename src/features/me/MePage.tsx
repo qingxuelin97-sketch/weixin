@@ -132,7 +132,18 @@ export function MePage() {
             </div>
           </div>
           <div className="me__right">
-            <QrGlyph />
+            {/* 我的二维码 (M-J7): the glyph has sat here since M1 as decoration.
+                stopPropagation so it opens the code, not 个人信息. */}
+            <span
+              role="button"
+              aria-label="我的二维码"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate('/qrcode');
+              }}
+            >
+              <QrGlyph />
+            </span>
             <span className="me__chevron">›</span>
           </div>
         </div>

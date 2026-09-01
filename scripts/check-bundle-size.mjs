@@ -45,14 +45,22 @@ import { join } from 'node:path';
  * Cold-start JS+CSS: the entry chunk plus every stylesheet, gzipped, in KB.
  *
  * Calibrated at the split (M-J10) to 365 against a real 361. The split's first
- * finding is worth writing down: **main is 361 and lazy is 14** — essentially
- * the whole app is cold-start weight, and the four lazy chunks that exist
- * (image gen, report canvas, two Capacitor shims) are rounding error. So the
+ * finding was worth writing down: **main was 361 and lazy was 14** — essentially
+ * the whole app was cold-start weight, and the four lazy chunks that existed
+ * (image gen, report canvas, two Capacitor shims) were rounding error. So the
  * lazy budget below is not the constraint; this one is, and the way to buy
  * room under it is to move a real screen behind a dynamic import, which now
  * actually shows up as progress instead of moving nothing.
+ *
+ * M-J7 did exactly that and the number moved for the first time: eight cold
+ * routes (both call screens, story run + script detail, the two AI-authoring
+ * screens, merged-forward viewer, notify test) went behind `React.lazy`,
+ * taking main from 364 to 342. Re-tightened to 348 rather than left at 365,
+ * because a ratchet that keeps the slack it just earned is not a ratchet — the
+ * next 20KB of首屏 would slide in unnoticed and the work would have bought
+ * nothing.
  */
-const MAIN_BUDGET_KB = 365;
+const MAIN_BUDGET_KB = 348;
 /** Everything a dynamic import fetches later. Looser: none of it blocks paint. */
 const LAZY_BUDGET_KB = 60;
 

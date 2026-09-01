@@ -124,3 +124,69 @@
   border-color: var(--color-text-primary);
   transform: scale(1.12);
 }
+
+/* ---- 我的二维码 (M-J7) ---- */
+.qr-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 20px;
+  gap: 20px;
+}
+.qr-card {
+  width: 100%;
+  max-width: 320px;
+  background: var(--color-cell-bg);
+  border-radius: 8px;
+  padding: 20px 18px 18px;
+}
+.qr-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.qr-card__id {
+  min-width: 0;
+}
+.qr-card__name {
+  font-size: var(--fs-cell-title);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.qr-card__wxid {
+  margin-top: 2px;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-secondary);
+}
+.qr-card__code {
+  margin: 16px 0 12px;
+}
+.qr {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.qr__bg {
+  fill: var(--color-cell-bg);
+}
+/* 码点用品牌绿而不是纯黑：微信的个人码就是绿的，也顺便让它不冒充真码。 */
+.qr__mod,
+.qr__finder-ring {
+  fill: var(--color-brand);
+}
+.qr__finder-hole {
+  fill: var(--color-cell-bg);
+}
+.qr__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+.qr-card__hint {
+  margin: 0;
+  text-align: center;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-secondary);
+}
