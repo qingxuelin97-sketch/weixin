@@ -90,3 +90,44 @@ LRU 逐出与 photo 同策略，备份/恢复照常。
   因为 SQLite 读回是 `{...JSON.parse(data), id}` 而 IDB 是存入顺序。
 - 设备本地行（`__crypto_master` / 货架 / 通知权限 / 引擎标志…）走
   `src/lib/device-local.ts` 那**一份**清单：导出滤掉、恢复保本机，有守卫测试。
+
+## M-J10 · 数据层完全体
+
+### SqliteRepo 终于有了真对手
+
+`SqlDb` 只有三个方法（execute / run / query），所以给它套一个 **node:sqlite**
+（Node 22 内建，零依赖）的适配器就够了：`tests/unit/node-sqlite-db.ts`。
+I17 的驱动等价性套件因此同时跑 **三个** 驱动——IndexedDB / FakeSqlDb / 真引擎，
+每个读操作三方对拍。
+
+两个替身各有各的用处，都留着：
+- **FakeSqlDb** 是**逐字**匹配器：驱动一旦发出它没见过的语句就抛错。它守的是
+  「有人改了 SQL 却没人复核」。
+- **真引擎**守的是**那条 SQL 到底对不对**。此前从来没有任何东西验证过驱动发出
+  的是合法 SQL——假体完全可能忠实地复刻了一条三个里程碑都没人执行过的错语句。
+  现在 schema 建表脚本与每条查询都过一遍真解析器。
+
+诚实的边界：因为假体是逐字匹配，几乎任何 SQL 改动都会先被它拦下，真引擎不一定
+有机会开口。所以真引擎的价值不是「抓到假体漏掉的变异」，而是**证明这套 SQL 是
+真 SQL**，以及以后改 SQL 时有个会争辩的对手。
+
+`node:sqlite` 用 `createRequire` 加载：Vite 的内建模块清单里还没有 `sqlite`
+（Node 22 才加），静态 import 会以 "Failed to load url sqlite" 失败。它是纯测试
+件，设备上仍走 @capacitor-community/sqlite（转红断言 `src/db/sqlite.ts` 里不出现
+`node:sqlite`）。
+
+### 体积棘轮拆成主/懒双账本
+
+单一总量口径有个反向激励：把模块挪到动态 import 后面——真正让冷启动变快的做法
+——**一个字节都不会降**，于是棘轮在悄悄惩罚正确的修法。现在分两本：
+
+- **MAIN** = index.html 引用的入口 chunk + 全部 CSS（冷启动真要解析的东西）。
+  入口由 index.html 说了算，不靠文件名猜；找不到入口直接失败，绝不把 main 静默
+  记成 0。
+- **LAZY** = 其余（动态 import 拉的）。仍有上限（懒 chunk 也是用户的流量，
+  barrel import 拖进一整片东西会先在这里冒头），但松得多。
+
+拆开后的第一个发现值得记下来：**主 361KB / 懒 14KB**——几乎整个 App 都是冷启动
+重量，现存四个懒 chunk（图像生成、报告 Canvas、两个 Capacitor 垫片）是零头。
+所以约束在主账本上，而买余量的办法是把某个真页面挪到动态 import 后面——
+从此那个动作会体现为数字下降，而不是纹丝不动。

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { FakeSqlDb } from './fake-sqlite';
+import { NodeSqlDb } from './node-sqlite-db';
 import { SqliteRepo, ensureSqliteSchema } from '../../src/db/sqlite';
 import { IdbRepo, type Repo } from '../../src/db/repo';
 import { openDB, idbGetAll, idbPut, _closeDbForTests } from '../../src/db/idb';
@@ -74,18 +75,31 @@ const moment = (id: string, at: number): MomentVM => ({
 let idb: Repo;
 let sq: SqliteRepo;
 let fake: FakeSqlDb;
+/**
+ * The same driver over a REAL SQLite engine (M-J10, node:sqlite).
+ *
+ * The fake and the real engine catch different things and both are worth
+ * running: `FakeSqlDb` throws on any statement shape it does not recognise, so
+ * it notices when the driver starts emitting SQL nobody reviewed; the real
+ * engine notices when that SQL is *wrong* — a mis-named column, a cursor off
+ * by one row, TEXT ordering where numeric was assumed. Until now only the
+ * first of those had a test.
+ */
+let sqReal: SqliteRepo;
+let realDb: NodeSqlDb;
 
-/** Both drivers, fed identical operations. */
+/** Every driver, fed identical operations. */
 const both = async (op: (r: Repo) => Promise<void>) => {
   await op(idb);
   await op(sq);
+  await op(sqReal);
 };
 
-/** The same read against both drivers must agree byte-for-byte. */
+/** The same read against every driver must agree byte-for-byte. */
 const agree = async <T>(read: (r: Repo) => Promise<T>): Promise<T> => {
   const a = await read(idb);
-  const b = await read(sq);
-  expect(b).toEqual(a);
+  expect(await read(sq), 'FakeSqlDb driver disagrees with IndexedDB').toEqual(a);
+  expect(await read(sqReal), 'real SQLite engine disagrees with IndexedDB').toEqual(a);
   return a;
 };
 
@@ -99,6 +113,10 @@ beforeEach(async () => {
   fake = new FakeSqlDb();
   await ensureSqliteSchema(fake);
   sq = new SqliteRepo(fake);
+  realDb?.close();
+  realDb = new NodeSqlDb();
+  await ensureSqliteSchema(realDb);
+  sqReal = new SqliteRepo(realDb);
 });
 
 describe('kv parity', () => {
