@@ -7,7 +7,10 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['tests/unit/**/*.test.ts'],
+    // .tsx too (M-J11): component render tests live beside the pure ones and
+    // opt into jsdom per-file with a `// @vitest-environment jsdom` docblock,
+    // so the ~110 pure-function files keep the faster node environment.
+    include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx'],
     globals: false,
   },
 });
