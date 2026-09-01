@@ -58,6 +58,13 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   },
   '/settings/usage': { golden: 'settings-usage', smoke: { path: '/settings/usage' } },
   '/settings/prompt-lab': { golden: 'settings-prompt-lab', smoke: { path: '/settings/prompt-lab' } },
+  '/settings/storage': {
+    // 与 /settings/env 同一个理由：配额条读的是 navigator.storage.estimate()，
+    // quota 通常是设备**剩余磁盘**的一个比例，跨 runner 必然不同——给它 golden
+    // 等于每次换机器都红一张。行数与字节数由 Repo 单测覆盖。
+    exempt: 'quota readout is device-dependent by design',
+    smoke: { path: '/settings/storage' },
+  },
   '/settings/media': { golden: 'settings-media', smoke: { path: '/settings/media' } },
   '/settings/native': { golden: 'settings-native', smoke: { path: '/settings/native' } },
   '/settings/battery': { golden: 'settings-battery', smoke: { path: '/settings/battery' } },
@@ -115,10 +122,9 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
     // for a tag whose last member lost it, exactly as /moments/:id does.
     smoke: { path: '/contacts-tags/smoke_missing' },
   },
-  // pendingCast: 接线已完成（shell.spec.ts 有这一张），基线等 CI 的
-  // regen-goldens 铸——本容器铸出来的与 CI 的 Chromium 构建对不上（CLAUDE.md §3.5）。
-  '/qrcode': { golden: 'qrcode', pendingCast: true, smoke: { path: '/qrcode' } },
-  '/status-set': { golden: 'status-set', pendingCast: true, smoke: { path: '/status-set' } },
+  // pendingCast 旗已摘：CI 的 regen 在 114cbd7 铸出了 qrcode/status-set 两张。
+  '/qrcode': { golden: 'qrcode', smoke: { path: '/qrcode' } },
+  '/status-set': { golden: 'status-set', smoke: { path: '/status-set' } },
   '/contact/:contactId/perm': {
     exempt: 'four switches over one settings row; behavior is unit-tested at the chokepoint',
     smoke: { path: '/contact/ai_lin/perm' },

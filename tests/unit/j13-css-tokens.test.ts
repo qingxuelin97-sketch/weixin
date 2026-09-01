@@ -70,6 +70,7 @@ const RUNTIME_SET_VARS: Record<string, string> = {
   '--stagger-delay': '列表错峰进场的第 n 项延迟，由列表容器内联设置',
   '--chip-tint': '微信「状态」胶囊/格子的色调（M-J7），由 StatusSetPage/MePage/资料页内联设置',
   '--status-tint': '头像状态圈的色调（M-J7），由 Avatar 按 status.tint 内联设置',
+  '--quota-pct': '存储配额条的填充百分比（M-J10），由 StoragePage 按 estimate() 内联设置',
 };
 
 describe('CSS 变量引用完整性', () => {

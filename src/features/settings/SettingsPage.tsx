@@ -170,6 +170,13 @@ export function SettingsPage() {
           </div>
           <div
             className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/storage')}
+          >
+            <span className="settings__label">存储空间</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
             onClick={() => navigate('/settings/worldbook')}
           >
             <span className="settings__label">世界书</span>

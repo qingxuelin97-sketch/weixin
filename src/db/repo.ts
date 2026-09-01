@@ -26,6 +26,7 @@ import type {
   FavoriteVM,
 } from '../data/types';
 import {
+  STORES,
   idbGetAll,
   idbGet,
   idbPut,
@@ -42,6 +43,40 @@ import {
 } from './idb';
 import { visibleMoments, withoutContact } from '../lib/moment-visibility';
 import { NO_FRIEND_PERMS, type FriendPermMap } from '../lib/friend-perms';
+
+/**
+ * 存储用量快照 (M-J10)。
+ *
+ * 行数精确；`bytes` 只是媒体 blob 的实际大小之和——不含索引与 JSON 序列化本身
+ * 的开销，所以它一定**小于** `usage`。两个数字并排放着比只给一个更诚实：一个
+ * 「明细加起来对不上总数」的页面会让人以为哪里漏了，而实际上那个差就是开销。
+ */
+export interface StorageReport {
+  /** navigator.storage.estimate() 的用量；拿不到时是 0。 */
+  usage: number;
+  /** 同上的配额；拿不到时是 0（页面据此不画配额条）。 */
+  quota: number;
+  /** 每个 store 的行数，按名字排序。 */
+  stores: Array<{ name: string; rows: number }>;
+  /** 按 media kind 聚合的项数与字节数。 */
+  media: Array<{ kind: string; count: number; bytes: number }>;
+}
+
+/**
+ * `navigator.storage.estimate()`，安全版 (M-J10)。
+ *
+ * 三种环境下它都可能不在：非安全上下文、老 WebView、以及单测里的 jsdom。
+ * 取不到时返回 `{usage: 0, quota: 0}` 而不是编一个「无限」——配额条据此不画，
+ * 而一个假的「还早着呢」会让这一页在最该报警的时候最安静。
+ */
+export async function estimateStorage(): Promise<{ usage: number; quota: number }> {
+  try {
+    const est = await navigator.storage?.estimate?.();
+    return { usage: est?.usage ?? 0, quota: est?.quota ?? 0 };
+  } catch {
+    return { usage: 0, quota: 0 };
+  }
+}
 
 export interface Repo {
   // contacts & personas
@@ -169,6 +204,12 @@ export interface Repo {
   getMediaItem(id: string): Promise<MediaItemVM | undefined>;
   putMedia(item: MediaItemVM): Promise<void>;
   deleteMedia(id: string): Promise<void>;
+
+  /**
+   * 存储用量 (M-J10)。在 Repo 上而不是让页面自己数：数据在驱动里，
+   * 换存储驱动时这一页不该跟着重写——这正是 Repo 接口存在的意义。
+   */
+  storageReport(): Promise<StorageReport>;
 
   isEmpty(): Promise<boolean>;
 }
@@ -983,6 +1024,36 @@ export class IdbRepo implements Repo {
   }
   async deleteMedia(id: string) {
     await idbDelete('media', id);
+  }
+
+  /**
+   * 存储用量 (M-J10).
+   *
+   * `estimate()` 是**估算**而且随浏览器/WebView 而异——拿不到时返回 0 而不是
+   * 编一个数字，页面据此不画配额条。编一个「无限」会让这一页在最该报警的时候
+   * 最安静。
+   */
+  async storageReport(): Promise<StorageReport> {
+    const stores: Array<{ name: string; rows: number }> = [];
+    for (const st of STORES) {
+      stores.push({ name: st.name, rows: await idbCount(st.name) });
+    }
+    stores.sort((a, b) => a.name.localeCompare(b.name));
+
+    const byKind = new Map<string, { count: number; bytes: number }>();
+    for (const m of await idbGetAll<MediaItemVM>('media')) {
+      const acc = byKind.get(m.kind) ?? { count: 0, bytes: 0 };
+      acc.count += 1;
+      // A row whose blob failed to materialize contributes 0 rather than NaN —
+      // one bad row must not blank the whole number.
+      acc.bytes += m.blob?.size ?? 0;
+      byKind.set(m.kind, acc);
+    }
+    const media = [...byKind.entries()]
+      .map(([kind, v]) => ({ kind, ...v }))
+      .sort((a, b) => b.bytes - a.bytes);
+
+    return { ...(await estimateStorage()), stores, media };
   }
 
   async isEmpty() {

@@ -58,6 +58,8 @@ import { migrateToSqlite, type MigrateProgressEvent } from '../../db/migrate-to-
 import { showConfirm } from '../../components/dialog';
 import './settings.css';
 import { Switch } from '../../components/Switch';
+import { showPrompt } from '../../components/dialog';
+import { decryptBackup, encryptBackup, isEncryptedBackup } from '../../lib/backup-crypto';
 
 /** Human labels for the store names shown in the manifest summary. */
 const STORE_LABEL: Record<string, string> = {
@@ -98,6 +100,9 @@ export function BackupPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [pending, setPending] = useState<BackupFile | null>(null);
   const [includeMedia, setIncludeMedia] = useState(true);
+  // 加密开关默认**关**：忘记口令的备份是一块砖，而这个 App 的备份是用户唯一的
+  // 数据保险。让他显式打开，并且打开时会被问两遍口令。
+  const [encrypt, setEncrypt] = useState(false);
   const [freq, setFreq] = useState<AutoBackupFreq>('off');
   const [history, setHistory] = useState<BackupHistoryEntry[]>([]);
   const [engine, setEngine] = useState<'idb' | 'sqlite'>('idb');
@@ -138,7 +143,27 @@ export function BackupPage() {
       const json = serializeBackup(file);
       const name = backupFilename(now);
 
-      await saveTextFile(name, json, 'application/json', '保存备份文件');
+      // 加密**只作用于离开设备的那份文件**（M-J10）。设备上的备份历史保持明文：
+      // 它躺在 App 自己的存储里，和数据库同一层保护，而给它上锁只会制造一种新
+      // 的失败——用户忘了口令，连自己机器上的历史都恢复不了。加密要挡的是
+      // 「.aiwx 被复制走」，不是「有人拿到了这台已解锁的手机」。
+      let payload = json;
+      if (encrypt) {
+        const pass = await showPrompt({
+          title: '设置备份口令',
+          body: '忘记口令将**无法**恢复这份备份，App 也帮不了你。',
+          placeholder: '至少 6 位',
+          maxLength: 64,
+        });
+        if (pass === null) return; // 取消 = 什么都没发生，不要落一个明文文件
+        if (pass.length < 6) throw new Error('口令太短（至少 6 位）');
+        const again = await showPrompt({ title: '再输一次', placeholder: '确认口令', maxLength: 64 });
+        if (again === null) return;
+        if (again !== pass) throw new Error('两次口令不一致');
+        payload = await encryptBackup(json, pass);
+      }
+
+      await saveTextFile(name, payload, 'application/json', '保存备份文件');
       // Freshness marker for the "该备份了" nudge on the settings page.
       await repo.putSetting('lastBackupAt', now);
       // Manual fulls join the history shelf and advance the base, so later auto
@@ -183,12 +208,29 @@ export function BackupPage() {
     setStatus(null);
     const reader = new FileReader();
     reader.onload = () => {
-      try {
-        setPending(parseBackup(String(reader.result)));
-      } catch (err) {
-        setPending(null);
-        setStatus((err as Error).message);
-      }
+      void (async () => {
+        try {
+          const text = String(reader.result);
+          // 先问「这是不是加密包」再决定要不要口令。反过来（先解析失败再猜）
+          // 会把「文件损坏」和「需要口令」混成一句话，而用户对这两句的反应
+          // 完全不同：一个去找口令，一个去找另一个备份文件。
+          let plain = text;
+          if (isEncryptedBackup(text)) {
+            const pass = await showPrompt({
+              title: '这份备份已加密',
+              body: '输入导出时设置的口令。',
+              placeholder: '备份口令',
+              maxLength: 64,
+            });
+            if (pass === null) return;
+            plain = await decryptBackup(text, pass);
+          }
+          setPending(parseBackup(plain));
+        } catch (err) {
+          setPending(null);
+          setStatus((err as Error).message);
+        }
+      })();
     };
     reader.onerror = () => setStatus('读取文件失败');
     reader.readAsText(f);
@@ -369,6 +411,13 @@ export function BackupPage() {
           >
             <span className="settings__label">备份包含素材图片</span>
             <Switch on={includeMedia} onChange={() => setIncludeMedia((v) => !v)} />
+          </div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => setEncrypt((v) => !v)}
+          >
+            <span className="settings__label">用口令加密导出的文件</span>
+            <Switch on={encrypt} onChange={() => setEncrypt((v) => !v)} />
           </div>
           <label className="settings__row">
             <span className="settings__label">从文件恢复</span>

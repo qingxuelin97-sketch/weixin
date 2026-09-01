@@ -46,6 +46,7 @@ import type {
 } from '../data/types';
 import { STORES, idbGetAll, idbDelete, idbPut } from './idb';
 import { deleteContactCascade, type Repo, type CascadeStoryRow } from './repo';
+import { estimateStorage, type StorageReport } from './repo';
 import { visibleMoments } from '../lib/moment-visibility';
 import { NO_FRIEND_PERMS, type FriendPermMap } from '../lib/friend-perms';
 
@@ -597,6 +598,34 @@ export class SqliteRepo implements Repo {
   }
   async deleteMedia(id: string) {
     await this.kvDelete('media', id);
+  }
+
+  /**
+   * 存储用量 (M-J10).
+   *
+   * `estimate()` 是**估算**而且随浏览器/WebView 而异——拿不到时返回 0 而不是
+   * 编一个数字，页面据此不画配额条。编一个「无限」会让这一页在最该报警的时候
+   * 最安静。
+   */
+  async storageReport(): Promise<StorageReport> {
+    const stores: Array<{ name: string; rows: number }> = [];
+    for (const t of SQLITE_TABLES) {
+      stores.push({ name: t, rows: await sqliteCount(this.db, t) });
+    }
+    stores.sort((a, b) => a.name.localeCompare(b.name));
+
+    const byKind = new Map<string, { count: number; bytes: number }>();
+    for (const m of await this.kvAll<MediaItemVM>('media')) {
+      const acc = byKind.get(m.kind) ?? { count: 0, bytes: 0 };
+      acc.count += 1;
+      acc.bytes += m.blob?.size ?? 0;
+      byKind.set(m.kind, acc);
+    }
+    const media = [...byKind.entries()]
+      .map(([kind, v]) => ({ kind, ...v }))
+      .sort((a, b) => b.bytes - a.bytes);
+
+    return { ...(await estimateStorage()), stores, media };
   }
 
   async isEmpty() {

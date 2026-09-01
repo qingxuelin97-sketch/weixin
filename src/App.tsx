@@ -29,11 +29,8 @@ import { TransferSendPage } from './features/money/TransferSendPage';
 import { WalletPage } from './features/money/WalletPage';
 import { MomentsPage } from './features/moments/MomentsPage';
 import { MomentPublishPage } from './features/moments/MomentPublishPage';
-import { MomentRepostPage } from './features/moments/MomentRepostPage';
-import { MomentTopicPage } from './features/moments/MomentTopicPage';
 import { MomentAlbumPage } from './features/moments/MomentAlbumPage';
 import { BackupPage } from './features/settings/BackupPage';
-import { EnvDiagPage } from './features/settings/EnvDiagPage';
 import { MediaLibraryPage } from './features/settings/MediaLibraryPage';
 import { MemoryPage } from './features/settings/MemoryPage';
 import { WorldbookPage } from './features/settings/WorldbookPage';
@@ -43,7 +40,6 @@ import { StatusPage } from './features/contacts/StatusPage';
 import { YearReportPage } from './features/me/YearReportPage';
 import { FavoritesPage } from './features/favorites/FavoritesPage';
 import { NewContactPage } from './features/contacts/NewContactPage';
-import { GroupCreatePage } from './features/contacts/GroupCreatePage';
 import { ChatInfoPage } from './features/chat/ChatInfoPage';
 import {
   ChatOnlyListPage,
@@ -86,6 +82,11 @@ const ScriptDetailPage = lazyPage(() => import('./features/story/ScriptDetailPag
 const StoryRunPage = lazyPage(() => import('./features/story/StoryRunPage'), 'StoryRunPage');
 const PersonaGeneratePage = lazyPage(() => import('./features/contacts/PersonaGeneratePage'), 'PersonaGeneratePage');
 const GroupGeneratePage = lazyPage(() => import('./features/contacts/GroupGeneratePage'), 'GroupGeneratePage');
+const EnvDiagPage = lazyPage(() => import('./features/settings/EnvDiagPage'), 'EnvDiagPage');
+const GroupCreatePage = lazyPage(() => import('./features/contacts/GroupCreatePage'), 'GroupCreatePage');
+const MomentRepostPage = lazyPage(() => import('./features/moments/MomentRepostPage'), 'MomentRepostPage');
+const MomentTopicPage = lazyPage(() => import('./features/moments/MomentTopicPage'), 'MomentTopicPage');
+const StoragePage = lazyPage(() => import('./features/settings/StoragePage'), 'StoragePage');
 const CallPage = lazyPage(() => import('./features/call/CallPage'), 'CallPage');
 const GroupCallPage = lazyPage(() => import('./features/call/GroupCallPage'), 'GroupCallPage');
 
@@ -197,6 +198,7 @@ export function App() {
               <Route path="/settings/env" element={<Push><EnvDiagPage /></Push>} />
               <Route path="/settings/usage" element={<Push><UsagePage /></Push>} />
               <Route path="/settings/prompt-lab" element={<Push><PromptLabPage /></Push>} />
+              <Route path="/settings/storage" element={<Push><StoragePage /></Push>} />
               <Route path="/settings/media" element={<Push><MediaLibraryPage /></Push>} />
               <Route path="/settings/native" element={<Push><NativePage /></Push>} />
               <Route path="/settings/battery" element={<Push><BatteryGuidePage /></Push>} />

@@ -405,3 +405,21 @@ label.settings__row {
 .prompt-lab__over {
   color: var(--color-badge);
 }
+
+/* ---- 存储配额条 (M-J10) ---- */
+.quota__track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-page-pressed);
+  overflow: hidden;
+}
+.quota__fill {
+  height: 100%;
+  width: var(--quota-pct);
+  background: var(--color-brand);
+}
+.quota__legend {
+  margin-top: 6px;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-secondary);
+}
