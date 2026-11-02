@@ -303,7 +303,13 @@ export function VoiceInputButton({ onText, onClip, tier, variant = 'icon' }: Voi
         onContextMenu={(e) => e.preventDefault()}
         style={{ touchAction: 'none' }}
       >
-        {variant === 'bar' ? (phase === 'recording' ? '松开 发送' : '按住 说话') : <IconMicSmall />}
+        {variant === 'bar' ? (
+          // 没有 onClip 就是转文字（「＋」→ 语音输入，M-K1）：松开不发任何东西，
+          // 说「松开 发送」就是在撒谎。
+          phase === 'recording' ? (onClip ? '松开 发送' : '松开 结束') : '按住 说话'
+        ) : (
+          <IconMicSmall />
+        )}
       </button>
 
       {overlayUp && (

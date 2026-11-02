@@ -572,32 +572,79 @@
   font-size: 20px;
   color: var(--color-text-secondary);
 }
+.plus-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+/* 两页横排、scroll-snap 吸附；滚动条藏起来（微信只有分页点）。 */
+.plus-pages {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.plus-pages::-webkit-scrollbar {
+  display: none;
+}
 .plus-grid {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px 8px;
-  padding: 20px 12px;
+  grid-auto-rows: min-content;
+  align-content: start;
+  row-gap: 20px;
+  padding: 22px 12px 0;
 }
 .plus-grid__item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
-.plus-grid__icon {
-  width: 56px;
-  height: 56px;
+/* 微信 8.0：64 见方的白底圆角块，深灰线性图标居中。 */
+.plus-grid__tile {
+  width: 64px;
+  height: 64px;
   border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-panel-tile);
+  color: var(--color-text-primary);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+.plus-grid__item:active .plus-grid__tile {
+  background: var(--color-panel-tile-pressed);
 }
 .plus-grid__label {
   font-size: var(--fs-timestamp);
   color: var(--color-text-secondary);
 }
-.plus-grid__item:active .plus-grid__icon {
-  filter: brightness(0.92);
-}
 .plus-grid__item--disabled {
   opacity: 0.35;
+}
+.plus-dots {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0 14px;
+}
+.plus-dots__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-page-dot);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+.plus-dots__dot--on {
+  background: var(--color-page-dot-active);
 }
 
 /* Call record bubble (通话时长 mm:ss / 已取消). */
@@ -1272,4 +1319,30 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text-primary);
+}
+
+/* 语音输入面板 (M-K1)：「＋」→ 语音输入。一整条按住说话，下面一行说明。 */
+.voice-input-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 16px 28px;
+}
+.voice-input-sheet__hint {
+  text-align: center;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+/* 名片选择器的行：头像 + 名字。 */
+.card-pick__row {
+  gap: 12px;
+}
+/* 面板里的按住说话条落在白色 sheet 上：换成页面底色，否则它没有边界。 */
+.voice-input-sheet .composer__talkbar {
+  flex: none;
+  min-height: 48px;
+  background: var(--color-page-bg);
+}
+.voice-input-sheet .composer__talkbar--held {
+  background: var(--color-page-pressed);
 }

@@ -108,6 +108,11 @@
   --color-input-bar-bg: var(--wx-input-bar);
   --color-input-field-bg: var(--wx-white);
   --color-panel-bg: var(--wx-panel);
+  /* 「＋」面板 (M-K1)：白底圆角方块 + 分页点。 */
+  --color-panel-tile: var(--wx-white);
+  --color-panel-tile-pressed: var(--wx-cell-pressed);
+  --color-page-dot: var(--wx-gray-3);
+  --color-page-dot-active: var(--wx-gray-6);
   --color-tabbar-bg: var(--wx-input-bar);
   --color-tabbar-icon: #7a7a7a;
   --color-tabbar-icon-active: var(--wx-green);
@@ -275,6 +280,7 @@
   --wxd-tint-fill: rgba(255, 255, 255, 0.06);
   --wxd-track: rgba(255, 255, 255, 0.1);
   --wxd-tabbar-icon: rgba(255, 255, 255, 0.7);
+  --wxd-dot: rgba(255, 255, 255, 0.15);
 }
 
 :root[data-theme='dark'] {
@@ -311,6 +317,10 @@
   --color-input-bar-bg: var(--wxd-bg-1);
   --color-input-field-bg: var(--wxd-bg-5);
   --color-panel-bg: var(--wxd-bg-1);
+  --color-panel-tile: var(--wxd-bg-5);
+  --color-panel-tile-pressed: var(--wxd-bg-active);
+  --color-page-dot: var(--wxd-dot);
+  --color-page-dot-active: var(--wxd-fg-1);
   --color-tabbar-bg: var(--wxd-bg-1);
   --color-tabbar-icon: var(--wxd-tabbar-icon);
 

@@ -17,6 +17,7 @@ import { Badge } from '../../components/Badge';
 import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
 import { Sheet } from '../../components/Sheet';
+import { contactCardPayload, fileExt } from '../../ai/bubble-materialize';
 import { LongPressMenu, type LongPressMenuItem } from '../../components/LongPressMenu';
 import { useDismissable } from '../../app/useDismissable';
 import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
@@ -53,7 +54,7 @@ import { renderMessageBody } from '../../ai/render-msg';
 import { suggestGroupHref } from '../../ai/agent-invite';
 import { canRecall } from '../../lib/recall';
 import { gameSeed, rollDice, rollRps, type GameKind } from '../../lib/game';
-import type { MessageVM, NsfwTierVM } from '../../data/types';
+import type { ContactVM, MessageVM, NsfwTierVM } from '../../data/types';
 import { typingRhythm } from '../../lib/typing-rhythm';
 import './chat.css';
 import '../settings/settings.css';
@@ -281,8 +282,16 @@ export function ChatPage() {
     });
   };
   const allConversations = useAppStore((s) => s.conversations);
+  // 名片选择器 (M-K1) 的候选：稳定引用，过滤在渲染里做（宪法 3.5）。
+  const contacts = useAppStore((s) => s.contacts);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
   const albumInputRef = useRef<HTMLInputElement>(null);
+  // 拍摄 / 文件 (M-K1)：两个隐藏的系统选择器。拍摄与相册共用发图管线，只是
+  // capture 属性让 WebView 直接拉起相机。
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [voiceSheetOpen, setVoiceSheetOpen] = useState(false);
+  const [cardSheetOpen, setCardSheetOpen] = useState(false);
 
   // Leaving the chat = the conversation went quiet → queue ONE memory
   // extraction if enough new material accumulated (M-D2 loop trigger).
@@ -673,6 +682,52 @@ export function ChatPage() {
       type: 'location',
       content: name.slice(0, 40),
       meta: { name: name.slice(0, 40), ...(address ? { address: address.slice(0, 80) } : {}) },
+      status: 'sent',
+      createdAt: Date.now(),
+    });
+    await askReply();
+  };
+
+  /**
+   * 个人名片 (M-K1)：把通讯录里的一个人发给她。和她自己推荐人时走同一个
+   * contactCardPayload——气泡、点开进资料页、模型读到的投影三处一致。
+   */
+  const sendContactCard = async (target: ContactVM) => {
+    if (!conv) return;
+    const card = contactCardPayload({
+      contactId: target.id,
+      name: target.remark ?? target.name,
+      ...(target.wxid ? { wxid: target.wxid } : {}),
+      avatarColor: target.avatarColor,
+      avatarText: target.avatarText,
+    });
+    await appendMessage({
+      convId,
+      senderId: 'self',
+      type: card.type,
+      content: card.content,
+      meta: card.meta,
+      status: 'sent',
+      createdAt: Date.now(),
+    });
+    await askReply();
+  };
+
+  /**
+   * 文件 (M-K1)：文件卡片在这个 App 里是道具（M-I13）——只记名字与大小，
+   * 不存文件本体、也不交给模型。她读到的是「[文件] 名字（大小）」，够她接一句
+   * 「这是什么呀」，不值得为此把任意二进制塞进 IndexedDB。
+   */
+  const sendFileCard = async (f: File | undefined) => {
+    if (!f || !conv) return;
+    const fileName = f.name.slice(0, 60);
+    const ext = fileExt(fileName);
+    await appendMessage({
+      convId,
+      senderId: 'self',
+      type: 'file',
+      content: fileName,
+      meta: { fileName, sizeBytes: f.size, ...(ext ? { ext } : {}) },
       status: 'sent',
       createdAt: Date.now(),
     });
@@ -1758,9 +1813,9 @@ export function ChatPage() {
         <ComposerPanels
           mode={composer.mode}
           height={composer.panelHeight}
-          // WeChat has no group transfer either — greyed, not hidden. 群收款
-          // is the mirror image (M-J8): a bill needs a room to split across.
-          disabledKeys={isGroup ? ['transfer'] : ['groupbill']}
+          // 单聊/群聊各一套面板 (M-K1)：钱那一格按场景换（转账 ⇄ 群收款），
+          // 不再把对方场景用不了的格子灰着摆在那儿。
+          isGroup={isGroup}
           onAction={(key) => {
             if (key === 'redpacket') navigate(`/rp/send/${convId}`);
             else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
@@ -1793,7 +1848,14 @@ export function ChatPage() {
                   void sendLocation(name.trim()).catch((err) => logError('chat.location', err));
               });
             } else if (key === 'fav') navigate('/favorites');
-            else showToast('暂未开放');
+            else if (key === 'camera') cameraInputRef.current?.click();
+            else if (key === 'voiceinput') {
+              composer.closeAll();
+              setVoiceSheetOpen(true);
+            } else if (key === 'namecard') {
+              composer.closeAll();
+              setCardSheetOpen(true);
+            } else if (key === 'file') fileInputRef.current?.click();
           }}
           onEmoji={(e) => setDraft((d) => d + e)}
           onEmojiDelete={() => setDraft((d) => Array.from(d).slice(0, -1).join(''))}
@@ -1817,6 +1879,28 @@ export function ChatPage() {
             e.target.value = '';
           }}
         />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          hidden
+          onChange={(e) => {
+            void sendImages(e.target.files);
+            e.target.value = '';
+          }}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          hidden
+          onChange={(e) => {
+            void sendFileCard(e.target.files?.[0]).catch((err) =>
+              showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+            );
+            e.target.value = '';
+          }}
+        />
       </div>
       {viewerIndex != null && imageRefs.length > 0 && (
         <ImageViewer refs={imageRefs} index={viewerIndex} onClose={() => setViewerIndex(null)} />
@@ -1824,6 +1908,46 @@ export function ChatPage() {
       {isGroup && (
         <BillSheet convId={convId} open={billSheetOpen} onClose={() => setBillSheetOpen(false)} />
       )}
+      {/* 语音输入 (M-K1)：面板那一格从 M5 起就是「暂未开放」。按住说话、松开转文字，
+          文字落进输入框——不发语音条，所以没有 onClip（I9 的转写契约）。 */}
+      <Sheet open={voiceSheetOpen} onClose={() => setVoiceSheetOpen(false)} title="语音输入">
+        <div className="voice-input-sheet">
+          <VoiceInputButton
+            variant="bar"
+            tier={micTier}
+            onText={(t) => {
+              setDraft((d) => (d ? d + t : t));
+              setVoiceSheetOpen(false);
+            }}
+          />
+          <p className="voice-input-sheet__hint">按住说话，松开后文字会填进输入框</p>
+        </div>
+      </Sheet>
+      <Sheet open={cardSheetOpen} onClose={() => setCardSheetOpen(false)} title="选择名片">
+        {contacts
+          .filter((c) => c.type === 'ai')
+          .map((c) => (
+            <div
+              key={c.id}
+              className="settings__row settings__row--divided card-pick__row"
+              role="button"
+              onClick={() => {
+                setCardSheetOpen(false);
+                void sendContactCard(c).catch((err) =>
+                  showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+                );
+              }}
+            >
+              <Avatar
+                color={c.avatarColor}
+                text={c.avatarText}
+                imageRef={c.avatarRef}
+                size={36}
+              />
+              <span className="settings__label">{c.remark ?? c.name}</span>
+            </div>
+          ))}
+      </Sheet>
     </div>
   );
 }
