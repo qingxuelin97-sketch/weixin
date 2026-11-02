@@ -430,3 +430,11 @@ label.settings__row {
   display: flex;
   color: var(--color-brand);
 }
+
+/* 设置首页底部的一行小字 (M-K4)。 */
+.settings__footer {
+  margin-top: 28px;
+  text-align: center;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-placeholder);
+}

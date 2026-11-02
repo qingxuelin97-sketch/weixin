@@ -33,6 +33,9 @@ const isFaviconNoise = (text: string) =>
   text.includes('Failed to load resource') && !text.includes('assets/');
 
 test('every route boots: no crash, no console error, no blank screen', async ({ page }) => {
+  // 一条用例走完全部路由，耗时随路由数线性增长（每条 ~450ms 静置）。M-K4 加了四条之后
+  // 默认的 30s 正好不够——超时是这条用例的形状决定的，不是哪条路由慢。按条数给预算。
+  test.setTimeout(Math.max(30_000, smokePaths().length * 1_200));
   const problems: string[] = [];
   let current = '';
   page.on('console', (m) => {

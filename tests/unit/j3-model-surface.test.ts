@@ -350,10 +350,11 @@ describe('TTS 设置页接线（写了没接线=没做）', () => {
     expect(page).toContain('saveTtsConfig');
     const app = readFileSync(resolve(__dirname, '../../src/App.tsx'), 'utf8');
     expect(app).toContain('path="/settings/tts"');
+    // M-K4：入口随设置树分页搬进了「AI 与模型」那一页（LinkRow 的 to=）。
     const entry = readFileSync(
-      resolve(__dirname, '../../src/features/settings/SettingsPage.tsx'),
+      resolve(__dirname, '../../src/features/settings/SettingsSections.tsx'),
       'utf8',
     );
-    expect(entry).toContain("navigate('/settings/tts')");
+    expect(entry).toContain('to="/settings/tts"');
   });
 });

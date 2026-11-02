@@ -18,6 +18,7 @@ import { MessageBubble } from './MessageBubble';
 import { ImageViewer } from '../../components/ImageViewer';
 import { Sheet } from '../../components/Sheet';
 import { contactCardPayload, fileExt } from '../../ai/bubble-materialize';
+import { enterToSend } from '../../lib/chat-prefs';
 import { LongPressMenu, type LongPressMenuItem } from '../../components/LongPressMenu';
 import { useDismissable } from '../../app/useDismissable';
 import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
@@ -1779,7 +1780,8 @@ export function ChatPage() {
               }}
               onFocus={composer.openKeyboard}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                // 回车键发送消息 (M-K4 设置 › 聊天)：关掉时回车只是换行。
+                if (e.key === 'Enter' && !e.shiftKey && enterToSend()) {
                   e.preventDefault();
                   void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`));
                 }

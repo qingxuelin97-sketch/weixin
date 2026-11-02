@@ -1,46 +1,27 @@
-import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
-import {
-  isMessageSoundEnabled,
-  setMessageSoundEnabled,
-  isVibrateEnabled,
-  setVibrateEnabled,
-} from '../../lib/sound';
-import { requestPermission } from '../../lib/notify';
 import { repo } from '../../db/repo';
-import { visionEnabled, VISION_SETTING } from '../../ai/vision-context';
-import { isAsrReady } from '../../llm/asr';
-import { isTtsAvailable } from '../../llm/tts';
-import type { NsfwTierVM } from '../../data/types';
+import { LinkRow } from './rows';
 import './settings.css';
-import { Switch } from '../../components/Switch';
-import { getThemePref } from '../../lib/theme';
 
-const NSFW_LABEL: Record<NsfwTierVM, string> = { off: '关闭', ambiguous: '暧昧', full: '全开' };
-const THEME_LABEL = { system: '跟随系统', light: '普通模式', dark: '深色模式' } as const;
-
+/**
+ * 设置 (M-K4 重排)：微信 8.0 的分层结构。
+ *
+ *   AI 与模型                       ← 这个 App 的「账号与安全」：没它什么都不会动
+ *   ───
+ *   新消息通知 / 聊天 / 通用         ← 微信同名的三页
+ *   ───
+ *   备份与恢复 / 原生增强 / 环境自检  ← 数据与设备
+ *
+ * 每一项的读写原样搬进了 ./SettingsSections（分页）；这一页只剩入口与两处「值」
+ * ——模型配没配、多久没备份——因为这两件事值得在第一眼就看见。
+ */
 export function SettingsPage() {
-  const navigate = useNavigate();
-  const [sound, setSound] = useState(isMessageSoundEnabled());
-  const [vibrate, setVibrate] = useState(isVibrateEnabled());
-  const [nsfw, setNsfw] = useState<NsfwTierVM>('off');
-  const [providerCount, setProviderCount] = useState(0);
-  const [notifyOn, setNotifyOn] = useState<boolean | null>(null);
+  const [providerCount, setProviderCount] = useState<number | null>(null);
   const [backupHint, setBackupHint] = useState('');
-  const [asrHint, setAsrHint] = useState('');
-  const [ttsHint, setTtsHint] = useState('');
 
   useEffect(() => {
-    void repo.getSetting<NsfwTierVM>('nsfwGlobalTier').then((t) => setNsfw(t ?? 'off'));
     void repo.getProviders().then((p) => setProviderCount(p.filter((x) => x.enabled).length));
-    void repo.getSetting<boolean>('notifyGranted').then((v) => setNotifyOn(v ?? false));
-    void isAsrReady()
-      .then((ok) => setAsrHint(ok ? '已配置' : '未配置'))
-      .catch(() => setAsrHint('未配置'));
-    void isTtsAvailable()
-      .then((ok) => setTtsHint(ok ? '已配置' : '未配置'))
-      .catch(() => setTtsHint('未配置'));
     // Freshness nudge: data is the only asset this app has, and .aiwx is its
     // only escape hatch — surface staleness where the user will see it.
     void repo.getSetting<number>('lastBackupAt').then((t) => {
@@ -50,206 +31,29 @@ export function SettingsPage() {
     });
   }, []);
 
-  const setTier = (t: NsfwTierVM) => {
-    setNsfw(t);
-    void repo.putSetting('nsfwGlobalTier', t);
-  };
-
-  const toggleSound = () => {
-    const next = !sound;
-    setSound(next);
-    setMessageSoundEnabled(next);
-  };
-
-  const [vision, setVision] = useState(true);
-  useEffect(() => {
-    void visionEnabled().then(setVision).catch(() => {});
-  }, []);
-  const toggleVision = async () => {
-    const next = !vision;
-    setVision(next);
-    await repo.putSetting(VISION_SETTING, next);
-  };
-
-  // 已读回执 (M-I16): WeChat has none, so it ships OFF as an opt-in拟真项.
-  const [readReceipts, setReadReceipts] = useState(false);
-  useEffect(() => {
-    void repo
-      .getSetting<boolean>('readReceipts')
-      .then((v) => setReadReceipts(Boolean(v)))
-      .catch(() => {});
-  }, []);
-  const toggleReadReceipts = () => {
-    const next = !readReceipts;
-    setReadReceipts(next);
-    void repo.putSetting('readReceipts', next);
-  };
-
-  const toggleVibrate = () => {
-    const next = !vibrate;
-    setVibrate(next);
-    setVibrateEnabled(next);
-  };
-
-  // Turning the row on triggers the OS dialog — the one call that was written
-  // in M4 but had zero callers, leaving Android 13+ notifications fully inert.
-  const toggleNotify = async () => {
-    if (notifyOn) {
-      setNotifyOn(false);
-      await repo.putSetting('notifyGranted', false);
-      return;
-    }
-    const granted = await requestPermission();
-    setNotifyOn(granted);
-    await repo.putSetting('notifyGranted', granted);
-    await repo.putSetting('notifyAsked', true);
-  };
-
   return (
     <>
       <SubNav title="设置" />
       <div className="page-body settings">
         <div className="settings__group">
-          <div className="settings__row settings__row--divided" onClick={() => navigate('/settings/api')}>
-            <span className="settings__label">API 与模型</span>
-            <span className="settings__value">{providerCount > 0 ? `${providerCount} 个已启用` : '未配置'}</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div className="settings__row settings__row--divided" onClick={() => navigate('/settings/asr')}>
-            <span className="settings__label">语音输入（按住说话）</span>
-            <span className="settings__value">{asrHint}</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div className="settings__row settings__row--divided" onClick={() => navigate('/settings/tts')}>
-            <span className="settings__label">语音合成（TA 的声音）</span>
-            <span className="settings__value">{ttsHint}</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => navigate('/settings/dark-mode')}
-          >
-            <span className="settings__label">深色模式</span>
-            <span className="settings__value">{THEME_LABEL[getThemePref()]}</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div className="settings__row settings__row--divided" onClick={toggleSound}>
-            <span className="settings__label">新消息提示音</span>
-            <Switch on={sound} onChange={toggleSound} />
-          </div>
-          <div className="settings__row settings__row--divided" onClick={toggleVibrate}>
-            <span className="settings__label">新消息振动</span>
-            <Switch on={vibrate} onChange={toggleVibrate} />
-          </div>
-          <div className="settings__row settings__row--divided" onClick={() => void toggleVision()}>
-            <span className="settings__label">让 TA 看得见图片</span>
-            <Switch on={vision} onChange={() => void toggleVision()} />
-          </div>
-          <p className="settings__hint">
-            开启后你发的照片会随消息一起交给模型，TA 能真的看懂内容而不只是知道「你发了张图」。
-            需要所选模型支持看图；每张图的费用大约相当于一千字，所以只带最近几条里的图。
-          </p>
-          <div className="settings__row settings__row--divided" onClick={toggleReadReceipts}>
-            <span className="settings__label">已读回执</span>
-            <Switch on={readReceipts} onChange={toggleReadReceipts} />
-          </div>
-          <p className="settings__hint">
-            微信本体没有已读回执——这是本应用的可选拟真项：开启后，你发出的最后一条消息在
-            TA 看过（开始回复）后会标一个小小的「已读」。默认关闭。
-          </p>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => void toggleNotify()}
-          >
-            <span className="settings__label">锁屏通知</span>
-            <Switch on={Boolean(notifyOn)} onChange={() => void toggleNotify()} />
-          </div>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => navigate('/story')}
-          >
-            <span className="settings__label">剧情模式</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => navigate('/settings/media')}
-          >
-            <span className="settings__label">素材库（头像与照片）</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => navigate('/settings/storage')}
-          >
-            <span className="settings__label">存储空间</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => navigate('/settings/worldbook')}
-          >
-            <span className="settings__label">世界书</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => navigate('/settings/env')}
-          >
-            <span className="settings__label">环境自检与日志</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => navigate('/settings/notify-test')}
-          >
-            <span className="settings__label">后台通知测试</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div
-            className="settings__row settings__row--divided"
-            onClick={() => navigate('/settings/native')}
-          >
-            <span className="settings__label">原生增强</span>
-            <span className="settings__value">气泡 · 回复 · 来电 · 小组件</span>
-            <span className="settings__chevron">›</span>
-          </div>
-          <div className="settings__row" onClick={() => navigate('/settings/backup')}>
-            <span className="settings__label">备份与恢复</span>
-            <span className="settings__value">{backupHint}</span>
-            <span className="settings__chevron">›</span>
-          </div>
+          <LinkRow
+            label="AI 与模型"
+            value={providerCount == null ? '' : providerCount > 0 ? `${providerCount} 个已启用` : '未配置'}
+            to="/settings/ai"
+            last
+          />
         </div>
-
         <div className="settings__group">
-          <div className="field">
-            <span className="field__hint">
-              提示音默认使用内置合成音。想要微信原声：把你自己提取的 message.mp3 放到应用的
-              sounds 目录（Web 端为 public/sounds/message.mp3），App 会自动优先使用。
-            </span>
-          </div>
+          <LinkRow label="新消息通知" to="/settings/notify" />
+          <LinkRow label="聊天" to="/settings/chat" />
+          <LinkRow label="通用" to="/settings/general" last />
         </div>
-
         <div className="settings__group">
-          <div className="settings__group-title">内容分级（NSFW）</div>
-          <div className="segmented">
-            {(['off', 'ambiguous', 'full'] as NsfwTierVM[]).map((t) => (
-              <div
-                key={t}
-                className={`segmented__item${nsfw === t ? ' segmented__item--active' : ''}`}
-                onClick={() => setTier(t)}
-              >
-                {NSFW_LABEL[t]}
-              </div>
-            ))}
-          </div>
-          <div className="field">
-            <span className="field__hint">
-              全局有效档 = min(此处, 每个智能体的许可位, 会话临时档)。全开档的上下文只会走"宽松通道"
-              Provider，绝不发往国内官方端点。
-            </span>
-          </div>
+          <LinkRow label="备份与恢复" value={backupHint} to="/settings/backup" />
+          <LinkRow label="原生增强" value="气泡 · 回复 · 来电 · 小组件" to="/settings/native" />
+          <LinkRow label="环境自检与日志" to="/settings/env" last />
         </div>
+        <p className="settings__footer">AI 微信 · 个人自用 · 数据只存在这台手机上</p>
       </div>
     </>
   );

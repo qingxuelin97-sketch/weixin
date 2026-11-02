@@ -420,7 +420,8 @@ describe('I9 wiring: the stub is dead and the layers are connected', () => {
   const voiceInput = read('src/features/chat/VoiceInput.tsx');
   const asrSrc = read('src/llm/asr.ts');
   const app = read('src/App.tsx');
-  const settingsPage = read('src/features/settings/SettingsPage.tsx');
+  // M-K4：语音输入的入口随设置树分页搬进了「AI 与模型」那一页。
+  const settingsPage = read('src/features/settings/SettingsSections.tsx');
 
   it('composer mic button imports the ASR UI — the stub toast is gone', () => {
     expect(
@@ -458,7 +459,7 @@ describe('I9 wiring: the stub is dead and the layers are connected', () => {
 
   it('settings entry and route exist', () => {
     expect(app.includes('/settings/asr')).toBe(true);
-    expect(settingsPage.includes("navigate('/settings/asr')")).toBe(true);
+    expect(settingsPage.includes('to="/settings/asr"')).toBe(true);
   });
 
   it('no key material patterns anywhere in the new modules (rule #2)', () => {

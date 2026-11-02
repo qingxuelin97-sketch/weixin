@@ -101,11 +101,13 @@
   font-size: 20px;
 }
 
-/* Profile editor (/profile) */
-.profile__preview {
-  display: flex;
-  justify-content: center;
-  padding: 24px 0 16px;
+/* 个人资料 (/profile, M-K4)：头像那一行更高，缩略图贴右。 */
+.profile__avatar-row {
+  min-height: 88px;
+}
+.profile__qr-glyph {
+  display: block;
+  color: var(--color-text-secondary);
 }
 .profile__palette {
   display: flex;

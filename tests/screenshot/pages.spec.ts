@@ -45,6 +45,11 @@ const SHOTS: Array<[name: string, path: string]> = [
   ['settings-dark-mode', '/settings/dark-mode'],
   // 零钱明细 (M-K3)：从零钱页拆出来的分页流水，种子只有一笔「零钱初始余额」。
   ['wallet-bill', '/wallet/bill'],
+  // 设置树分页 (M-K4)。
+  ['settings-ai', '/settings/ai'],
+  ['settings-notify', '/settings/notify'],
+  ['settings-chat', '/settings/chat'],
+  ['settings-general', '/settings/general'],
 ];
 
 for (const [name, path] of SHOTS) {
