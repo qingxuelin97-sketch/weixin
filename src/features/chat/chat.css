@@ -434,6 +434,11 @@
 /* Large-radius white pill with an embedded small mic on the right (device style). */
 .composer__pill {
   flex: 1;
+  /* min-width: 0 两处缺一不可 (M-K0)：flex 子项默认 min-width:auto，而 textarea 的
+     最小内容宽 = cols(默认 20) × 主字体的「平均字宽」。系统字体是宽体 CJK 时
+     （本容器实测；MiSans / HarmonyOS 这类厂商字体同理）20 个字宽能有 340px，
+     于是输入框把右侧的「＋」整个挤出屏幕——不报错，只是按钮没了。 */
+  min-width: 0;
   display: flex;
   align-items: flex-end;
   background: var(--color-input-field-bg);
@@ -443,6 +448,7 @@
 }
 .composer__input {
   flex: 1;
+  min-width: 0;
   min-height: 36px;
   max-height: 100px;
   padding: 8px 0;

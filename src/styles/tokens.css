@@ -223,3 +223,112 @@
   --dur-page: 280ms; /* right-in-left-out push transition */
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* ===========================================================================
+ * 深色模式 (M-K0)
+ *
+ * 一切走这一层：组件零改动、零条件分支。主题由 <html data-theme="light|dark">
+ * 决定——index.html 的首帧脚本在第一次绘制前就把它写好（跟随系统时按
+ * prefers-color-scheme 解析），所以深色手机上冷启动不会先闪一下白。
+ *
+ * 色值取 WeUI（微信官方开源设计系统）的深色色板：
+ *   BG-0 #111  页面/导航      BG-1 #1E1E1E  工具条/tabbar
+ *   BG-2 #191919  白底 cell   BG-3 #202020  次级块
+ *   BG-4 #404040  深色菜单    BG-5 #2C2C2C  对方气泡/输入框
+ *   FG-0 .8 / FG-1 .5 / FG-2 .3 —— 白字分三档不透明度，而不是三种灰
+ * 浅色那边以真机采样为准（宪法 §3）；深色还没有真机截图，先以 WeUI 为准，
+ * 拿到截图后只改这里的原始色。
+ *
+ * 每个语义 token 都必须在这里表态：要么重定义，要么登记进
+ * tests/unit/k0-theme.test.ts 的 THEME_INVARIANT 并写明「为什么深浅一致」。
+ * 漏一个 = 深色下一块亮白补丁，而且 CSS 不会报任何错。
+ * ======================================================================== */
+:root {
+  /* ---- 深色原始色板（只在下面的深色块里被引用） ---- */
+  --wxd-bg-0: #111111;
+  --wxd-bg-1: #1e1e1e;
+  --wxd-bg-2: #191919;
+  --wxd-bg-3: #202020;
+  --wxd-bg-4: #404040;
+  --wxd-bg-5: #2c2c2c;
+  --wxd-bg-active: #373737;
+  --wxd-pinned: #232323;
+  --wxd-page-pressed: #262626;
+  --wxd-fg-0: rgba(255, 255, 255, 0.8);
+  --wxd-fg-half: rgba(255, 255, 255, 0.6);
+  --wxd-fg-1: rgba(255, 255, 255, 0.5);
+  --wxd-fg-preview: rgba(255, 255, 255, 0.45);
+  --wxd-fg-stamp: rgba(255, 255, 255, 0.35);
+  --wxd-fg-2: rgba(255, 255, 255, 0.3);
+  --wxd-hairline: rgba(255, 255, 255, 0.08);
+  --wxd-link: #7d90a9;
+  --wxd-orange: #c87d2f; /* 金额 / 红包气泡（WeUI 深色 ORANGE） */
+  --wxd-orange-dim: #6c4720; /* 已领取：深色 ORANGE 以 50% 叠在 BG-0 上 */
+  --wxd-bubble-self: #3eb575; /* WeUI 深色 LIGHTGREEN —— 自己气泡，字仍是黑的 */
+  --wxd-bubble-self-pressed: #36a167;
+  --wxd-bubble-self-text: rgba(0, 0, 0, 0.9);
+  --wxd-swipe-neutral: #565656;
+  --wxd-skeleton-a: #222222;
+  --wxd-skeleton-b: #2a2a2a;
+  --wxd-overlay: rgba(0, 0, 0, 0.6);
+  --wxd-toast: rgba(64, 64, 64, 0.96);
+  --wxd-tint-fill: rgba(255, 255, 255, 0.06);
+  --wxd-track: rgba(255, 255, 255, 0.1);
+  --wxd-tabbar-icon: rgba(255, 255, 255, 0.7);
+}
+
+:root[data-theme='dark'] {
+  /* 原生控件（滚动条、输入光标、日期选择器）也跟着深色走。 */
+  color-scheme: dark;
+
+  --color-page-bg: var(--wxd-bg-0);
+  --color-nav-bg: var(--wxd-bg-0);
+  --color-nav-title: var(--wxd-fg-0);
+  --color-cell-bg: var(--wxd-bg-2);
+  --color-cell-bg-pressed: var(--wxd-bg-active);
+  --color-page-pressed: var(--wxd-page-pressed);
+  --color-pinned-bg: var(--wxd-pinned);
+  --color-hairline: var(--wxd-hairline);
+
+  --color-text-primary: var(--wxd-fg-0);
+  --color-text-secondary: var(--wxd-fg-1);
+  --color-text-preview: var(--wxd-fg-preview);
+  --color-text-placeholder: var(--wxd-fg-2);
+  --color-text-timestamp: var(--wxd-fg-stamp);
+
+  --color-link: var(--wxd-link);
+  --color-money: var(--wxd-orange);
+
+  --color-bubble-self: var(--wxd-bubble-self);
+  --color-bubble-self-pressed: var(--wxd-bubble-self-pressed);
+  --color-bubble-self-text: var(--wxd-bubble-self-text);
+  --color-bubble-other: var(--wxd-bg-5);
+  --color-bubble-other-pressed: var(--wxd-bg-active);
+  --color-bubble-other-text: var(--wxd-fg-0);
+  --color-chat-bg: var(--wxd-bg-0);
+  --color-system-msg: var(--wxd-fg-stamp);
+
+  --color-input-bar-bg: var(--wxd-bg-1);
+  --color-input-field-bg: var(--wxd-bg-5);
+  --color-panel-bg: var(--wxd-bg-1);
+  --color-tabbar-bg: var(--wxd-bg-1);
+  --color-tabbar-icon: var(--wxd-tabbar-icon);
+
+  --color-money-bubble: var(--wxd-orange);
+  --color-money-bubble-dim: var(--wxd-orange-dim);
+  --color-quote-block: var(--wxd-bg-3);
+  --color-overlay: var(--wxd-overlay);
+  --color-swipe-neutral: var(--wxd-swipe-neutral);
+  --color-skeleton-a: var(--wxd-skeleton-a);
+  --color-skeleton-b: var(--wxd-skeleton-b);
+  --color-menu-bg: var(--wxd-bg-4);
+  --color-toast-bg: var(--wxd-toast);
+  --color-system-msg-bg: var(--wxd-tint-fill);
+
+  --color-status-track: var(--wxd-track);
+
+  --color-moments-bg: var(--wxd-bg-2);
+  --color-moments-comment-bg: var(--wxd-bg-3);
+  --color-moments-action-bg: var(--wxd-bg-5);
+  --color-moments-image-empty: var(--wxd-bg-5);
+}

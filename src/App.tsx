@@ -56,6 +56,7 @@ import { NativePage } from './features/settings/NativePage';
 import { UsagePage } from './features/settings/UsagePage';
 import { PromptLabPage } from './features/settings/PromptLabPage';
 import { BatteryGuidePage } from './features/settings/BatteryGuidePage';
+import { DarkModePage } from './features/settings/DarkModePage';
 import { useAppStore } from './store/appStore';
 import { useSchedulerRuntime } from './app/useSchedulerRuntime';
 import { useDeepLinks } from './app/useDeepLinks';
@@ -202,6 +203,7 @@ export function App() {
               <Route path="/settings/media" element={<Push><MediaLibraryPage /></Push>} />
               <Route path="/settings/native" element={<Push><NativePage /></Push>} />
               <Route path="/settings/battery" element={<Push><BatteryGuidePage /></Push>} />
+              <Route path="/settings/dark-mode" element={<Push><DarkModePage /></Push>} />
               <Route path="/persona/:contactId" element={<Push><PersonaEditPage /></Push>} />
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
               <Route path="/settings/worldbook" element={<Push><WorldbookPage /></Push>} />

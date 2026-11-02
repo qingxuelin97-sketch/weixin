@@ -15,8 +15,10 @@ import { isTtsAvailable } from '../../llm/tts';
 import type { NsfwTierVM } from '../../data/types';
 import './settings.css';
 import { Switch } from '../../components/Switch';
+import { getThemePref } from '../../lib/theme';
 
 const NSFW_LABEL: Record<NsfwTierVM, string> = { off: '关闭', ambiguous: '暧昧', full: '全开' };
+const THEME_LABEL = { system: '跟随系统', light: '普通模式', dark: '深色模式' } as const;
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -121,6 +123,14 @@ export function SettingsPage() {
           <div className="settings__row settings__row--divided" onClick={() => navigate('/settings/tts')}>
             <span className="settings__label">语音合成（TA 的声音）</span>
             <span className="settings__value">{ttsHint}</span>
+            <span className="settings__chevron">›</span>
+          </div>
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate('/settings/dark-mode')}
+          >
+            <span className="settings__label">深色模式</span>
+            <span className="settings__value">{THEME_LABEL[getThemePref()]}</span>
             <span className="settings__chevron">›</span>
           </div>
           <div className="settings__row settings__row--divided" onClick={toggleSound}>

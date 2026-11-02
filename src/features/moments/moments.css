@@ -269,6 +269,7 @@
 }
 .moments__composer input {
   flex: 1;
+  min-width: 0;
   height: 34px;
   padding: 0 10px;
   border: 0;

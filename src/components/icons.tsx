@@ -194,3 +194,18 @@ export function IconEmoji({ size = 26 }: IconProps) {
     </svg>
   );
 }
+
+/** Selected-row check mark (WeChat single-choice lists: 深色模式 / 字体 / 语言…). */
+export function IconCheck({ size = 20 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="m4.5 12.5 5 5 10-11"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

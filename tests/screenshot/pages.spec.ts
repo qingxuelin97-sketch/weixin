@@ -40,6 +40,9 @@ const SHOTS: Array<[name: string, path: string]> = [
   // 我的状态 (M-J7). Static: the grid is a constant catalog and no status is
   // seeded, so nothing here depends on the clock.
   ['status-set', '/status-set'],
+  // 深色模式设置页 (M-K0)。CI 的 Chromium 默认浅色，所以拍到的是「跟随系统」开着、
+  // 手动两行收起的默认态——也正是用户第一次点进来看到的样子。
+  ['settings-dark-mode', '/settings/dark-mode'],
 ];
 
 for (const [name, path] of SHOTS) {

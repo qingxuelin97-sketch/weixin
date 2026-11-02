@@ -33,6 +33,7 @@
 }
 .money-form__input {
   flex: 1;
+  min-width: 0; /* 输入框默认 20 字宽的最小内容宽，宽体字体下会顶出行外（见 chat.css 组合器） */
   font-size: var(--fs-cell-title);
   text-align: right;
   color: var(--color-text-primary);

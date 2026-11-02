@@ -8,6 +8,20 @@
     />
     <meta name="theme-color" content="#EDEDED" />
     <title>微信</title>
+    <!-- 首帧主题 (M-K0)：在第一次绘制之前写好 data-theme，深色手机冷启动不闪白。
+         与 src/lib/theme.ts 的 THEME_KEY / resolveTheme 同一套规则，守卫在
+         tests/unit/k0-theme.test.ts。运行时切换由 theme.ts 接管。 -->
+    <script>
+      (function () {
+        var t = 'light';
+        try {
+          var p = localStorage.getItem('ui.theme');
+          if (p === 'light' || p === 'dark') t = p;
+          else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark';
+        } catch (e) {}
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

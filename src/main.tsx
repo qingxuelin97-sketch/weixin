@@ -9,6 +9,8 @@ import { unlockAudio } from './lib/sound';
 import { installGlobalErrorCapture } from './lib/errlog';
 import { armSelftest } from './lib/selftest';
 import { installNativeSse } from './native/sse-bridge';
+import { installThemeWatcher } from './lib/theme';
+import { installSystemBarsSync } from './native/system-bars';
 
 // Mobile browsers gate audio behind a user gesture; unlock on the first tap.
 window.addEventListener('pointerdown', () => unlockAudio(), { once: true });
@@ -26,6 +28,12 @@ armSelftest();
 // transport seam. A no-op on web (the provider streams over fetch there), but
 // it must run BEFORE the first canStream() ask — install at boot, not lazily.
 installNativeSse();
+
+// 主题 (M-K0)：index.html 的首帧脚本已经写好 data-theme；这里接管运行时——
+// 跟随系统时监听日落自动切换，并把状态栏/导航栏颜色同步给原生层。
+// 订阅先于 install：install 内的首次 apply 就要把颜色送到原生层。
+installSystemBarsSync();
+installThemeWatcher();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

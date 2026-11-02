@@ -4,10 +4,12 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.core.view.WindowInsetsControllerCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -362,6 +364,41 @@ class AiwxNativePlugin : Plugin() {
         val res = JSObject()
         res.put("posted", posted)
         call.resolve(res)
+    }
+
+    // ------------------------------------------------------ 系统栏 (M-K0)
+
+    /**
+     * 状态栏 / 导航栏跟随 App 主题。`dark` = 深色主题 → 白色图标；`color` 是
+     * 导航栏底色（#RRGGBB，由 JS 从 token 层读出——铁律 1 不许 src/ 写色值）。
+     *
+     * Android 15 的强制 edge-to-edge 下系统栏本身是透明的，底色设置被系统忽略、
+     * 无害；那时真正起作用的是图标深浅——浅色页面配白图标，状态栏就「消失」了，
+     * 深色页面配黑图标同理。这正是此前什么都没设时的隐患。
+     */
+    @PluginMethod
+    fun setSystemBars(call: PluginCall) {
+        val dark = call.getBoolean("dark") ?: false
+        val color = call.getString("color")
+        val act = activity ?: return call.resolve()
+        act.runOnUiThread {
+            val window = act.window
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.isAppearanceLightStatusBars = !dark
+            controller.isAppearanceLightNavigationBars = !dark
+            if (!color.isNullOrBlank()) {
+                try {
+                    val c = Color.parseColor(color)
+                    @Suppress("DEPRECATION")
+                    window.statusBarColor = c
+                    @Suppress("DEPRECATION")
+                    window.navigationBarColor = c
+                } catch (e: IllegalArgumentException) {
+                    // 不是 #RRGGBB（例如 token 改成了 rgba()）：只放弃底色，图标深浅照常生效
+                }
+            }
+            call.resolve()
+        }
     }
 
     private fun exactAlarmsAllowed(): Boolean =

@@ -68,6 +68,12 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/settings/media': { golden: 'settings-media', smoke: { path: '/settings/media' } },
   '/settings/native': { golden: 'settings-native', smoke: { path: '/settings/native' } },
   '/settings/battery': { golden: 'settings-battery', smoke: { path: '/settings/battery' } },
+  // 深色模式 (M-K0)。pendingCast：spec 已接线，等 CI regen 铸基线后摘旗。
+  '/settings/dark-mode': {
+    golden: 'settings-dark-mode',
+    pendingCast: true,
+    smoke: { path: '/settings/dark-mode' },
+  },
   '/settings/worldbook': { golden: 'settings-worldbook', smoke: { path: '/settings/worldbook' } },
   '/persona/:contactId': { golden: 'persona-edit', smoke: { path: '/persona/ai_lin' } },
   '/memory/:contactId': { golden: 'memory', smoke: { path: '/memory/ai_lin' } },

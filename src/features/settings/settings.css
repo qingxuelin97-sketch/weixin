@@ -423,3 +423,10 @@ label.settings__row {
   font-size: var(--fs-cell-sub);
   color: var(--color-text-secondary);
 }
+
+/* 单选列表的选中勾 (M-K0)：微信用品牌绿的细勾，贴右侧。 */
+.settings__check {
+  margin-left: auto;
+  display: flex;
+  color: var(--color-brand);
+}

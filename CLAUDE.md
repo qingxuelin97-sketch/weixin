@@ -224,11 +224,11 @@ src/
 
 改动某 feature 前，读 `specs/<feature>.md`（验收清单 + 设计要点 + 已知坑）。新增 feature
 先写 spec 再写码。**这份索引就是清单本身**——`ls specs/` 与它对不上，说明有人写了 spec
-没登记（或写了模块没写 spec），两种都要补齐。现有 27 份：
+没登记（或写了模块没写 spec），两种都要补齐。现有 28 份：
 
 | 域 | spec |
 |---|---|
-| 地基 | design-tokens · data-schema · components · motion |
+| 地基 | design-tokens · data-schema · components · motion · theme（深色/字号/聊天背景，M-K） |
 | 模型接入 | llm-provider · streaming（Web-only SSE 渐进渲染）· nsfw（铁律 6）· asr |
 | 会话 | chat-engine · composer · group-director · msg-types · search |
 | 智能体 | agents · relationship · worldbook · goals-status · year-report · backfill |

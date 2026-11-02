@@ -60,6 +60,7 @@ interface AiwxNativePlugin {
   wakeNow(): Promise<{ posted: number }>;
   sseStart(opts: { id: string; url: string; headersJson: string; bodyJson: string }): Promise<void>;
   sseCancel(opts: { id: string }): Promise<void>;
+  setSystemBars(opts: { dark: boolean; color: string }): Promise<void>;
   addListener(
     eventName: 'sseLine',
     fn: (ev: unknown) => void,
@@ -85,6 +86,20 @@ export function withDeadline<T>(p: Promise<T>, label: string, ms = BRIDGE_TIMEOU
 
 export function isNative(): boolean {
   return Capacitor.isNativePlatform();
+}
+
+/**
+ * 状态栏 / 导航栏跟随主题 (M-K0)。`dark` 决定图标深浅（深色主题要白图标），
+ * `color` 是导航栏底色（从 token 层读出的字面量，见 lib/theme.ts navBarColor）。
+ * 尽力而为：失败只是状态栏颜色不对，不值得打扰任何人。
+ */
+export async function setSystemBars(dark: boolean, color: string): Promise<void> {
+  if (!isNative()) return;
+  try {
+    await withDeadline(plugin.setSystemBars({ dark, color }), 'setSystemBars');
+  } catch {
+    /* best effort */
+  }
 }
 
 export async function deviceInfo(): Promise<{ manufacturer: string; brand: string; sdkInt: number }> {

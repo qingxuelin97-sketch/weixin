@@ -10,10 +10,12 @@ import { existsSync, readdirSync } from 'node:fs';
 function resolveChromium(): string | undefined {
   const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
   if (!root || !existsSync(root)) return undefined;
-  const dir = readdirSync(root).find((d) => d.startsWith('chromium-'));
+  const dir = readdirSync(root).find((d) => /^chromium-\d+$/.test(d));
   if (!dir) return undefined;
-  const bin = `${root}/${dir}/chrome-linux/chrome`;
-  return existsSync(bin) ? bin : undefined;
+  // Older Playwright builds unpack to chrome-linux/, newer ones to chrome-linux64/.
+  return [`${root}/${dir}/chrome-linux/chrome`, `${root}/${dir}/chrome-linux64/chrome`].find((b) =>
+    existsSync(b),
+  );
 }
 const chromiumPath = resolveChromium();
 
