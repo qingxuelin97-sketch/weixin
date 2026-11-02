@@ -409,3 +409,13 @@
     transition: none;
   }
 }
+
+/* ---- 浮层路由 (M-K3)：浮层槽位不占布局、盖在下层页之上；下层页保持原样的
+   相对定位（零回流）。浮层里的内容自己负责背景与入场（如 .rp-open 的压暗与卡片）。 */
+.page-stack__page--overlay {
+  position: absolute;
+  inset: 0;
+  /* 用具名层而不是一个小数字：浮层槽位是个堆叠上下文，里面再大的 z-index 也只在
+     槽位内部比较——写成 3 时，下层聊天页 z-index:10 的导航栏直接画在了压暗层上面。 */
+  z-index: var(--z-rp-open);
+}

@@ -43,6 +43,21 @@ function isTab(path: string): boolean {
 }
 
 /**
+ * 浮层路由 (M-K3)：推入时**下层页面原地不动、继续挂载**，浮层自己盖在上面。
+ *
+ * 拆红包在微信里是压在聊天上的一张卡——聊天被压暗、还在那儿。此前它是一条普通
+ * 推入路由：聊天滑走、换成一整屏红，于是「在聊天里拆了个红包」读起来像
+ * 「跳到了另一个页面」。浮层路由不做滑动、不改下层布局；返回时只摘掉浮层，
+ * 下层那棵树从头到尾没有卸载过（草稿、滚动位置都还在——见下面「两个槽位」
+ * 那段为什么这很要紧）。
+ */
+const OVERLAY_PATHS = [/^\/rp\/open\//];
+
+export function isOverlayPath(path: string): boolean {
+  return OVERLAY_PATHS.some((re) => re.test(path));
+}
+
+/**
  * Identity of a location, for "did we move?".
  *
  * NOT `location.key` alone. A navigation the browser drives — a manual hash
@@ -64,6 +79,8 @@ interface StackState {
   dir: 'push' | 'pop';
   /** True while both slots are on screen. */
   busy: boolean;
+  /** 浮层激活时，留在下面的那一页所在的槽位（M-K3）。 */
+  under: 0 | 1 | null;
 }
 
 export interface PageStackProps {
@@ -81,6 +98,7 @@ export function PageStack({ children }: PageStackProps) {
     active: 0,
     dir: 'push',
     busy: false,
+    under: null,
   });
 
   // Adjusted DURING render, not in an effect.
@@ -93,19 +111,37 @@ export function PageStack({ children }: PageStackProps) {
   // for exactly this, and it costs one extra render, not a frame.
   const currentLoc = st.slots[st.active];
   if (!currentLoc || idOf(location) !== idOf(currentLoc)) {
-    const instant = currentLoc ? isTab(location.pathname) && isTab(currentLoc.pathname) : true;
     const next: 0 | 1 = st.active === 0 ? 1 : 0;
-    const slots: [Location | null, Location | null] = [null, null];
-    slots[next] = location;
-    // Tab↔tab is a cut, so the outgoing tree is dropped immediately — two full
-    // tab pages on screen at once is both wrong and expensive.
-    slots[st.active] = instant ? null : currentLoc;
-    setSt({
-      slots,
-      active: next,
-      dir: navType === 'POP' ? 'pop' : 'push',
-      busy: !instant && Boolean(currentLoc),
-    });
+    const underLoc = st.under != null ? st.slots[st.under] : null;
+    if (underLoc && st.under != null && idOf(location) === idOf(underLoc)) {
+      // 从浮层退回它下面那一页：只摘掉浮层，下层原样复活（不重挂载）。
+      const slots: [Location | null, Location | null] = [null, null];
+      slots[st.under] = underLoc;
+      setSt({ slots, active: st.under, dir: 'pop', busy: false, under: null });
+    } else if (currentLoc && st.under == null && isOverlayPath(location.pathname)) {
+      // 推入浮层：当前页留在原槽位继续挂载，浮层进另一个槽位，不做滑动。
+      const slots: [Location | null, Location | null] = [null, null];
+      slots[st.active] = currentLoc;
+      slots[next] = location;
+      setSt({ slots, active: next, dir: 'push', busy: false, under: st.active });
+    } else {
+      const instant = currentLoc ? isTab(location.pathname) && isTab(currentLoc.pathname) : true;
+      // 浮层里再去别处（拆完跳红包详情）：下层页随之让位——新页进下层那个槽位，
+      // 浮层按普通页退场。没有浮层时就是原来的乒乓。
+      const into: 0 | 1 = st.under != null ? st.under : next;
+      const slots: [Location | null, Location | null] = [null, null];
+      slots[into] = location;
+      // Tab↔tab is a cut, so the outgoing tree is dropped immediately — two full
+      // tab pages on screen at once is both wrong and expensive.
+      slots[st.active] = instant ? null : currentLoc;
+      setSt({
+        slots,
+        active: into,
+        dir: navType === 'POP' ? 'pop' : 'push',
+        busy: !instant && Boolean(currentLoc),
+        under: null,
+      });
+    }
   }
 
   useEffect(() => {
@@ -133,7 +169,11 @@ export function PageStack({ children }: PageStackProps) {
         const loc = st.slots[i];
         if (!loc) return null;
         const isCurrent = i === st.active;
-        const phase = st.busy ? `page-stack__page--${st.dir}-${isCurrent ? 'in' : 'out'}` : '';
+        const phase = st.busy
+          ? `page-stack__page--${st.dir}-${isCurrent ? 'in' : 'out'}`
+          : st.under != null && isCurrent
+            ? 'page-stack__page--overlay'
+            : '';
         return (
           // Stable key per SLOT, never per location: this is what keeps the
           // already-mounted tree mounted instead of cloning it.

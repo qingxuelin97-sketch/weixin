@@ -59,10 +59,14 @@
   color: var(--color-text-secondary);
 }
 .amount-display__value {
-  margin-top: 8px;
-  font-size: 40px;
+  font-size: 44px;
   font-weight: var(--fw-medium);
+  line-height: 1.1;
   color: var(--color-text-primary);
+}
+.amount-display__yen {
+  margin-right: 4px;
+  font-size: 30px;
 }
 .money-hint {
   padding: 12px 16px;
@@ -91,58 +95,91 @@
 .btn-money:disabled {
   opacity: 0.45;
 }
+/* 「塞钱进红包」是红的（M-K3）：微信里只有转账/收款是绿与橙，红包永远是红包色。 */
+.btn-money--rp {
+  background: var(--color-rp-card-lid);
+}
 
 /* ---- Open-packet full-screen overlay ---- */
 .rp-open {
   position: fixed;
   inset: 0;
   z-index: var(--z-rp-open);
-  background: var(--color-rp-open-bg);
+  /* 压暗的下层页 (M-K3)：浮层路由让聊天留在下面，这里只盖一层半透明黑。 */
+  background: var(--color-overlay);
   display: flex;
   flex-direction: column;
   align-items: center;
-  color: var(--color-text-on-brand);
+  justify-content: center;
+  gap: 28px;
+  color: var(--color-rp-card-text);
 }
-.rp-open__close {
-  align-self: flex-start;
-  padding: 16px;
-  font-size: 22px;
-  color: var(--color-rp-coin);
+/* 红包卡：320×450 的红，封口占上部，下凸的弧线由椭圆圆角画出。 */
+.rp-open__card {
+  position: relative;
+  width: min(82vw, 320px);
+  height: 450px;
+  border-radius: 12px;
+  background: var(--color-rp-open-bg);
+  box-shadow: 0 10px 30px var(--color-black-scrim);
+  animation: rp-card-in 240ms var(--ease-standard) backwards;
+}
+@keyframes rp-card-in {
+  from {
+    transform: scale(0.86);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.rp-open__lid {
+  height: 300px;
+  padding: 40px 20px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-radius: 12px 12px 50% 50% / 12px 12px 34px 34px;
+  background: var(--color-rp-card-lid);
+  box-shadow: 0 2px 6px var(--color-black-scrim);
 }
 .rp-open__sender {
-  margin-top: 40px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .rp-open__name {
-  font-size: var(--fs-cell-title);
-  color: var(--color-rp-coin);
+  font-size: var(--fs-cell-sub);
+  color: var(--color-rp-card-text);
 }
 .rp-open__greeting {
-  margin-top: 18px;
-  font-size: 20px;
-  color: var(--color-rp-coin);
+  margin-top: 22px;
+  max-width: 100%;
+  font-size: 22px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--color-rp-card-text);
 }
-/* Gold coin with 開; flips on tap. */
+/* 「開」金币压在封口弧线上：圆心落在弧的最低点。 */
 .rp-open__coin {
-  margin-top: 56px;
-  width: 92px;
-  height: 92px;
+  position: absolute;
+  left: 50%;
+  top: 252px;
+  margin-left: -48px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
-  background: var(--color-rp-coin);
-  color: var(--color-rp-envelope);
-  font-size: 40px;
+  background: var(--color-rp-open-coin);
+  color: var(--color-rp-open-coin-ink);
+  font-size: 38px;
   font-weight: var(--fw-medium);
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 3px 8px var(--color-black-scrim);
   transform-style: preserve-3d;
 }
-/* Beat 1 of the open sequence (M-I8). Retimed from 900ms to match FLIP_MS in
-   RedPacketOpenPage.tsx — the coin is now the OPENING beat, not the whole
-   event, so it must clear the screen before the amount arrives. */
 .rp-open__coin--flip {
   animation: rp-coin-flip 700ms var(--ease-standard) forwards;
 }
@@ -183,7 +220,7 @@
 
 /* ---- Beat 3 (M-I8): the amount rolls up, one glyph at a time. */
 .rp-open__reveal {
-  margin-top: 56px;
+  margin-top: 30px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -195,7 +232,7 @@
   /* Clip the rise: each glyph starts BELOW its slot, and without this it is
      briefly visible sitting on the greeting above. */
   overflow: hidden;
-  color: var(--color-rp-coin);
+  color: var(--color-rp-card-text);
   font-size: 44px;
   font-weight: var(--fw-medium);
   line-height: 1.2;
@@ -222,7 +259,7 @@
 }
 .rp-open__stored {
   font-size: var(--fs-cell-sub);
-  color: var(--color-rp-coin);
+  color: var(--color-rp-card-text);
   opacity: 0.8;
   animation: rp-stored-in 320ms var(--ease-standard) both;
   animation-delay: 260ms;
@@ -239,10 +276,31 @@
 }
 
 .rp-open__expired {
-  margin-top: 56px;
+  margin-top: 40px;
   font-size: var(--fs-cell-title);
-  color: var(--color-rp-coin);
-  opacity: 0.85;
+  text-align: center;
+  color: var(--color-rp-card-text);
+  opacity: 0.9;
+}
+/* 拆不了但能看：卡底的「看看大家的手气」。 */
+.rp-open__luck {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 22px;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-rp-card-text);
+}
+/* 卡下方的圆形关闭键。 */
+.rp-open__close {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-rp-card-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-rp-card-text);
 }
 
 /* One switch turns the whole sequence off; the packet still opens, the money
@@ -253,7 +311,8 @@
   .rp-open--opening .rp-open__greeting,
   .rp-open__digit,
   .rp-open__unit,
-  .rp-open__stored {
+  .rp-open__stored,
+  .rp-open__card {
     animation: none !important;
   }
 }
@@ -263,29 +322,61 @@
   background: var(--color-cell-bg);
   min-height: 100%;
 }
+/* 红色弧形头 (M-K3)：接着红色导航往下延伸，底边一道下凸的弧。 */
+.rp-detail__cap {
+  height: 64px;
+  margin-bottom: -8px;
+  background: var(--color-rp-card-lid);
+  border-radius: 0 0 50% 50% / 0 0 30px 30px;
+}
 .rp-detail__head {
-  padding: 30px 16px 22px;
+  padding: 26px 16px 24px;
   text-align: center;
   border-bottom: var(--hairline-width) solid var(--color-hairline);
 }
 .rp-detail__from {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: var(--fs-cell-title);
-  color: var(--color-text-secondary);
-}
-.rp-detail__greeting {
-  margin-top: 6px;
-  font-size: var(--fs-small-gray);
-  color: var(--color-text-placeholder);
-}
-.rp-detail__amount {
-  margin-top: 18px;
-  font-size: 38px;
   font-weight: var(--fw-medium);
   color: var(--color-text-primary);
 }
-.rp-detail__stored {
+.rp-detail__tag {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--color-rp-detail-gold);
+  font-size: var(--fs-badge);
+  font-weight: var(--fw-regular);
+  line-height: 16px;
+  color: var(--color-text-on-brand);
+}
+.rp-detail__greeting {
   margin-top: 8px;
   font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.rp-detail__amount {
+  margin-top: 22px;
+  font-size: 48px;
+  font-weight: var(--fw-medium);
+  line-height: 1.1;
+  color: var(--color-rp-detail-gold);
+}
+.rp-detail__unit {
+  margin-left: 4px;
+  font-size: var(--fs-cell-sub);
+  font-weight: var(--fw-regular);
+}
+.rp-detail__stored {
+  margin-top: 10px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-link);
+}
+.rp-detail__missing {
+  padding: 48px 16px;
+  text-align: center;
+  font-size: var(--fs-cell-sub);
   color: var(--color-text-secondary);
 }
 .rp-detail__summary {
@@ -323,17 +414,18 @@
   font-size: var(--fs-timestamp);
   color: var(--color-text-placeholder);
 }
+.rp-claim__right {
+  text-align: right;
+}
 .rp-claim__amount {
   font-size: var(--fs-cell-title);
   color: var(--color-text-primary);
 }
+/* 手气最佳挂在金额下面、右对齐（微信同款），而不是跟在名字后面。 */
 .rp-claim__best {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-left: 8px;
+  margin-top: 3px;
   font-size: var(--fs-timestamp);
-  color: var(--color-money);
+  color: var(--color-rp-detail-gold);
 }
 
 /* ---- Wallet ---- */
@@ -474,4 +566,183 @@
 /* ---- M-J8: 发起群收款面板（BillSheet 复用 money-form 词汇） ---- */
 .bill-sheet {
   padding: 4px 0 16px;
+}
+
+/* ---- 零钱 (M-K3)：微信 8.0 的白底版式 ---- */
+.wallet-home {
+  min-height: 100%;
+  background: var(--color-cell-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 64px 24px 32px;
+}
+.wallet-home__icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+.wallet-home__label {
+  margin-top: 20px;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.wallet-home__value {
+  margin-top: 14px;
+  font-size: 44px;
+  font-weight: var(--fw-medium);
+  line-height: 1.1;
+  color: var(--color-text-primary);
+}
+.wallet-home__actions {
+  margin-top: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.wallet-home__btn {
+  width: 184px;
+  height: 40px;
+  border-radius: 6px;
+  font-size: var(--fs-cell-title);
+  font-weight: var(--fw-medium);
+  background: var(--color-page-bg);
+  color: var(--color-brand);
+}
+.wallet-home__btn:active {
+  background: var(--color-page-pressed);
+}
+.wallet-home__btn--primary {
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+.wallet-home__btn--primary:active {
+  background: var(--color-brand-pressed);
+}
+.wallet-home__note {
+  margin-top: auto;
+  padding-top: 40px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-placeholder);
+}
+
+/* ---- 转账 (M-K3)：对方信息 + 白卡片 + 自己的数字键盘 ---- */
+.transfer {
+  padding: 24px 16px 0;
+}
+.transfer__peer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.transfer__to {
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.transfer__wxid {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.transfer__card {
+  margin-top: 24px;
+  padding: 20px 20px 18px;
+  border-radius: 10px;
+  background: var(--color-cell-bg);
+}
+.transfer__label {
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.transfer__amount {
+  margin-top: 14px;
+  padding-bottom: 12px;
+  display: flex;
+  align-items: center;
+  height: 64px;
+  border-bottom: var(--hairline-width) solid var(--color-hairline);
+  color: var(--color-text-primary);
+}
+.transfer__yen {
+  font-size: 30px;
+  font-weight: var(--fw-medium);
+  margin-right: 6px;
+}
+.transfer__digits {
+  font-size: 44px;
+  font-weight: var(--fw-medium);
+  line-height: 1;
+}
+/* 闪烁的光标：没有真输入框，光标得自己画。 */
+.transfer__caret {
+  width: 2px;
+  height: 40px;
+  margin-left: 2px;
+  background: var(--color-brand);
+  animation: transfer-caret 1s steps(1) infinite;
+}
+@keyframes transfer-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.transfer__note {
+  margin-top: 14px;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-link);
+}
+
+.keypad {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(4, 54px);
+  gap: 1px;
+  padding-bottom: var(--safe-bottom);
+  background: var(--color-hairline);
+}
+.keypad__key {
+  background: var(--color-cell-bg);
+  color: var(--color-text-primary);
+  font-size: 24px;
+  font-weight: var(--fw-medium);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.keypad__key:active {
+  background: var(--color-cell-bg-pressed);
+}
+.keypad__key--zero {
+  grid-column: span 2;
+}
+.keypad__confirm {
+  grid-column: 4;
+  grid-row: 2 / span 3;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+  font-size: var(--fs-cell-title);
+  font-weight: var(--fw-medium);
+}
+.keypad__confirm:active {
+  background: var(--color-brand-pressed);
+}
+.keypad__confirm:disabled {
+  opacity: 0.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transfer__caret {
+    animation: none !important;
+  }
+}
+/* 键盘是全局接管的（MoneyKeypad 监听 keydown），格子本身的焦点框只是噪音。 */
+.keypad__key:focus-visible,
+.keypad__confirm:focus-visible {
+  outline: none;
 }

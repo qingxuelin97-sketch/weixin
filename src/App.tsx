@@ -27,6 +27,7 @@ import { RedPacketOpenPage } from './features/money/RedPacketOpenPage';
 import { RedPacketDetailPage } from './features/money/RedPacketDetailPage';
 import { TransferSendPage } from './features/money/TransferSendPage';
 import { WalletPage } from './features/money/WalletPage';
+import { WalletBillPage } from './features/money/WalletBillPage';
 import { MomentsPage } from './features/moments/MomentsPage';
 import { MomentPublishPage } from './features/moments/MomentPublishPage';
 import { MomentAlbumPage } from './features/moments/MomentAlbumPage';
@@ -236,6 +237,7 @@ export function App() {
               <Route path="/rp/:rpId" element={<Push><RedPacketDetailPage /></Push>} />
               <Route path="/transfer/:convId" element={<Push><TransferSendPage /></Push>} />
               <Route path="/wallet" element={<Push><WalletPage /></Push>} />
+              <Route path="/wallet/bill" element={<Push><WalletBillPage /></Push>} />
               {/* Static /moments/* siblings above rank higher than this param
                   route (React Router segment ranking), so it only catches ids. */}
               <Route path="/moments/:momentId" element={<Push><MomentDetailPage /></Push>} />

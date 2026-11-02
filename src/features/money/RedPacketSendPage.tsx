@@ -147,8 +147,11 @@ export function RedPacketSendPage() {
         </div>
 
         <div className="amount-display">
-          <div className="amount-display__label">¥</div>
-          <div className="amount-display__value">{fenToYuan(fen)}</div>
+          {/* ¥ 与金额同一行（M-K3）：此前 ¥ 单独占一行压在数字上头。 */}
+          <div className="amount-display__value">
+            <span className="amount-display__yen">¥</span>
+            {fenToYuan(fen)}
+          </div>
         </div>
 
         {isGroup && mode === 'lucky' && (
@@ -175,7 +178,7 @@ export function RedPacketSendPage() {
           </div>
         )}
 
-        <button className="btn-money" disabled={!valid || busy} onClick={submit}>
+        <button className="btn-money btn-money--rp" disabled={!valid || busy} onClick={submit}>
           {busy ? '发送中…' : `塞钱进红包`}
         </button>
       </div>

@@ -25,7 +25,12 @@
   --wx-rp-envelope: #e24848; /* red-packet envelope icon red (sampled) */
   --wx-rp-envelope-hi: #fa5251; /* envelope highlight red (sampled) */
   --wx-rp-coin: #fed136; /* gold coin on envelope (sampled) */
-  --wx-rp-red-deep: #e05c44; /* open-packet fullscreen */
+  --wx-rp-red-deep: #e05c44; /* open-packet card body */
+  /* 拆红包卡 (M-K3)。以下三个尚无真机采样，按微信 8.0 的观感取值，拿到截图后校准。 */
+  --wx-rp-open-gold: #e9c58e; /* 「開」金币 */
+  --wx-rp-open-ink: #5a3418; /* 金币上的「開」 */
+  --wx-rp-gold-text: #fbdcae; /* 卡面上的淡金字 */
+  --wx-rp-detail-gold: #c29a5f; /* 红包详情页的金额 / 「拼」/「手气最佳」 */
   --wx-quote-gray: #e1e1e1; /* quoted-reply block background (sampled) */
   --wx-fn-orange: #f5a623; /* contacts function icon: new friends / chat-only */
   --wx-fn-blue: #3a7af0; /* contacts function icon: tags */
@@ -125,6 +130,11 @@
   --color-rp-envelope-hi: var(--wx-rp-envelope-hi);
   --color-rp-coin: var(--wx-rp-coin);
   --color-rp-open-bg: var(--wx-rp-red-deep);
+  --color-rp-card-lid: var(--wx-rp-envelope-hi);
+  --color-rp-card-text: var(--wx-rp-gold-text);
+  --color-rp-open-coin: var(--wx-rp-open-gold);
+  --color-rp-open-coin-ink: var(--wx-rp-open-ink);
+  --color-rp-detail-gold: var(--wx-rp-detail-gold);
   --color-quote-block: var(--wx-quote-gray);
   --color-overlay: rgba(0, 0, 0, 0.5);
   --color-black-scrim: rgba(0, 0, 0, 0.18); /* dim behind an edge-swipe drag */

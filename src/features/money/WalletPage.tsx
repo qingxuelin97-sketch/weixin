@@ -1,198 +1,86 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
+import { showPrompt } from '../../components/dialog';
 import { repo } from '../../db/repo';
 import { useAppStore } from '../../store/appStore';
-import { fenToYuan } from '../../lib/money';
+import { fenToYuan, yuanToFen } from '../../lib/money';
 import { currentBalance } from '../../lib/wallet';
-import type { WalletTxVM } from '../../data/types';
+import { recordWalletTx } from '../../ai/money-service';
+import { logError } from '../../lib/errlog';
 import './money.css';
 
 /**
- * 零钱 (rebuilt M-J8): balance + a PAGED ledger.
+ * 零钱 (M-K3)：微信 8.0 的样子——绿色钱包图标、「我的零钱」、一行大号余额、
+ * 「充值」「提现」两个按钮；流水在右上角的「零钱明细」里（./WalletBillPage）。
  *
- * The pre-J8 page read the whole `wallet_tx` store on every open — the ledger
- * only ever grows, so the bill page got slower for the life of the install
- * while showing the same screen (the moments lesson, one store over). Now the
- * first screen costs one page (`getWalletTxs({limit})`, cursor-paged through
- * the v10 byCreatedAt index; perf-budget pins it), 加载更多 walks history on
- * demand, and the rows group by month with per-month in/out subtotals plus
- * type / counterparty filter chips.
- *
- * Balance still comes from the FIRST page only: `currentBalance` needs the
- * newest row's running total, which the newest page contains by construction.
+ * 这里的钱是**模拟的**（宪法：永不做真实支付通信），所以充值 / 提现就是给本机
+ * 账本记一笔 `adjust`：用户想发个大红包、余额不够，自己充一点就行。金额照旧是
+ * 整数「分」（铁律 3），提现不许超过余额。
  */
 export function WalletPage() {
-  const contactById = useAppStore((s) => s.contactById);
-  const [txs, setTxs] = useState<WalletTxVM[]>([]); // ascending, as the repo serves
-  const [balance, setBalance] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
-  const [peerFilter, setPeerFilter] = useState<string>('all');
+  const navigate = useNavigate();
+  const showToast = useAppStore((s) => s.showToast);
+  const [balance, setBalance] = useState<number | null>(null);
 
-  useEffect(() => {
-    void repo.getWalletTxs({ limit: PAGE }).then((page) => {
-      setTxs(page);
-      setBalance(currentBalance(page));
-      setHasMore(page.length === PAGE);
-    });
+  const refresh = useCallback(async () => {
+    const page = await repo.getWalletTxs({ limit: 1 });
+    setBalance(currentBalance(page));
   }, []);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
-  const loadMore = async () => {
-    if (busy || txs.length === 0) return;
-    setBusy(true);
+  const adjust = async (dir: 1 | -1) => {
+    const raw = await showPrompt({
+      title: dir > 0 ? '充值金额（模拟）' : '提现金额（模拟）',
+      placeholder: '0.00',
+    });
+    if (raw == null) return;
+    const fen = yuanToFen(raw.trim()) ?? 0;
+    if (fen <= 0) return showToast('请输入大于 0 的金额');
+    if (dir < 0 && fen > (balance ?? 0)) return showToast('零钱余额不足');
     try {
-      const older = await repo.getWalletTxs({ limit: PAGE, before: txs[0].createdAt });
-      setTxs((cur) => [...older, ...cur]);
-      setHasMore(older.length === PAGE);
-    } finally {
-      setBusy(false);
+      const now = Date.now();
+      await recordWalletTx('adjust', dir * fen, dir > 0 ? '零钱充值' : '零钱提现', `adj_${now}`, now);
+      await refresh();
+      showToast(dir > 0 ? '充值成功' : '提现成功');
+    } catch (e) {
+      logError('wallet.adjust', e);
+      showToast('操作失败，请重试');
     }
   };
 
-  // Counterparty chips: the distinct peerIds of what is LOADED (old rows have
-  // none and only match 全部). Names resolve through contacts; a deleted
-  // contact's id degrades to itself rather than hiding the money.
-  const peers = useMemo(() => {
-    const ids = [...new Set(txs.flatMap((t) => (t.peerId ? [t.peerId] : [])))];
-    return ids.map((id) => ({ id, name: contactById(id)?.remark ?? contactById(id)?.name ?? id }));
-  }, [txs, contactById]);
-
-  const shown = useMemo(() => {
-    const newestFirst = [...txs].reverse();
-    return newestFirst.filter(
-      (t) =>
-        (typeFilter === 'all' || KIND_GROUP[t.kind] === typeFilter) &&
-        (peerFilter === 'all' || t.peerId === peerFilter),
-    );
-  }, [txs, typeFilter, peerFilter]);
-
-  // 按月分组 + 月度小计 (of the loaded/filtered rows — the subtotal labels the
-  // group it renders, never pretends to cover unloaded history).
-  const months = useMemo(() => {
-    const out: Array<{ label: string; inFen: number; outFen: number; rows: WalletTxVM[] }> = [];
-    for (const t of shown) {
-      const d = new Date(t.createdAt);
-      const label = `${d.getFullYear()}年${d.getMonth() + 1}月`;
-      let g = out.at(-1);
-      if (!g || g.label !== label) {
-        g = { label, inFen: 0, outFen: 0, rows: [] };
-        out.push(g);
-      }
-      if (t.amountFen > 0) g.inFen += t.amountFen;
-      else g.outFen += -t.amountFen;
-      g.rows.push(t);
-    }
-    return out;
-  }, [shown]);
-
   return (
     <>
-      <SubNav title="零钱" />
-      <div className="page-body money-page">
-        <div className="wallet__balance">
-          <div className="wallet__label">零钱余额（元）</div>
-          <div className="wallet__value">{fenToYuan(balance)}</div>
+      <SubNav
+        title=""
+        right={
+          <button className="navbar__btn navbar__text-btn" onClick={() => navigate('/wallet/bill')}>
+            零钱明细
+          </button>
+        }
+      />
+      <div className="page-body wallet-home">
+        <div className="wallet-home__icon" aria-hidden>
+          <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+            <rect x="4" y="9" width="26" height="19" rx="3" stroke="currentColor" strokeWidth="2.2" />
+            <path d="M8 9 22.5 4.5a2 2 0 0 1 2.5 1.9V9" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+            <circle cx="24" cy="18.5" r="1.9" fill="currentColor" />
+          </svg>
         </div>
-
-        <div className="wallet__list">
-          <div className="wallet__title">零钱明细</div>
-
-          <div className="wallet__filters">
-            {TYPE_TABS.map((t) => (
-              <button
-                key={t.key}
-                className={`wallet__chip${typeFilter === t.key ? ' wallet__chip--on' : ''}`}
-                onClick={() => setTypeFilter(t.key)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          {peers.length > 0 && (
-            <div className="wallet__filters">
-              <button
-                className={`wallet__chip${peerFilter === 'all' ? ' wallet__chip--on' : ''}`}
-                onClick={() => setPeerFilter('all')}
-              >
-                所有人
-              </button>
-              {peers.map((p) => (
-                <button
-                  key={p.id}
-                  className={`wallet__chip${peerFilter === p.id ? ' wallet__chip--on' : ''}`}
-                  onClick={() => setPeerFilter(peerFilter === p.id ? 'all' : p.id)}
-                >
-                  {p.name}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {shown.length === 0 ? (
-            <div className="wallet__empty">暂无交易记录</div>
-          ) : (
-            months.map((m) => (
-              <div key={m.label}>
-                <div className="wallet__month">
-                  <span>{m.label}</span>
-                  <span className="wallet__month-sum">
-                    支出 ¥{fenToYuan(m.outFen)} · 收入 ¥{fenToYuan(m.inFen)}
-                  </span>
-                </div>
-                {m.rows.map((t) => (
-                  <div key={t.id} className="wallet__row">
-                    <div>
-                      <div className="wallet__row-title">{t.title}</div>
-                      <div className="wallet__row-time">
-                        {formatTime(t.createdAt)}
-                        {t.peerId && ` · ${contactById(t.peerId)?.remark ?? contactById(t.peerId)?.name ?? ''}`}
-                      </div>
-                    </div>
-                    <div className={`wallet__amount${t.amountFen > 0 ? ' wallet__amount--in' : ''}`}>
-                      {t.amountFen > 0 ? '+' : '-'}
-                      {fenToYuan(Math.abs(t.amountFen))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))
-          )}
-
-          {hasMore && (
-            <button className="wallet__more" disabled={busy} onClick={() => void loadMore()}>
-              {busy ? '加载中…' : '加载更多'}
-            </button>
-          )}
+        <div className="wallet-home__label">我的零钱</div>
+        <div className="wallet-home__value">¥{balance == null ? '' : fenToYuan(balance)}</div>
+        <div className="wallet-home__actions">
+          <button className="wallet-home__btn wallet-home__btn--primary" onClick={() => void adjust(1)}>
+            充值
+          </button>
+          <button className="wallet-home__btn" onClick={() => void adjust(-1)}>
+            提现
+          </button>
         </div>
+        <p className="wallet-home__note">本 App 的钱全部是模拟的，只在这台手机上有效</p>
       </div>
     </>
   );
-}
-
-/** First-screen (and per-fetch) page size. perf-budget pins reads ≤ this. */
-const PAGE = 30;
-
-type TypeFilter = 'all' | 'rp' | 'transfer' | 'bill' | 'other';
-
-const TYPE_TABS: Array<{ key: TypeFilter; label: string }> = [
-  { key: 'all', label: '全部' },
-  { key: 'rp', label: '红包' },
-  { key: 'transfer', label: '转账' },
-  { key: 'bill', label: '群收款' },
-];
-
-const KIND_GROUP: Record<WalletTxVM['kind'], TypeFilter> = {
-  rp_in: 'rp',
-  rp_out: 'rp',
-  transfer_in: 'transfer',
-  transfer_out: 'transfer',
-  bill_in: 'bill',
-  bill_out: 'bill',
-  adjust: 'other',
-};
-
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 }

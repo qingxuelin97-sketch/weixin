@@ -149,6 +149,8 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/rp/:rpId': { golden: 'rp-detail', smoke: { path: '/rp/rp_smoke_missing' } },
   '/transfer/:convId': { golden: 'transfer-send', smoke: { path: '/transfer/conv_lin' } },
   '/wallet': { golden: 'wallet', smoke: { path: '/wallet' } },
+  // 零钱明细 (M-K3 从零钱页拆出)。pendingCast：spec 已接线，等 CI regen 铸基线后摘旗。
+  '/wallet/bill': { golden: 'wallet-bill', pendingCast: true, smoke: { path: '/wallet/bill' } },
   // 朋友圈单条详情 (M-J12). Smoke boots on a seeded post; the missing-id empty
   // state is separately exercised by moment-detail-e2e.spec.ts. pendingCast
   // 旗已摘：CI regen（d386ae3）铸出了 moment-detail.png。

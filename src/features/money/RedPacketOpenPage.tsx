@@ -138,51 +138,69 @@ export function RedPacketOpenPage() {
   };
 
   const sender = rp ? contactById(rp.senderId) : undefined;
+  // 拆不了、但可以看的时候（派完 / 过期 / 别人的专属），卡底给一条「看看大家的手气」
+  // ——微信就是这么把你引到手气榜的，而不是让你对着一张打不开的卡。
+  const canPeek = Boolean(rp) && (emptied || expired || notMine);
 
   return (
     <div className={`rp-open${stage === 'idle' ? '' : ' rp-open--opening'}`}>
-      <button className="rp-open__close" onClick={() => navigate(-1)} aria-label="关闭">
-        ×
-      </button>
-      {rp && (
-        <>
-          <div className="rp-open__sender">
-            <Avatar
-              color={sender?.avatarColor ?? 'var(--color-brand)'}
-              text={sender?.avatarText ?? '?'}
-              imageRef={sender?.avatarRef}
-              size={56}
-            />
-            <div className="rp-open__name">
-              {rp.senderId === 'self' ? '我' : (sender?.remark ?? sender?.name ?? '')}的红包
-            </div>
-          </div>
-          <div className="rp-open__greeting">{rp.greeting}</div>
-          {notMine ? (
-            <div className="rp-open__expired">
-              这是{(() => {
-                const who = rp.exclusiveId ? contactById(rp.exclusiveId) : undefined;
-                return who ? ` ${who.remark ?? who.name} ` : '别人';
-              })()}的专属红包
-            </div>
-          ) : expired ? (
-            <div className="rp-open__expired">红包已过期</div>
-          ) : emptied ? (
-            <div className="rp-open__expired">手慢了，红包派完了</div>
-          ) : stage === 'revealed' && wonFen != null ? (
-            <RevealedAmount fen={wonFen} />
-          ) : (
-            <button
-              className={`rp-open__coin${stage === 'opening' ? ' rp-open__coin--flip' : ''}`}
-              onClick={() => void open()}
-              aria-label="开红包"
-            >
-              開
-            </button>
+      {/* 拆红包卡 (M-K3)：压暗的聊天之上一张居中的红包——封口是一道下凸的弧，
+          金色「開」压在弧线上。此前是整屏红 + 左上角一个 ×，读起来像跳到了
+          另一个页面，而不是「在聊天里拆了个红包」。 */}
+      <div className="rp-open__card" onClick={(e) => e.stopPropagation()}>
+        <div className="rp-open__lid">
+          {rp && (
+            <>
+              <div className="rp-open__sender">
+                <Avatar
+                  color={sender?.avatarColor ?? 'var(--color-brand)'}
+                  text={sender?.avatarText ?? '?'}
+                  imageRef={sender?.avatarRef}
+                  size={28}
+                />
+                <div className="rp-open__name">
+                  {rp.senderId === 'self' ? '我' : (sender?.remark ?? sender?.name ?? '')}发出的红包
+                </div>
+              </div>
+              <div className="rp-open__greeting">{rp.greeting}</div>
+              {notMine ? (
+                <div className="rp-open__expired">
+                  这是{(() => {
+                    const who = rp.exclusiveId ? contactById(rp.exclusiveId) : undefined;
+                    return who ? ` ${who.remark ?? who.name} ` : '别人';
+                  })()}的专属红包
+                </div>
+              ) : expired ? (
+                <div className="rp-open__expired">红包已过期</div>
+              ) : emptied ? (
+                <div className="rp-open__expired">手慢了，红包派完了</div>
+              ) : stage === 'revealed' && wonFen != null ? (
+                <RevealedAmount fen={wonFen} />
+              ) : null}
+              {error && <div className="rp-open__expired">{error}</div>}
+            </>
           )}
-          {error && <div className="rp-open__expired">{error}</div>}
-        </>
-      )}
+        </div>
+        {rp && !notMine && !expired && !emptied && stage !== 'revealed' && (
+          <button
+            className={`rp-open__coin${stage === 'opening' ? ' rp-open__coin--flip' : ''}`}
+            onClick={() => void open()}
+            aria-label="开红包"
+          >
+            開
+          </button>
+        )}
+        {canPeek && rp && (
+          <button className="rp-open__luck" onClick={() => navigate(`/rp/${rp.id}`, { replace: true })}>
+            看看大家的手气 ›
+          </button>
+        )}
+      </div>
+      <button className="rp-open__close" onClick={() => navigate(-1)} aria-label="关闭">
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+          <path d="m4 4 10 10M14 4 4 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      </button>
     </div>
   );
 }

@@ -43,6 +43,8 @@ const SHOTS: Array<[name: string, path: string]> = [
   // 深色模式设置页 (M-K0)。CI 的 Chromium 默认浅色，所以拍到的是「跟随系统」开着、
   // 手动两行收起的默认态——也正是用户第一次点进来看到的样子。
   ['settings-dark-mode', '/settings/dark-mode'],
+  // 零钱明细 (M-K3)：从零钱页拆出来的分页流水，种子只有一笔「零钱初始余额」。
+  ['wallet-bill', '/wallet/bill'],
 ];
 
 for (const [name, path] of SHOTS) {

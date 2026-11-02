@@ -162,3 +162,20 @@
      baseline — see components/rolling-number.css. */
   overflow: hidden;
 }
+
+/* 红包详情的红色导航 (M-K3)：与页面顶部的红色弧形头无缝相接。 */
+.navbar--rp {
+  background: var(--color-rp-card-lid);
+  color: var(--color-rp-card-text);
+}
+.navbar--rp .navbar__title {
+  color: var(--color-rp-card-text);
+}
+.navbar--rp .navbar__btn {
+  color: var(--color-rp-card-text);
+}
+/* 导航栏右侧的文字按钮（如「零钱明细」，M-K3）。 */
+.navbar__text-btn {
+  padding: 0 4px;
+  font-size: var(--fs-cell-sub);
+}

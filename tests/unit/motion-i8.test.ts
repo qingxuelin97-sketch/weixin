@@ -589,7 +589,10 @@ describe('motion stays inside its guard rails', () => {
 
   it('new overlays still pick a named z layer', () => {
     for (const f of cssFiles) {
-      for (const line of read(f).split('\n')) {
+      // 宪法 3.5：先剥注释。M-K3 在 motion.css 里写注释解释「写成小数字时 z-index:10
+      // 的导航栏画到了压暗层上面」，这条守卫就把那句解释判成了违规——它在教人删掉解释。
+      const code = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const line of code.split('\n')) {
         const m = /z-index:\s*(\d+)/.exec(line);
         if (m && Number(m[1]) > 5) throw new Error(`${f}: raw z-index ${m[1]} — use a --z-* token`);
       }

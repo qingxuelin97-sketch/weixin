@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
 import { useAppStore } from '../../store/appStore';
@@ -11,9 +11,11 @@ import './money.css';
 /** Red packet detail: what I got, and the claim list with the luck crown. */
 export function RedPacketDetailPage() {
   const { rpId = '' } = useParams();
+  const navigate = useNavigate();
   const contactById = useAppStore((s) => s.contactById);
   const [rp, setRp] = useState<RedPacketVM | null>(null);
   const [claims, setClaims] = useState<RpClaimVM[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -22,6 +24,7 @@ export function RedPacketDetailPage() {
       if (!alive) return;
       setRp(found ?? null);
       setClaims(cs);
+      setLoaded(true);
     };
     void load();
     // Claims keep arriving while AI members grab; poll briefly so the list fills in.
@@ -36,21 +39,44 @@ export function RedPacketDetailPage() {
   const mine = claims.find((c) => c.claimerId === 'self');
   const claimedFen = claims.reduce((n, c) => n + c.amountFen, 0);
 
+  // 拼手气（含 M-J8 之前没有 mode 字段的旧行）在名字后面挂一枚「拼」。
+  const isLucky = rp != null && rp.mode !== 'even' && rp.mode !== 'exclusive' && rp.kind !== 'normal';
+
   return (
     <>
-      <SubNav title="红包详情" />
+      <SubNav title="" tone="rp" />
       <div className="page-body rp-detail">
+        {/* 微信 8.0 的红包详情：顶部一道红色弧形头接着红色导航，头像与「谁发出的红包」
+            坐在弧线下面，领到的金额用金色大字。此前是一张灰底白纸。 */}
+        <div className="rp-detail__cap" aria-hidden />
+        {/* 过期的深链 / 已删除的红包：说一句话，而不是一张只有红色弧线的空白页
+            （红色导航不带标题，没有这一句整页就一个字都没有——路由冒烟抓到的）。 */}
+        {loaded && !rp && <div className="rp-detail__missing">这个红包不存在或已被删除</div>}
         {rp && (
           <>
             <div className="rp-detail__head">
               <div className="rp-detail__from">
-                {rp.senderId === 'self' ? '我' : (sender?.remark ?? sender?.name ?? '')}的红包
+                <Avatar
+                  color={sender?.avatarColor ?? 'var(--color-brand)'}
+                  text={sender?.avatarText ?? '?'}
+                  imageRef={sender?.avatarRef}
+                  size={24}
+                />
+                <span>
+                  {rp.senderId === 'self' ? '我' : (sender?.remark ?? sender?.name ?? '')}发出的红包
+                </span>
+                {isLucky && <span className="rp-detail__tag">拼</span>}
               </div>
               <div className="rp-detail__greeting">{rp.greeting}</div>
               {mine && (
                 <>
-                  <div className="rp-detail__amount">{fenToYuan(mine.amountFen)} 元</div>
-                  <div className="rp-detail__stored">已存入零钱</div>
+                  <div className="rp-detail__amount">
+                    {fenToYuan(mine.amountFen)}
+                    <span className="rp-detail__unit">元</span>
+                  </div>
+                  <button className="rp-detail__stored" onClick={() => navigate('/wallet')}>
+                    已存入零钱，可直接消费 ›
+                  </button>
                 </>
               )}
             </div>
@@ -70,11 +96,13 @@ export function RedPacketDetailPage() {
                   <div className="rp-claim__main">
                     <div className="rp-claim__name">
                       {c.claimerId === 'self' ? '我' : (who?.remark ?? who?.name ?? c.claimerId)}
-                      {c.isBest && <span className="rp-claim__best">👑 手气最佳</span>}
                     </div>
                     <div className="rp-claim__time">{formatTime(c.claimedAt)}</div>
                   </div>
-                  <div className="rp-claim__amount">{fenToYuan(c.amountFen)} 元</div>
+                  <div className="rp-claim__right">
+                    <div className="rp-claim__amount">{fenToYuan(c.amountFen)} 元</div>
+                    {c.isBest && <div className="rp-claim__best">👑 手气最佳</div>}
+                  </div>
                 </div>
               );
             })}
