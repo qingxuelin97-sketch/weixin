@@ -54,7 +54,7 @@ import {
   activateSqliteDriver,
   revertToIdb,
 } from '../../db/driver';
-import { migrateToSqlite, type MigrateProgressEvent } from '../../db/migrate-to-sqlite';
+import type { MigrateProgressEvent } from '../../db/migrate-to-sqlite';
 import { showConfirm } from '../../components/dialog';
 import './settings.css';
 import { Switch } from '../../components/Switch';
@@ -343,12 +343,14 @@ export function BackupPage() {
     setStatus(null);
     try {
       const db = await openNativeSqliteDb();
+      // 迁移器连同 SQLite 驱动一起懒加载 (M-K10)：一辈子只跑一次的代码不该在冷启动里。
+      const { migrateToSqlite } = await import('../../db/migrate-to-sqlite');
       const res = await migrateToSqlite(db, {
         now: () => Date.now(),
         onProgress: setMigrateProgress,
       });
       if (res.ok) {
-        activateSqliteDriver(db);
+        await activateSqliteDriver(db);
         setStatus('迁移完成，已切换到 SQLite。');
       } else {
         setStatus(res.aborted ? '迁移已中断，可随时继续。' : `迁移失败：${res.error ?? '未知错误'}`);

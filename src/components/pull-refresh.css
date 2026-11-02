@@ -65,7 +65,7 @@
   display: flex;
   flex-direction: column;
 }
-/* Whatever the host wraps takes the remaining space (the Virtuoso scroller,
+/* Whatever the host wraps takes the remaining space (the chat-list scroller,
    the moments scroll pane). */
 .pull-host > *:not(.pull-refresh) {
   flex: 1 1 auto;

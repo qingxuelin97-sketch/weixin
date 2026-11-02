@@ -4,7 +4,6 @@
  * unit-testable, while handlers can reach the store/Repo freely.
  */
 import type { StatusVM } from '../lib/status';
-import { useEffect } from 'react';
 import {
   registerHandler,
   registerChainedHandler,
@@ -106,7 +105,6 @@ import { writeWakeSnapshot } from '../native/bridge';
 import { drainNativeReplies } from '../native/reply-drain';
 import { syncWidget } from '../native/widget-sync';
 import { startBackgroundNotify } from '../native/background-notify';
-import { useForegroundLifecycle } from './useForegroundLifecycle';
 import type { SimContact, SimGroup } from '../ai/simulate';
 import { getGroupCfg, activityMultiplier } from '../ai/group-config';
 import { scheduleGroupChatter } from '../ai/group-chatter';
@@ -463,9 +461,18 @@ registerChainedHandler('auto_backup', {
 });
 }
 
-export function useSchedulerRuntime(enabled: boolean): void {
-  useEffect(() => {
-    if (!enabled) return;
+/**
+ * 调度运行时的启动本体 (M-K10)。
+ *
+ * 原来是 useSchedulerRuntime 里那个 effect 的函数体；搬成普通函数，是为了让
+ * 这整个模块（25 个 handler、它们背后的私信/礼物/群事件/回填规划器…约 200KB
+ * 源码）能从冷启动里拿出去：App 只挂一个薄壳 hook（./useSchedulerBoot），
+ * 它在 hydrate 之后才 `import()` 本模块并调这里。注册与排空的先后不变——
+ * 先 registerAllHandlers，再 startScheduler，排空永远看得见全部 handler。
+ * 返回 teardown（与原 effect 的 cleanup 完全相同）。
+ */
+export function startSchedulerRuntime(): () => void {
+  {
     const deps = buildHandlerDeps();
     registerAllHandlers(deps);
 
@@ -523,18 +530,22 @@ export function useSchedulerRuntime(enabled: boolean): void {
       setBudgetGate(null);
       uninstallCostGate();
     };
-  }, [enabled]);
-
-  // Every return to the foreground repeats the pass. Before M5 this ran only
-  // once at hydrate, so on a phone — where background→foreground is the normal
-  // path and the WebView never remounts — backfill effectively never fired.
-  // Backgrounding pushes the widget's last look at the world (M-I10) — this is
-  // the freshest state the launcher can ever get before the process freezes.
-  useForegroundLifecycle(enabled, {
-    onForeground: foregroundPass,
-    onBackground: () => void syncWidget(),
-  });
+  }
 }
+
+/**
+ * 前后台生命周期的两个回调，由薄壳 hook 交给 useForegroundLifecycle。
+ *
+ * Every return to the foreground repeats the pass. Before M5 this ran only
+ * once at hydrate, so on a phone — where background→foreground is the normal
+ * path and the WebView never remounts — backfill effectively never fired.
+ * Backgrounding pushes the widget's last look at the world (M-I10) — this is
+ * the freshest state the launcher can ever get before the process freezes.
+ */
+export const lifecycleHooks = {
+  onForeground: (): Promise<void> => foregroundPass(),
+  onBackground: () => void syncWidget(),
+};
 
 /**
  * The memory pass proper. Lives here rather than in handlers.ts because it is

@@ -30,6 +30,13 @@
 .chat-list {
   background: var(--color-cell-bg);
 }
+/* 会话列表自己的滚动容器 (M-K10，替代 react-virtuoso 的 scroller)。 */
+.chat-list__scroller {
+  position: relative;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
 .conv-row {
   display: flex;

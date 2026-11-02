@@ -110,6 +110,10 @@ src/
   M-I18 那五个漏网的 per-contact 键正是这么漏的，M-J7 的 `announceSeen:` 差点重演。
 - **前台生命周期**（`src/app/useForegroundLifecycle.ts`）：回前台 = 回填 → 撤销并重排通知。
   没有它，`runBackfill` 只在冷启动跑一次——而手机上「切后台→回前台」才是常态。
+- **调度运行时是懒加载的**（M-K10）：App 只挂 `src/app/useSchedulerBoot.ts` 薄壳，hydrate 之后才
+  `import()` `useSchedulerRuntime.ts` 并调 `startSchedulerRuntime()`（先注册全部 handler 再启动排空）。
+  新 handler 照旧注册在 useSchedulerRuntime.ts——守卫读的就是它；但**不许**在 App 或任何首屏模块里
+  静态 import 它，否则 25 个 handler 背后约 200KB 源码重回冷启动（守卫：`k10-startup.test.ts`）。
 - **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
   不调 LLM、不碰存储、不读挂钟。它只产出「何时该发生什么」，由 `backfill.ts` 物化成 fireAt
   在过去的 scheduled_actions，交给同一个执行器排空。改限额或窗口规则要同步 `specs/backfill.md`。

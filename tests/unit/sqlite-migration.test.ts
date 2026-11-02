@@ -141,7 +141,7 @@ describe('writeStoreRows dispatches like the rest of the driver', () => {
   it('goes to SQLite while it is active, and back to IDB after a revert', async () => {
     const db = new FakeSqlDb();
     await ensureSqliteSchema(db);
-    activateSqliteDriver(db);
+    await activateSqliteDriver(db);
     await writeStoreRows('contacts', rows);
     expect((await sqliteReadAll(db, 'contacts')) as unknown[]).toEqual(rows);
     // On a migrated device this must NOT have touched the stale IDB copy.

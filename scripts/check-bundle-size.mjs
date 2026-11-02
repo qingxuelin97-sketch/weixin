@@ -60,7 +60,17 @@ import { join } from 'node:path';
  * next 20KB of首屏 would slide in unnoticed and the work would have bought
  * nothing.
  */
-const MAIN_BUDGET_KB = 348;
+/*
+ * M-K10 took main from 345 to 305 in three moves, none of which deleted a
+ * feature: react-virtuoso out of the chat list (it was the biggest first-party
+ * dependency in main — gzip ~16KB — virtualizing a list of a few dozen rows),
+ * the native-only SQLite driver + migrator behind `import()`, and the whole
+ * scheduler runtime (25 handlers and the subsystems behind them) loaded after
+ * hydrate instead of parsed before first paint. Re-tightened 348 → 312 for the
+ * same reason as last time: keeping the slack would hand the next 40KB of
+ * cold-start weight a free pass.
+ */
+const MAIN_BUDGET_KB = 312;
 /**
  * Everything a dynamic import fetches later. Looser: none of it blocks paint.
  *

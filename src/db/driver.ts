@@ -20,16 +20,16 @@
 import { Capacitor } from '@capacitor/core';
 import { idbGet, idbGetAll, idbPut, idbDelete, idbClear, idbBulkPut } from './idb';
 import { setRepoImpl, IdbRepo } from './repo';
-import {
-  SqliteRepo,
-  SQLITE_SERVED_STORES,
-  ensureSqliteSchema,
-  sqliteReadAll,
-  sqliteWriteRow,
-  sqliteClearStore,
-  sqliteDeleteRow,
-  type SqlDb,
-} from './sqlite';
+// 原生 SQLite 驱动整个是懒加载的 (M-K10)：Web 永远用不到它，原生也只在迁移完成
+// 之后才用——此前它静态挂在 driver 上，于是每一次冷启动都在解析一个 11KB、
+// 绝大多数设备一辈子不会执行的模块。类型照常静态导入（编译期擦除，零字节）。
+import type { SqlDb } from './sqlite';
+type SqliteModule = typeof import('./sqlite');
+let sqliteMod: SqliteModule | null = null;
+/** 第一次需要 SQLite 时才去取模块；之后同步可用（dispatch 函数依赖这一点）。 */
+export async function loadSqliteModule(): Promise<SqliteModule> {
+  return (sqliteMod ??= await import('./sqlite'));
+}
 import { SQLITE_MIGRATED_AT_KEY } from '../lib/device-local';
 
 /**
@@ -78,7 +78,7 @@ export async function openNativeSqliteDb(): Promise<SqlDb> {
       : await conn.createConnection(DB_FILE, false, 'no-encryption', 1, false);
   await db.open();
   const sqlDb = db as unknown as SqlDb;
-  await ensureSqliteSchema(sqlDb);
+  await (await loadSqliteModule()).ensureSqliteSchema(sqlDb);
   return sqlDb;
 }
 
@@ -96,7 +96,7 @@ export async function initStorageDriver(
   try {
     if ((await sqliteMigratedAt()) <= 0) return 'idb';
     const db = await openDb();
-    activateSqliteDriver(db);
+    await activateSqliteDriver(db);
     return 'sqlite';
   } catch {
     // A broken SQLite file must not brick the app; IDB still has everything
@@ -106,10 +106,16 @@ export async function initStorageDriver(
   }
 }
 
-/** Swap the live Repo to SQLite. Called by init and by the migration flow. */
-export function activateSqliteDriver(db: SqlDb): void {
+/**
+ * Swap the live Repo to SQLite. Called by init and by the migration flow.
+ * Async since M-K10: it may be the first thing that needs the (lazy) module.
+ * `activeDb` is set only once the module is in hand, so the dispatch helpers
+ * below can rely on `sqliteMod` whenever they see an active db.
+ */
+export async function activateSqliteDriver(db: SqlDb): Promise<void> {
+  const m = await loadSqliteModule();
   activeDb = db;
-  setRepoImpl(new SqliteRepo(db));
+  setRepoImpl(new m.SqliteRepo(db));
 }
 
 /**
@@ -133,28 +139,31 @@ export function _resetDriverForTests(): void {
 
 /* ------------------------------------------------- raw per-store dispatch */
 
-function sqliteHome(store: string): SqlDb | null {
-  return activeDb && SQLITE_SERVED_STORES.has(store) ? activeDb : null;
+/** The live SQLite db + its module, when `store` is served from SQLite right now. */
+function sqliteHome(store: string): { db: SqlDb; m: SqliteModule } | null {
+  return activeDb && sqliteMod && sqliteMod.SQLITE_SERVED_STORES.has(store)
+    ? { db: activeDb, m: sqliteMod }
+    : null;
 }
 
 /** Every row of a store, from wherever that store actually lives right now. */
 export async function readStoreRows(store: string): Promise<unknown[]> {
-  const db = sqliteHome(store);
-  return db ? sqliteReadAll(db, store) : idbGetAll(store);
+  const h = sqliteHome(store);
+  return h ? h.m.sqliteReadAll(h.db, store) : idbGetAll(store);
 }
 
 /** Upsert one row into a store's live home. */
 export async function writeStoreRow(store: string, row: unknown): Promise<void> {
-  const db = sqliteHome(store);
-  if (db) return void (await sqliteWriteRow(db, store, row));
+  const h = sqliteHome(store);
+  if (h) return void (await h.m.sqliteWriteRow(h.db, store, row));
   await idbPut(store, row);
 }
 
 /** Upsert many rows. */
 export async function writeStoreRows(store: string, rows: unknown[]): Promise<void> {
-  const db = sqliteHome(store);
-  if (db) {
-    for (const row of rows) await sqliteWriteRow(db, store, row);
+  const h = sqliteHome(store);
+  if (h) {
+    for (const row of rows) await h.m.sqliteWriteRow(h.db, store, row);
     return;
   }
   await idbBulkPut(store, rows);
@@ -166,14 +175,14 @@ export async function writeStoreRows(store: string, rows: unknown[]): Promise<vo
  * gone" or a deleted message resurrects on every restore.
  */
 export async function deleteStoreRow(store: string, key: string | number): Promise<void> {
-  const db = sqliteHome(store);
-  if (db) return void (await sqliteDeleteRow(db, store, key));
+  const h = sqliteHome(store);
+  if (h) return void (await h.m.sqliteDeleteRow(h.db, store, key));
   await idbDelete(store, key);
 }
 
 /** Clear a store's live home (restore = replace, never merge). */
 export async function clearStore(store: string): Promise<void> {
-  const db = sqliteHome(store);
-  if (db) return void (await sqliteClearStore(db, store));
+  const h = sqliteHome(store);
+  if (h) return void (await h.m.sqliteClearStore(h.db, store));
   await idbClear(store);
 }

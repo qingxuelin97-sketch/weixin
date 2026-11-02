@@ -1,6 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Virtuoso } from 'react-virtuoso';
 import { NavBar } from '../../components/NavBar';
 import { Avatar } from '../../components/Avatar';
 import { Badge } from '../../components/Badge';
@@ -37,10 +36,10 @@ export function ChatListPage() {
   /**
    * 下拉刷新 (M-I8).
    *
-   * The list is virtualized, so the element the gesture translates is the host
-   * around Virtuoso and the scroll position it consults is Virtuoso's own
-   * scroller — handed over through `scrollerRef`, because Virtuoso owns that
-   * node and there is no ref of ours on it.
+   * The element the gesture translates is the host around the scroller, and
+   * the scroll position it consults is the scroller's own — handed over
+   * through `scrollerRef` (a holdover from the Virtuoso days that still reads
+   * fine: the gesture code wants a function, not a ref).
    */
   const listRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
@@ -49,8 +48,8 @@ export function ChatListPage() {
     scroller: () => scrollerRef.current,
     onRefresh: () => refreshConversations().catch(() => showToast('刷新失败')),
   });
-  // First paint only: rows recycled by Virtuoso as you scroll must NOT replay
-  // the entrance (see lib/stagger.ts).
+  // First paint only: a row that arrives later (a new conversation, a store
+  // update) must NOT replay the entrance (see lib/stagger.ts).
   const stagger = useStagger();
 
   const [plusOpen, setPlusOpen] = useState(false);
@@ -116,13 +115,18 @@ export function ChatListPage() {
             way to build a pull-to-refresh that never shows its indicator. */}
         <div className="pull-host" ref={listRef} {...pull.handlers}>
           <PullRefresh phase={pull.phase} progress={pull.progress} />
-          <Virtuoso
-            data={conversations}
-            scrollerRef={(el) => {
-              scrollerRef.current = el as HTMLElement | null;
+          {/* 不再虚拟化 (M-K10)：会话列表在这个 App 里是几十行的量级，而 react-virtuoso
+              是主包里最大的一块应用依赖（压缩后 56KB，gzip ~16KB），冷启动的每一次都在
+              为「也许哪天有一万个会话」付费。一个普通滚动容器渲染几十行毫无压力。 */}
+          <div
+            className="chat-list__scroller"
+            ref={(el) => {
+              scrollerRef.current = el;
             }}
-            itemContent={(i, conv) => (
+          >
+            {conversations.map((conv, i) => (
               <ConversationRow
+                key={conv.id}
                 conv={conv}
                 stagger={stagger(i)}
                 onOpen={() => navigate(`/chat/${conv.id}`)}
@@ -139,8 +143,8 @@ export function ChatListPage() {
                 }
                 onDelete={() => confirmDelete(conv)}
               />
-            )}
-          />
+            ))}
+          </div>
         </div>
       </div>
       {menu && (

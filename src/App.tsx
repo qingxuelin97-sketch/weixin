@@ -58,7 +58,7 @@ import { PromptLabPage } from './features/settings/PromptLabPage';
 import { BatteryGuidePage } from './features/settings/BatteryGuidePage';
 import { DarkModePage } from './features/settings/DarkModePage';
 import { useAppStore } from './store/appStore';
-import { useSchedulerRuntime } from './app/useSchedulerRuntime';
+import { useSchedulerBoot } from './app/useSchedulerBoot';
 import { useDeepLinks } from './app/useDeepLinks';
 import { MomentDetailPage } from './features/moments/MomentDetailPage';
 
@@ -143,8 +143,9 @@ export function App() {
     void hydrate();
   }, [hydrate]);
 
-  // Single time-evolution path: drains scheduled_actions once hydrated.
-  useSchedulerRuntime(hydrated);
+  // Single time-evolution path: drains scheduled_actions once hydrated. The
+  // runtime itself is loaded on demand (M-K10) — see app/useSchedulerBoot.ts.
+  useSchedulerBoot(hydrated);
 
   // Hydrate rejects asynchronously, which no ErrorBoundary can see — without
   // this branch a failed boot is an eternal blank screen (bug M7). After every
