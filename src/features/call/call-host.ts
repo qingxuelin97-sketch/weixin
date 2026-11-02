@@ -18,84 +18,21 @@
  *    useSyncExternalStore consumers re-render without tearing (the zustand
  *    selector trap does not apply — the snapshot IS the stable reference).
  */
-import { useSyncExternalStore } from 'react';
-import { CallSession, type CallTurn, type CallSessionOpts } from '../../ai/call-script';
-import type { NsfwTier } from '../../llm/router';
-import { useAppStore } from '../../store/appStore';
+import { CallSession } from '../../ai/call-script';
 import { logError } from '../../lib/errlog';
+import {
+  installActiveCall,
+  patchActiveCall,
+  getActiveCall,
+  type ActiveCallSnapshot,
+  type HostableCallSession,
+  type SessionUiHooks,
+} from './call-store';
+import type { CallSessionOpts } from '../../ai/call-script';
 
-/**
- * What the host (and both call pages) need from a live session — CallSession
- * and GroupCallSession both satisfy it structurally. The host never cares
- * which one it holds; hangup/mute/barge-in are one code path either way.
- */
-export interface HostableCallSession {
-  readonly turns: CallTurn[];
-  readonly tier: NsfwTier;
-  readonly isMuted: boolean;
-  voiceOn: boolean;
-  start(): Promise<void>;
-  holdFloor(): void;
-  setMuted(m: boolean): void;
-  userSaid(text: string): Promise<void>;
-  finalize(): Promise<string>;
-  end(): void;
-}
-
-/** The UI callbacks the host owns; `makeSession` receives them pre-wired. */
-export interface SessionUiHooks {
-  onLine: (turn: CallTurn) => void;
-  onSpeaking: (speaking: boolean) => void;
-  /** 群语音 (M-J6c): who is talking (grid highlight); single calls never call it. */
-  onSpeakingId: (id: string | null) => void;
-  onReady: (voiceOn: boolean) => void;
-}
-
-export interface ActiveCallSnapshot {
-  session: HostableCallSession;
-  convId: string;
-  peerId: string;
-  peerName: string;
-  direction: 'in' | 'out';
-  /** 视频通话 (M-J6b): drives the record label and the return-URL from the pill. */
-  video: boolean;
-  /** 群语音 (M-J6c): picks the pill's return route (/group-call vs /call). */
-  group: boolean;
-  /** Group only: who is talking right now (avatar-grid highlight). */
-  speakingId: string | null;
-  /** epoch ms of connect — the pill's ticking clock derives from this. */
-  connectedAt: number;
-  subs: readonly CallTurn[];
-  speaking: boolean;
-  voiceOn: boolean;
-  muted: boolean;
-}
-
-let current: ActiveCallSnapshot | null = null;
-const listeners = new Set<() => void>();
-const emit = () => {
-  for (const l of listeners) l();
-};
-
-export function getActiveCall(): ActiveCallSnapshot | null {
-  return current;
-}
-
-function subscribe(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => void listeners.delete(fn);
-}
-
-/** React binding. Null when no call is live. */
-export function useActiveCall(): ActiveCallSnapshot | null {
-  return useSyncExternalStore(subscribe, getActiveCall, getActiveCall);
-}
-
-const patch = (p: Partial<ActiveCallSnapshot>): void => {
-  if (!current) return;
-  current = { ...current, ...p };
-  emit();
-};
+// 状态一半住在 ./call-store（悬浮胶囊只依赖它，见那边的头注释）；这里 re-export，
+// 让 CallPage / GroupCallPage / 测试照旧从 call-host 拿到全部。
+export * from './call-store';
 
 export interface AdoptCallOpts {
   convId: string;
@@ -123,19 +60,21 @@ export interface AdoptCallOpts {
  * "return from the pill" path, not an error).
  */
 export function adoptCall(opts: AdoptCallOpts): ActiveCallSnapshot {
-  if (current) return current;
+  const live = getActiveCall();
+  if (live) return live;
   const ui: SessionUiHooks = {
     onLine: (t) => {
-      if (current?.session === session) patch({ subs: [...current.subs, t] });
+      const c = getActiveCall();
+      if (c?.session === session) patchActiveCall({ subs: [...c.subs, t] });
     },
     onSpeaking: (v) => {
-      if (current?.session === session) patch({ speaking: v });
+      if (getActiveCall()?.session === session) patchActiveCall({ speaking: v });
     },
     onSpeakingId: (id) => {
-      if (current?.session === session) patch({ speakingId: id });
+      if (getActiveCall()?.session === session) patchActiveCall({ speakingId: id });
     },
     onReady: (v) => {
-      if (current?.session === session) patch({ voiceOn: v });
+      if (getActiveCall()?.session === session) patchActiveCall({ voiceOn: v });
     },
   };
   const session: HostableCallSession = opts.makeSession
@@ -146,7 +85,7 @@ export function adoptCall(opts: AdoptCallOpts): ActiveCallSnapshot {
         onSpeaking: ui.onSpeaking,
         onReady: ui.onReady,
       });
-  current = {
+  const snap: ActiveCallSnapshot = {
     session,
     convId: opts.convId,
     peerId: opts.peerId,
@@ -161,62 +100,8 @@ export function adoptCall(opts: AdoptCallOpts): ActiveCallSnapshot {
     voiceOn: false,
     muted: false,
   };
-  emit();
+  installActiveCall(snap);
   void session.start().catch((e) => logError('call.session', e));
-  return current;
+  return snap;
 }
 
-/** The mute toggle, from page or pill — one implementation. */
-export function setCallMuted(m: boolean): void {
-  if (!current) return;
-  current.session.setMuted(m);
-  patch({ muted: m });
-}
-
-/**
- * Hang up, from WHEREVER — page button, pill button. Ends the session (which
- * runs its idempotent finalize), writes the call record through the ordinary
- * message path, stamps the summary onto it when the finalize resolves, and
- * releases the singleton. Safe to call twice: the second call finds no owner.
- */
-export async function hangupActiveCall(): Promise<void> {
-  const snap = current;
-  if (!snap) return;
-  current = null;
-  emit();
-  const s = useAppStore.getState();
-  const durationMs = Math.max(0, Date.now() - snap.connectedAt);
-  const hadTurns = snap.session.turns.length > 0;
-  snap.session.end();
-  try {
-    const saved = await s.appendMessage({
-      convId: snap.convId,
-      senderId: snap.direction === 'in' ? snap.peerId : 'self',
-      type: 'call',
-      meta: { direction: snap.direction, durationMs, ...(snap.video ? { video: true } : {}) },
-      status: 'sent',
-      createdAt: Date.now(),
-    });
-    if (hadTurns) {
-      // Fire-and-forget: a failed summary loses a nicety, never the record.
-      void (async () => {
-        try {
-          const summary = await snap.session.finalize();
-          if (summary) await s.updateMessage({ ...saved, meta: { ...saved.meta, summary } });
-        } catch (e) {
-          logError('call.finalize', e);
-        }
-      })();
-    }
-  } catch (e) {
-    // Losing the record is bad; a call nobody can leave is worse.
-    logError('call.record', e);
-  }
-}
-
-/** Test hook — the singleton must not leak between cases. */
-export function resetCallHostForTests(): void {
-  current?.session.end();
-  current = null;
-  emit();
-}

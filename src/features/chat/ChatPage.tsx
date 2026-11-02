@@ -19,6 +19,7 @@ import { ImageViewer } from '../../components/ImageViewer';
 import { Sheet } from '../../components/Sheet';
 import { contactCardPayload, fileExt } from '../../ai/bubble-materialize';
 import { enterToSend } from '../../lib/chat-prefs';
+import { chatBgStyle, parseChatBg, resolveChatBg, type ChatBg } from '../../lib/chat-bg';
 import { LongPressMenu, type LongPressMenuItem } from '../../components/LongPressMenu';
 import { useDismissable } from '../../app/useDismissable';
 import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
@@ -285,6 +286,22 @@ export function ChatPage() {
   const allConversations = useAppStore((s) => s.conversations);
   // 名片选择器 (M-K1) 的候选：稳定引用，过滤在渲染里做（宪法 3.5）。
   const contacts = useAppStore((s) => s.contacts);
+
+  // 聊天背景 (M-K5)：会话自己的压过全局默认；两个都没设就是原来的纯色底。
+  // 每次进会话读一次（改背景的页面在别的路由上，回来时本页重新挂载）。
+  const [chatBg, setChatBg] = useState<ChatBg>({ kind: 'none' });
+  useEffect(() => {
+    let alive = true;
+    void Promise.all([repo.getSetting(`chatBg:${convId}`), repo.getSetting('chatBgDefault')])
+      .then(([own, global]) => {
+        if (alive) setChatBg(resolveChatBg(parseChatBg(own), parseChatBg(global)));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [convId]);
+  useMedia(chatBg.kind === 'image' ? [chatBg.ref] : []);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
   const albumInputRef = useRef<HTMLInputElement>(null);
   // 拍摄 / 文件 (M-K1)：两个隐藏的系统选择器。拍摄与相册共用发图管线，只是
@@ -1380,7 +1397,11 @@ export function ChatPage() {
   };
 
   return (
-    <div className="chat-page" onClick={() => composer.mode !== 'none' && composer.closeAll()}>
+    <div
+      className={`chat-page${chatBg.kind === 'none' ? '' : ' chat-page--bg'}`}
+      style={chatBgStyle(chatBg)}
+      onClick={() => composer.mode !== 'none' && composer.closeAll()}
+    >
       <header className="navbar chat-nav">
         <div className="navbar__left">
           <button className="navbar__btn chat-nav__back" aria-label="返回" onClick={() => navigate(-1)}>

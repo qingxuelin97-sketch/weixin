@@ -1385,3 +1385,10 @@
   font-size: var(--fs-badge);
   color: var(--color-text-secondary);
 }
+
+/* 有聊天背景时 (M-K5)：时间行垫一层半透明胶囊——灰字直接落在渐变或照片上读不出来。 */
+.chat-page--bg .msg-time {
+  background: var(--color-chat-stamp-pill);
+  border-radius: 3px;
+  padding: 2px 8px;
+}

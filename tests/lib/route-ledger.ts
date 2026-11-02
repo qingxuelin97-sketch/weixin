@@ -75,6 +75,9 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/settings/notify': { golden: 'settings-notify', pendingCast: true, smoke: { path: '/settings/notify' } },
   '/settings/chat': { golden: 'settings-chat', pendingCast: true, smoke: { path: '/settings/chat' } },
   '/settings/general': { golden: 'settings-general', pendingCast: true, smoke: { path: '/settings/general' } },
+  // 字体大小 / 聊天背景 (M-K5)。pendingCast：spec 已接线，等 CI regen 铸基线后摘旗。
+  '/settings/font-size': { golden: 'settings-font-size', pendingCast: true, smoke: { path: '/settings/font-size' } },
+  '/settings/chat-bg': { golden: 'settings-chat-bg', pendingCast: true, smoke: { path: '/settings/chat-bg' } },
   '/settings/worldbook': { golden: 'settings-worldbook', smoke: { path: '/settings/worldbook' } },
   '/persona/:contactId': { golden: 'persona-edit', smoke: { path: '/persona/ai_lin' } },
   '/memory/:contactId': { golden: 'memory', smoke: { path: '/memory/ai_lin' } },
@@ -116,6 +119,10 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
     smoke: { path: '/group-new/ai' },
   },
   '/chat/:convId/info': { golden: 'chat-info', smoke: { path: '/chat/conv_lin/info' } },
+  '/chat/:convId/bg': {
+    exempt: 'same ChatBgPage as /settings/chat-bg (golden there); only the title and target key differ',
+    smoke: { path: '/chat/conv_lin/bg' },
+  },
   '/groups': { exempt: 'thin list reusing contacts rows', smoke: { path: '/groups' } },
   '/new-friends': { exempt: 'static placeholder list', smoke: { path: '/new-friends' } },
   '/contacts-chats-only': {

@@ -467,6 +467,14 @@ export function ChatInfoPage() {
         </div>
 
         <div className="settings__group">
+          {/* 聊天背景 (M-K5)：微信把它放在这里——「设置当前聊天背景」。 */}
+          <div
+            className="settings__row settings__row--divided"
+            onClick={() => navigate(`/chat/${conv.id}/bg`)}
+          >
+            <span className="settings__label">设置当前聊天背景</span>
+            <span className="settings__chevron">›</span>
+          </div>
           <div
             className="settings__row"
             onClick={() => guard('chatinfo.clear', clearHistory)}

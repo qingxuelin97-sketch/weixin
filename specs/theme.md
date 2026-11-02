@@ -2,7 +2,7 @@
 
 **文件**：`src/lib/theme.ts`（引擎）、`src/styles/tokens.css` 的深色块、`index.html` 首帧脚本、
 `src/native/system-bars.ts`（原生状态栏同步）、`src/features/settings/DarkModePage.tsx`。
-**基准**：微信 8.0 Android「设置 › 通用 › 深色模式」。字体大小、聊天背景在 M-K5 落地后补进本文件。
+**基准**：微信 8.0 Android「设置 › 通用 › 深色模式 / 字体大小」「设置 › 聊天 › 聊天背景」「聊天信息 › 设置当前聊天背景」。
 
 ## 深色模式（M-K0）
 
@@ -37,3 +37,28 @@
   `Theme.AppCompat.DayNight.NoActionBar`），否则系统深色时 WebView 仍报告 light。
 - **不要开 WebView 的算法变暗**（algorithmic darkening）：targetSdk ≥ 33 默认关闭，开了会把
   已经是深色的页面再「反色」一遍。
+
+## 字体大小（M-K5）
+
+- **一个系数**：tokens.css 的全部 `--fs-*` 都是 `calc(Npx * var(--fs-scale))`，`--fs-scale` 默认 1；
+  例外只有 `--fs-badge`（未读角标是定尺寸的圆，字变大会撑破它）。缩放的是**字**不是版式。
+- 八档 `FONT_SCALES = [0.875, 1, 1.125, 1.25, 1.375, 1.5, 1.625, 1.75]`，下标 1 是标准；偏好存
+  localStorage `ui.fontScale`（标准档 = 无此键、无内联值，DOM 与新装一致，基线一像素不动）。
+- 首帧脚本同样写 `--fs-scale`。**坑**：`Number(null) === 0`（最小档），首帧脚本与 parseFontIndex
+  都必须先判空（守卫在 jsdom 里真的跑一遍首帧脚本）。
+- 页面：预览气泡用聊天页同一套气泡样式；下方 `StepSlider`（分档滑杆，K6 复用）。
+
+## 聊天背景（M-K5）
+
+- 存 settings：`chatBgDefault`（全局）与 `chatBg:<convId>`（会话级，压过全局；登记在
+  SETTINGS_KEY_CASCADE，随会话删除级联）。值 = `{kind:'none'} | {kind:'preset',id} | {kind:'image',ref}`；
+  「跟随全局」写 null（Repo 接口不为此长出删除方法），`parseChatBg` 把脏数据一律读成没设过。
+- 预置 8 种是 `--color-chatbg-*` 渐变 / 点阵纹理（零 PNG），深色块里各有压暗版（守卫：每个预置
+  两套都在）；相册背景走素材库导入（跟着备份走）。
+- 有背景时时间行垫半透明胶囊（`--color-chat-stamp-pill`），否则灰字落在渐变上读不出来。
+- 入口：设置 › 聊天 › 聊天背景；聊天信息 › 设置当前聊天背景。
+
+### 验收（K5）
+- [x] 字号档位解析 / 改档写键与内联值 / 首帧脚本两条分支 / token 全部乘系数（`k5-font-bg.test.ts`，三条变异验证）。
+- [x] 背景解析、优先级、预置双主题 token、级联台账登记。
+- [ ] 真机：大字号下各页面不溢出（长昵称、红包卡、通话页）；相册背景在深色模式下是否需要压暗。

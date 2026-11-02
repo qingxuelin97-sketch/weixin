@@ -13,7 +13,8 @@
  */
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useActiveCall, hangupActiveCall } from './call-host';
+// 只依赖状态一半 (M-K5)：call-host 带着整套通话引擎，胶囊用不着它。
+import { useActiveCall, hangupActiveCall } from './call-store';
 import './call.css';
 
 const mmss = (ms: number): string => {

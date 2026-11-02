@@ -118,6 +118,8 @@
   --color-panel-tile-pressed: var(--wx-cell-pressed);
   --color-page-dot: var(--wx-gray-3);
   --color-page-dot-active: var(--wx-gray-6);
+  /* 分档滑杆的圆钮 (M-K5)。 */
+  --color-slider-thumb: var(--wx-white);
   /* 表情面板底部 tab 栏 (M-K2)：比面板本身浅一档（微信是白条）。 */
   --color-panel-tabs-bg: var(--wx-input-bar);
   --color-tabbar-bg: var(--wx-input-bar);
@@ -188,22 +190,38 @@
   --color-moments-cover-b: var(--wx-moments-cover-b);
   --color-moments-image-empty: var(--wx-page); /* grid cell before art loads */
 
+  /* ---- 聊天背景预置 (M-K5)：渐变与点阵纹理，零 PNG。深色下各有一套压暗版。 ---- */
+  --color-chatbg-mist: linear-gradient(180deg, #e3e9ef 0%, #d4dde6 100%);
+  --color-chatbg-peach: linear-gradient(160deg, #fbe6dc 0%, #f6d2c4 100%);
+  --color-chatbg-mint: linear-gradient(170deg, #dff1e6 0%, #c9e7d5 100%);
+  --color-chatbg-lavender: linear-gradient(165deg, #e8e3f5 0%, #d6ccee 100%);
+  --color-chatbg-dawn: linear-gradient(180deg, #fde2e4 0%, #fad2c1 55%, #f5e0b8 100%);
+  --color-chatbg-sky: linear-gradient(180deg, #d8ecfb 0%, #eaf5fd 100%);
+  --color-chatbg-paper: radial-gradient(#d6cfc2 1px, transparent 1.2px) 0 0 / 14px 14px, #f3efe6;
+  --color-chatbg-night: linear-gradient(180deg, #2c3a4f 0%, #1c2433 100%);
+  /* 有背景时，居中的时间行垫一层半透明胶囊，否则灰字落在渐变上读不出来。 */
+  --color-chat-stamp-pill: rgba(0, 0, 0, 0.12);
+
   /* ---- Typography (dp == px at baseline; system CJK black, no bundled font) ---- */
   --font-sans:
     system-ui, -apple-system, 'PingFang SC', 'MiSans', 'HarmonyOS Sans SC', 'Noto Sans SC',
     'Microsoft YaHei', sans-serif;
-  --fs-nav-title: 17px;
-  --fs-bubble: 17px;
-  --fs-name: 17px;
-  --fs-cell-title: 17px;
-  --fs-cell-sub: 14px;
-  --fs-preview: 14px;
-  --fs-moment-name: 17px;
-  --fs-moment-body: 17px;
-  --fs-comment: 15px;
-  --fs-timestamp: 12px;
-  --fs-small-gray: 13px;
-  --fs-badge: 11px;
+  /* 字体大小 (M-K5)：全部 --fs-* 乘这一个系数。1 = 标准档；设置 › 通用 › 字体大小 改它
+     （运行时写在 <html> 的内联 style 上，首帧脚本同样会写）。只缩放字，不缩放版式——
+     与微信一致：大字号下气泡变高变宽，头像、导航栏、间距不动。 */
+  --fs-scale: 1;
+  --fs-nav-title: calc(17px * var(--fs-scale));
+  --fs-bubble: calc(17px * var(--fs-scale));
+  --fs-name: calc(17px * var(--fs-scale));
+  --fs-cell-title: calc(17px * var(--fs-scale));
+  --fs-cell-sub: calc(14px * var(--fs-scale));
+  --fs-preview: calc(14px * var(--fs-scale));
+  --fs-moment-name: calc(17px * var(--fs-scale));
+  --fs-moment-body: calc(17px * var(--fs-scale));
+  --fs-comment: calc(15px * var(--fs-scale));
+  --fs-timestamp: calc(12px * var(--fs-scale));
+  --fs-small-gray: calc(13px * var(--fs-scale));
+  --fs-badge: 11px; /* 不缩放：未读角标是定尺寸的圆，字跟着变大会撑破它 */
   --fw-regular: 400;
   --fw-medium: 500; /* CJK never uses bold (700); medium is the heaviest */
   --lh-body: 1.4;
@@ -293,6 +311,15 @@
   --wxd-track: rgba(255, 255, 255, 0.1);
   --wxd-tabbar-icon: rgba(255, 255, 255, 0.7);
   --wxd-dot: rgba(255, 255, 255, 0.15);
+  --wxd-chatbg-mist: linear-gradient(180deg, #1f2429 0%, #161a1e 100%);
+  --wxd-chatbg-peach: linear-gradient(160deg, #2a201c 0%, #211815 100%);
+  --wxd-chatbg-mint: linear-gradient(170deg, #18241d 0%, #121b16 100%);
+  --wxd-chatbg-lavender: linear-gradient(165deg, #211e2b 0%, #191622 100%);
+  --wxd-chatbg-dawn: linear-gradient(180deg, #2a1e20 0%, #261c18 55%, #24201a 100%);
+  --wxd-chatbg-sky: linear-gradient(180deg, #172230 0%, #121a24 100%);
+  --wxd-chatbg-paper: radial-gradient(#2c2a26 1px, transparent 1.2px) 0 0 / 14px 14px, #161513;
+  --wxd-chatbg-night: linear-gradient(180deg, #151c27 0%, #0e131b 100%);
+  --wxd-stamp-pill: rgba(255, 255, 255, 0.1);
 }
 
 :root[data-theme='dark'] {
@@ -334,6 +361,7 @@
   --color-page-dot: var(--wxd-dot);
   --color-page-dot-active: var(--wxd-fg-1);
   --color-panel-tabs-bg: var(--wxd-bg-2);
+  --color-slider-thumb: var(--wxd-fg-0);
   --color-tabbar-bg: var(--wxd-bg-1);
   --color-tabbar-icon: var(--wxd-tabbar-icon);
 
@@ -354,4 +382,14 @@
   --color-moments-comment-bg: var(--wxd-bg-3);
   --color-moments-action-bg: var(--wxd-bg-5);
   --color-moments-image-empty: var(--wxd-bg-5);
+
+  --color-chatbg-mist: var(--wxd-chatbg-mist);
+  --color-chatbg-peach: var(--wxd-chatbg-peach);
+  --color-chatbg-mint: var(--wxd-chatbg-mint);
+  --color-chatbg-lavender: var(--wxd-chatbg-lavender);
+  --color-chatbg-dawn: var(--wxd-chatbg-dawn);
+  --color-chatbg-sky: var(--wxd-chatbg-sky);
+  --color-chatbg-paper: var(--wxd-chatbg-paper);
+  --color-chatbg-night: var(--wxd-chatbg-night);
+  --color-chat-stamp-pill: var(--wxd-stamp-pill);
 }

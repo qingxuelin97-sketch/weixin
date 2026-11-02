@@ -66,6 +66,15 @@ describe('Web 不为 SQLite 付费', () => {
   });
 });
 
+describe('常驻的通话胶囊不拖着通话引擎', () => {
+  it('MiniCallPill 只依赖 call-store，不静态导入 call-host（那边挂着 CallSession 的构造）', () => {
+    const pill = code('src/features/call/MiniCallPill.tsx');
+    expect(staticImports(pill)).toContain('./call-store');
+    expect(staticImports(pill)).not.toContain('./call-host');
+    expect(staticImports(code('src/features/call/call-store.ts'))).not.toContain('../../ai/call-script');
+  });
+});
+
 describe('会话列表不虚拟化', () => {
   it('src 里没有任何地方再导入 react-virtuoso', () => {
     const hits: string[] = [];

@@ -8,7 +8,8 @@
     />
     <meta name="theme-color" content="#EDEDED" />
     <title>微信</title>
-    <!-- 首帧主题 (M-K0)：在第一次绘制之前写好 data-theme，深色手机冷启动不闪白。
+    <!-- 首帧主题 (M-K0) + 字体大小 (M-K5)：在第一次绘制之前写好 data-theme 与 --fs-scale，
+         深色手机冷启动不闪白、大字号用户不先看见一帧小字。
          与 src/lib/theme.ts 的 THEME_KEY / resolveTheme 同一套规则，守卫在
          tests/unit/k0-theme.test.ts。运行时切换由 theme.ts 接管。 -->
     <script>
@@ -20,6 +21,13 @@
           else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark';
         } catch (e) {}
         document.documentElement.setAttribute('data-theme', t);
+        // 字体大小 (M-K5)：与 src/lib/font-scale.ts 的 FONT_SCALES / FONT_SCALE_KEY 同一套。
+        try {
+          // 没有这个键 = 标准档。注意 Number(null) 是 0（最小档），所以必须先判空。
+          var raw = localStorage.getItem('ui.fontScale');
+          var s = raw === null || raw === '' ? 1 : [0.875, 1, 1.125, 1.25, 1.375, 1.5, 1.625, 1.75][Number(raw)];
+          if (s && s !== 1) document.documentElement.style.setProperty('--fs-scale', String(s));
+        } catch (e) {}
       })();
     </script>
   </head>

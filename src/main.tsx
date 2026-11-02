@@ -10,6 +10,7 @@ import { installGlobalErrorCapture } from './lib/errlog';
 import { armSelftest } from './lib/selftest';
 import { installNativeSse } from './native/sse-bridge';
 import { installThemeWatcher } from './lib/theme';
+import { applyFontScale } from './lib/font-scale';
 import { installSystemBarsSync } from './native/system-bars';
 
 // Mobile browsers gate audio behind a user gesture; unlock on the first tap.
@@ -34,6 +35,8 @@ installNativeSse();
 // 订阅先于 install：install 内的首次 apply 就要把颜色送到原生层。
 installSystemBarsSync();
 installThemeWatcher();
+// 字体大小 (M-K5)：首帧脚本已写过一次；这里幂等再写，保证与 font-scale.ts 的解析一致。
+applyFontScale();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -50,6 +50,9 @@ const SHOTS: Array<[name: string, path: string]> = [
   ['settings-notify', '/settings/notify'],
   ['settings-chat', '/settings/chat'],
   ['settings-general', '/settings/general'],
+  // 字体大小 / 聊天背景 (M-K5)：默认态——标准档、无背景。
+  ['settings-font-size', '/settings/font-size'],
+  ['settings-chat-bg', '/settings/chat-bg'],
 ];
 
 for (const [name, path] of SHOTS) {

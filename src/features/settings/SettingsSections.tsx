@@ -13,6 +13,7 @@ import { isAsrReady } from '../../llm/asr';
 import { isTtsAvailable } from '../../llm/tts';
 import { getThemePref } from '../../lib/theme';
 import { enterToSend, setEnterToSend } from '../../lib/chat-prefs';
+import { FONT_SCALES, STANDARD_INDEX, getFontIndex } from '../../lib/font-scale';
 import type { NsfwTierVM } from '../../data/types';
 import { LinkRow, SwitchRow } from './rows';
 import './settings.css';
@@ -167,7 +168,7 @@ export function NotifySettingsPage() {
   );
 }
 
-/** 聊天：输入习惯与拟真项。聊天背景在 M-K5 落到这一页。 */
+/** 聊天：背景、输入习惯与拟真项。 */
 export function ChatSettingsPage() {
   const [enter, setEnter] = useState(enterToSend());
   // 已读回执 (M-I16): WeChat has none, so it ships OFF as an opt-in拟真项.
@@ -194,6 +195,9 @@ export function ChatSettingsPage() {
       <SubNav title="聊天" />
       <div className="page-body settings">
         <div className="settings__group">
+          <LinkRow label="聊天背景" to="/settings/chat-bg" last />
+        </div>
+        <div className="settings__group">
           <SwitchRow label="回车键发送消息" on={enter} onToggle={toggleEnter} last />
         </div>
         <p className="settings__hint">关闭后回车键换行，只能点「发送」把消息发出去。</p>
@@ -211,6 +215,12 @@ export function ChatSettingsPage() {
 
 const THEME_LABEL = { system: '跟随系统', light: '普通模式', dark: '深色模式' } as const;
 
+/** 「字体大小」那一行的值：标准档写「标准」，其余写倍数——八档没有微信那么多好名字。 */
+function fontLabel(i: number): string {
+  if (i === STANDARD_INDEX) return '标准';
+  return i < STANDARD_INDEX ? '小' : `大 ${FONT_SCALES[i]}×`;
+}
+
 /** 通用：显示与存储。 */
 export function GeneralSettingsPage() {
   return (
@@ -218,7 +228,8 @@ export function GeneralSettingsPage() {
       <SubNav title="通用" />
       <div className="page-body settings">
         <div className="settings__group">
-          <LinkRow label="深色模式" value={THEME_LABEL[getThemePref()]} to="/settings/dark-mode" last />
+          <LinkRow label="深色模式" value={THEME_LABEL[getThemePref()]} to="/settings/dark-mode" />
+          <LinkRow label="字体大小" value={fontLabel(getFontIndex())} to="/settings/font-size" last />
         </div>
         <div className="settings__group">
           <LinkRow label="素材库（头像与照片）" to="/settings/media" />

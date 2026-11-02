@@ -438,3 +438,68 @@ label.settings__row {
   font-size: var(--fs-timestamp);
   color: var(--color-text-placeholder);
 }
+
+/* ---- 字体大小 (M-K5) ---- */
+.font-size {
+  background: var(--color-chat-bg);
+}
+.font-size__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 0;
+}
+.font-size__control {
+  flex: none;
+  padding: 26px 24px calc(30px + var(--safe-bottom));
+  background: var(--color-cell-bg);
+}
+/* 两端的 A 是**固定**字号：它们是刻度的图例，不该跟着自己调的那个数一起变。 */
+.font-size__a {
+  color: var(--color-text-primary);
+}
+.font-size__a--small {
+  font-size: 14px;
+}
+.font-size__a--large {
+  font-size: 24px;
+}
+
+/* ---- 聊天背景 (M-K5)：三列预置，选中的打绿勾 ---- */
+.chatbg-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 4px 16px 16px;
+}
+.chatbg-grid__tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.chatbg-grid__swatch {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 6px;
+  background: var(--color-chat-bg);
+  border: var(--hairline-width) solid var(--color-hairline);
+}
+.chatbg-grid__label {
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.chatbg-grid__check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+}

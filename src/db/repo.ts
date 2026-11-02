@@ -368,6 +368,11 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
     // 撤回」，而一个指向虚空的指针只会让人以为是 bug。随会话消亡。
     why: 'J7 置顶消息（msgId + 当时的文本投影），随会话消亡',
   },
+  'chatBg:': {
+    scope: 'conv',
+    row: 'cascade',
+    why: 'K5 会话自己的聊天背景（预置 id 或素材库图片引用），随会话消亡',
+  },
   'announceSeen:': {
     scope: 'conv',
     row: 'cascade',
@@ -423,6 +428,7 @@ export const SETTINGS_KEY_CASCADE: Record<string, SettingsKeyRule> = {
   nsfwProviderId: { scope: 'global', row: 'exempt', why: 'App 级 LLM 配置' },
   nsfwGlobalTier: { scope: 'global', row: 'exempt', why: 'App 级开关' },
   readReceipts: { scope: 'global', row: 'exempt', why: 'App 级开关' },
+  chatBgDefault: { scope: 'global', row: 'exempt', why: 'K5 全局默认聊天背景' },
   notifyGranted: { scope: 'global', row: 'exempt', why: '系统权限状态' },
   notifyAsked: { scope: 'global', row: 'exempt', why: '系统权限状态' },
   nativeBubble: { scope: 'global', row: 'exempt', why: '原生特性开关' },

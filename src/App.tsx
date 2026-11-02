@@ -58,6 +58,8 @@ import { UsagePage } from './features/settings/UsagePage';
 import { PromptLabPage } from './features/settings/PromptLabPage';
 import { BatteryGuidePage } from './features/settings/BatteryGuidePage';
 import { DarkModePage } from './features/settings/DarkModePage';
+import { FontSizePage } from './features/settings/FontSizePage';
+import { ChatBgPage } from './features/settings/ChatBgPage';
 import {
   AiSettingsPage,
   NotifySettingsPage,
@@ -216,6 +218,8 @@ export function App() {
               <Route path="/settings/notify" element={<Push><NotifySettingsPage /></Push>} />
               <Route path="/settings/chat" element={<Push><ChatSettingsPage /></Push>} />
               <Route path="/settings/general" element={<Push><GeneralSettingsPage /></Push>} />
+              <Route path="/settings/font-size" element={<Push><FontSizePage /></Push>} />
+              <Route path="/settings/chat-bg" element={<Push><ChatBgPage /></Push>} />
               <Route path="/persona/:contactId" element={<Push><PersonaEditPage /></Push>} />
               <Route path="/memory/:contactId" element={<Push><MemoryPage /></Push>} />
               <Route path="/settings/worldbook" element={<Push><WorldbookPage /></Push>} />
@@ -232,6 +236,7 @@ export function App() {
               <Route path="/group-new" element={<Push><GroupCreatePage /></Push>} />
               <Route path="/group-new/ai" element={<Push><GroupGeneratePage /></Push>} />
               <Route path="/chat/:convId/info" element={<Push><ChatInfoPage /></Push>} />
+              <Route path="/chat/:convId/bg" element={<Push><ChatBgPage /></Push>} />
               <Route path="/groups" element={<Push><GroupListPage /></Push>} />
               <Route path="/new-friends" element={<Push><NewFriendsPage /></Push>} />
               <Route path="/contacts-chats-only" element={<Push><ChatOnlyListPage /></Push>} />

@@ -85,6 +85,17 @@ const MAIN_BUDGET_KB = 312;
  * numbers print on every run and belong in the commit message, so the check is
  * a reviewer reading two lines. What this budget still catches is what it was
  * for: NEW deferred code piling up unbounded.
+ *
+ * M-K5 made that rule measurable, because read literally it forbids almost every
+ * split: gzip compresses each chunk on its own, so code that leaves main loses
+ * the cross-chunk dictionary it shared there and comes back slightly bigger.
+ * Measured: the scheduler runtime split was main −18 / lazy +20 (11% overhead),
+ * the call-engine split main −3.3 / lazy +4.3 (30%), seven tiny contact pages
+ * main −2.2 / lazy +3.4 (59%). The refined rule: **a migration may grow the
+ * TOTAL by at most one third of the MAIN it removes.** The first two pass and
+ * shipped; the third failed and was reverted — a split whose overhead eats more
+ * than a third of its own saving is making the app heavier to look lighter.
+ * Same discipline as before: both numbers, and the ratio, go in the commit.
  */
 const LAZY_BUDGET_KB = 90;
 
