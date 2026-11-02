@@ -498,51 +498,6 @@
   background: var(--color-panel-bg);
   overflow: hidden;
 }
-/* The emoji page scrolls once「我的表情」pushes past the locked panel height. */
-.composer-panel__scroll {
-  height: 100%;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-}
-/* 我的表情 (M-I15): custom sticker strip under the emoji grid. */
-.sticker-strip__label {
-  padding: 2px 12px 6px;
-  font-size: var(--fs-timestamp);
-  color: var(--color-text-secondary);
-}
-.sticker-strip {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
-  padding: 0 12px 12px;
-}
-.sticker-strip__item {
-  aspect-ratio: 1;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--color-cell-bg-pressed);
-  cursor: pointer;
-}
-.sticker-strip__item img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.sticker-strip__item:active {
-  filter: brightness(0.92);
-}
-.sticker-strip__add {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26px;
-  color: var(--color-text-secondary);
-  background: none;
-  border: 1px dashed var(--color-hairline);
-}
 /* Custom sticker message (idb: ref): a mid-size image, no bubble. */
 .msg-sticker-img {
   width: 110px;
@@ -550,27 +505,6 @@
   object-fit: contain;
   display: block;
   border-radius: 6px;
-}
-.emoji-grid {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 4px;
-  padding: 12px 10px;
-}
-.emoji-grid__item {
-  aspect-ratio: 1;
-  font-size: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.emoji-grid__item:active {
-  background: var(--color-cell-bg-pressed);
-  border-radius: 6px;
-}
-.emoji-grid__del {
-  font-size: 20px;
-  color: var(--color-text-secondary);
 }
 .plus-panel {
   height: 100%;
@@ -1165,38 +1099,6 @@
   display: block;
 }
 
-/* Emoji panel game row (dice / rock-paper-scissors senders). */
-.emoji-games {
-  display: flex;
-  gap: 14px;
-  padding: 10px 14px 4px;
-}
-.emoji-games__item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  border: none;
-  background: var(--color-cell-bg);
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-size: var(--fs-small-gray);
-  color: var(--color-text-secondary);
-}
-.emoji-games__item:active {
-  background: var(--color-cell-bg-pressed);
-}
-.emoji-games__glyph {
-  font-size: 26px;
-  line-height: 1.1;
-}
-
-/* The emoji panel gained a games row — the whole panel scrolls if cramped. */
-.emoji-panel-scroll {
-  height: 100%;
-  overflow-y: auto;
-}
-
 /* Accessibility (M-I8): the two animations in this file get their switch.
    `voice-pulse` is an infinite loop on the hold-to-talk mic and `.msg-anchor-
    flash` is the one-shot tint marking a row a search jump landed on — the
@@ -1345,4 +1247,141 @@
 }
 .voice-input-sheet .composer__talkbar--held {
   background: var(--color-page-pressed);
+}
+
+/* ---- 表情面板 (M-K2)：微信 8.0 的结构 ----
+   body 内部滚动；右下角浮着退格与发送；底部 tab 栏。面板总高仍由组合器锁定。 */
+.emoji-panel {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.emoji-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 8px 12px;
+}
+/* 表情页底部留出浮动按钮的高度，最后一行不被盖住。 */
+.emoji-panel__body--emoji {
+  padding-bottom: 64px;
+}
+.emoji-panel__label {
+  padding: 12px 8px 6px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-secondary);
+}
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+}
+.emoji-grid__item {
+  height: 44px;
+  font-size: 28px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+.emoji-grid__item:active {
+  background: var(--color-panel-tile-pressed);
+}
+.emoji-panel__actions {
+  position: absolute;
+  right: 12px;
+  bottom: 56px;
+  display: flex;
+  gap: 8px;
+}
+.emoji-panel__del,
+.emoji-panel__send {
+  height: 40px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-cell-sub);
+}
+.emoji-panel__del {
+  width: 56px;
+  background: var(--color-panel-tile);
+  color: var(--color-text-primary);
+}
+.emoji-panel__del:active {
+  background: var(--color-panel-tile-pressed);
+}
+.emoji-panel__send {
+  width: 64px;
+  background: var(--color-brand);
+  color: var(--color-text-on-brand);
+}
+.emoji-panel__send:active {
+  background: var(--color-brand-pressed);
+}
+.emoji-panel__send:disabled {
+  background: var(--color-panel-tile);
+  color: var(--color-text-placeholder);
+}
+.emoji-panel__tabs {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--color-panel-tabs-bg);
+}
+.emoji-panel__tab {
+  width: 52px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-primary);
+}
+.emoji-panel__tab--on {
+  background: var(--color-panel-tile);
+}
+/* ♡ 页：收藏的表情。四列方块；＋、猜拳、骰子在最前。 */
+.emoji-fav {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding: 12px 6px;
+}
+.emoji-fav__item {
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--color-panel-tile);
+  font-size: 34px;
+  line-height: 1.1;
+}
+.emoji-fav__item:active {
+  background: var(--color-panel-tile-pressed);
+}
+.emoji-fav__item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.emoji-fav__add {
+  font-size: 30px;
+  color: var(--color-text-secondary);
+  background: none;
+  border: 1px dashed var(--color-hairline);
+}
+.emoji-fav__name {
+  font-size: var(--fs-badge);
+  color: var(--color-text-secondary);
 }

@@ -18,8 +18,52 @@
   box-shadow: 0 4px 16px var(--color-overlay);
 }
 
-.lp-menu--row {
-  flex-direction: row;
+/* 消息菜单 (M-K2)：微信 8.0 的深色网格——一行五格，图标在上、字在下，
+   一枚小三角指向手指按下的位置（--lp-arrow-x 由组件内联设置）。 */
+.lp-menu--grid {
+  display: grid;
+  padding: 4px;
+  border-radius: 8px;
+  overflow: visible;
+}
+.lp-menu--grid::after {
+  content: '';
+  position: absolute;
+  left: var(--lp-arrow-x);
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  background: var(--color-menu-bg);
+  transform: rotate(45deg);
+  border-radius: 2px;
+}
+.lp-menu--grid.lp-menu--below::after {
+  bottom: auto;
+  top: -6px;
+}
+.lp-menu--grid .lp-menu__cell {
+  position: relative;
+  z-index: 1;
+  height: 60px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 6px;
+}
+.lp-menu--grid .lp-menu__cell:active {
+  background: var(--color-on-color-fill);
+}
+.lp-menu__icon {
+  display: flex;
+  color: var(--color-text-on-brand);
+}
+.lp-menu__label {
+  font-size: var(--fs-timestamp);
+  line-height: 1;
 }
 
 /* A row menu is centered on screen the way the list menu always was; the
@@ -40,10 +84,6 @@
   text-align: center;
   white-space: nowrap;
   cursor: pointer;
-}
-
-.lp-menu--row button + button {
-  border-left: 1px solid var(--color-on-color-divider);
 }
 
 .lp-menu--column button + button {

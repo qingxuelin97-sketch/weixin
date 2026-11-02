@@ -113,6 +113,8 @@
   --color-panel-tile-pressed: var(--wx-cell-pressed);
   --color-page-dot: var(--wx-gray-3);
   --color-page-dot-active: var(--wx-gray-6);
+  /* 表情面板底部 tab 栏 (M-K2)：比面板本身浅一档（微信是白条）。 */
+  --color-panel-tabs-bg: var(--wx-input-bar);
   --color-tabbar-bg: var(--wx-input-bar);
   --color-tabbar-icon: #7a7a7a;
   --color-tabbar-icon-active: var(--wx-green);
@@ -321,6 +323,7 @@
   --color-panel-tile-pressed: var(--wxd-bg-active);
   --color-page-dot: var(--wxd-dot);
   --color-page-dot-active: var(--wxd-fg-1);
+  --color-panel-tabs-bg: var(--wxd-bg-2);
   --color-tabbar-bg: var(--wxd-bg-1);
   --color-tabbar-icon: var(--wxd-tabbar-icon);
 

@@ -209,3 +209,32 @@ export function IconCheck({ size = 20 }: IconProps) {
     </svg>
   );
 }
+
+/** 表情面板的退格键 (M-K2)：左尖的标签形 + ×。 */
+export function IconBackspace({ size = 24 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M8.6 5h10.4A2 2 0 0 1 21 7v10a2 2 0 0 1-2 2H8.6a2 2 0 0 1-1.5-.7L2.6 12l4.5-6.3A2 2 0 0 1 8.6 5z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path d="m11 9.5 5 5m0-5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** 表情面板底栏「收藏的表情」tab (M-K2)：描边爱心。 */
+export function IconHeart({ size = 24 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 20s-7.5-4.6-7.5-10A4.2 4.2 0 0 1 12 7.3 4.2 4.2 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

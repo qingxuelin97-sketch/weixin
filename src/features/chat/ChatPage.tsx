@@ -1859,6 +1859,13 @@ export function ChatPage() {
           }}
           onEmoji={(e) => setDraft((d) => d + e)}
           onEmojiDelete={() => setDraft((d) => Array.from(d).slice(0, -1).join(''))}
+          // 表情面板右下角的「发送」(M-K2)：选完表情直接发，不必先把键盘叫回来。
+          onSend={() =>
+            void send().catch((err) =>
+              showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+            )
+          }
+          canSend={Boolean(draft.trim())}
           onGame={(kind) => void sendGame(kind).catch((err) => logError('chat.game', err))}
           stickers={customStickers}
           onSticker={(ref) =>
