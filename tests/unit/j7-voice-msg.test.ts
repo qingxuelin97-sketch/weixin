@@ -64,6 +64,12 @@ describe('接线扫描（写了没接线 = 没做）', () => {
     const src = read('src/features/chat/ChatPage.tsx');
     expect(src).toContain('onClip=');
     expect(src).toContain('sendVoiceClip');
+    // M-K11：输入条住进了 Composer——页面把 onClip 交给它，它再交给两个
+    // VoiceInputButton（输入条上的话筒与语音模式的整条「按住 说话」）。
+    const composer = read('src/features/chat/Composer.tsx');
+    const buttons = composer.split('<VoiceInputButton').slice(1).map((seg) => seg.slice(0, seg.indexOf('/>')));
+    expect(buttons.length, 'Composer 里应有两个 VoiceInputButton').toBe(2);
+    for (const b of buttons) expect(b, '有一个话筒没接 onClip，录完的语音发不出去').toContain('onClip={onClip}');
     expect(src).toContain('saveVoiceClip');
     // 发完必须让她接话——W2「发图不回复」的教训不许在语音上重演。
     // （粗切 2000 字符足够罩住整个函数体；'};' 会被内部对象字面量截胡。）

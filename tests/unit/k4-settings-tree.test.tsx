@@ -74,7 +74,8 @@ describe('回车键发送消息', () => {
     );
     fireEvent.click(screen.getByText('回车键发送消息'));
     expect(enterToSend()).toBe(false);
-    const chat = read('src/features/chat/ChatPage.tsx');
+    // M-K11：输入条住进了 Composer。
+    const chat = read('src/features/chat/Composer.tsx');
     expect(chat).toMatch(/e\.key === 'Enter' && !e\.shiftKey && enterToSend\(\)/);
   });
 });

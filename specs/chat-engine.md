@@ -45,3 +45,27 @@
 ## 已知坑
 - 兜底话术也会走打字延迟（~7s），是有意为之（像"她在打字"），不是卡顿。
 - 群聊走 `src/ai/group-engine.ts`（见 `specs/group-director.md`），不走本文件的单聊路径。
+
+## M-K11：ChatPage 拆成三块
+
+ChatPage 长到 1,996 行，「她怎么回」的编排在里面复制了五份（发送 / 重试 / 发图后 / 发语音后 /
+游戏位置名片文件之后），每份都自己读档位、拼钩子、按会话类型分流。拆成：
+
+| 块 | 文件 | 管什么 |
+|---|---|---|
+| 线程 | `features/chat/ChatThread.tsx` | 时间条、钉底与事后长高的重新贴底、加载更早历史、`?at=` 锚定与闪烁、多选外壳、「正在输入」气泡。每条消息画成什么样由页面的 `renderMessage` 给出 |
+| 发送管线 | `features/chat/send-pipeline.ts` | `sendText` / `replyToNewest` / `regenerate` / `stickerRound` / `memExtractOnLeave` / `translateMessage` / `micTierFor`。状态一律在调用时从 store 现读 |
+| 组合器 | `features/chat/Composer.tsx` | 输入条、表情与「＋」面板、三个隐藏选择器。三态状态机仍是 `useComposerPanel`（实例由页面持有——面板高度同时决定线程区留白） |
+
+页面本身留下的是**页面状态**：会话横幅、置顶、公告、剧情条、长按菜单、各种 Sheet、`onAction`
+的分支（导航与开面板）。
+
+- **发送管线只许懒加载**：经 `app/ai-runtime.ts` 进来，与调度运行时同一个动态入口、同一个块；进聊天页
+  时预取。主包 312.0 → 305.3KB。store 删联系人时中止回复改从 `ai/inflight` 拿（那一个静态 import
+  曾把整棵引擎树钉在主包里）。
+- **拆分不改一像素**：本地同一 Chromium 下，拆分前后单聊 / 群聊 / ＋面板 / 表情面板 / 语音模式 /
+  打了字的输入条六个状态逐像素一致；golden 门禁再复核一次。
+- 跟着代码搬家的守卫：引用在两种会话里都带上（chat-ops W1，现在一半断言页面、一半断言管线）、
+  发图/语音后请求回复（W2）、斗图走队列（handlers、j2）、群聊离开时带 group 标记（j2）、
+  回车发送（k4）、两个话筒都接了 onClip（j7a）。
+

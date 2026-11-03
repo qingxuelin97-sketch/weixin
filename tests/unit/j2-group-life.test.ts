@@ -190,8 +190,12 @@ describe('wiring (写了没接线 = 没做)', () => {
   });
 
   it('the group sticker battle exists in the GROUP branch, not just the single one', () => {
-    const src = read('src/features/chat/ChatPage.tsx');
-    const groupBranch = src.slice(src.indexOf("conv.type === 'group'"));
+    // M-K11: the battle lives in the send pipeline's stickerRound now.
+    const src = read('src/features/chat/send-pipeline.ts');
+    const fn = src.slice(src.indexOf('export async function stickerRound'));
+    const round = fn.slice(0, fn.indexOf('\n}\n'));
+    const groupBranch = round.slice(round.indexOf("conv.type === 'group'"));
+    expect(round.indexOf("conv.type === 'group'"), 'stickerRound 没有群聊分支').toBeGreaterThan(-1);
     expect(groupBranch).toContain('battleReply(');
     expect(groupBranch).toContain("kind: 'sticker_reply'");
   });
@@ -201,8 +205,10 @@ describe('wiring (写了没接线 = 没做)', () => {
       '../../src/ai/memory-service'
     );
     expect(MEM_EXTRACT_MIN_NEW_GROUP).toBeGreaterThan(MEM_EXTRACT_MIN_NEW);
-    // ChatPage's group unmount passes the group flag — the calibration is wired.
-    expect(read('src/features/chat/ChatPage.tsx')).toContain('{ group: true }');
+    // Leaving a group chat passes the group flag — the calibration is wired.
+    // M-K11: ChatPage's unmount calls the pipeline's memExtractOnLeave.
+    expect(read('src/features/chat/ChatPage.tsx')).toContain('.memExtractOnLeave(convId)');
+    expect(read('src/features/chat/send-pipeline.ts')).toContain('{ group: true }');
   });
 
   it('cliqueLineFor batches its stance reads (no await inside the pair loops)', () => {

@@ -56,7 +56,10 @@ describe('没有死格', () => {
   it('onAction 里那条「暂未开放」兜底不许回来', () => {
     const start = src.indexOf('onAction={(key) =>');
     expect(start).toBeGreaterThan(-1);
-    const body = src.slice(start, src.indexOf('onEmoji=', start));
+    // M-K11：onAction 现在是页面交给 <Composer> 的属性，紧跟着的是 onGame。
+    const end = src.indexOf('onGame=', start);
+    expect(end, '找不到 onAction 的结尾').toBeGreaterThan(start);
+    const body = src.slice(start, end);
     expect(body).not.toContain('暂未开放');
   });
 });

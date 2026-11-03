@@ -70,7 +70,20 @@ import { join } from 'node:path';
  * same reason as last time: keeping the slack would hand the next 40KB of
  * cold-start weight a free pass.
  */
-const MAIN_BUDGET_KB = 312;
+/*
+ * M-K11 took main from 312.0 to 305.3 by moving the chat send pipeline (the
+ * single + group engines, memory extraction, translation, sticker battles —
+ * the whole engine tree) behind the same dynamic entry the scheduler runtime
+ * already used (`src/app/ai-runtime.ts`). Two things had pinned it in main: a
+ * static `abortConversation` import in the store (now `ai/inflight`) and
+ * ChatPage's own imports. A first cut with two separate `import()`s measured
+ * 41% overhead (three small chunks, no shared dictionary) and was redone as
+ * one entry: main −6.68 / lazy +7.63 / total +0.95 = 14%, under the one-third
+ * line. Re-tightened 312 → 308 rather than to the bone: K8/K9/K12 are UI work
+ * on golden-gated pages that must stay in main, and the ratchet is for step
+ * changes, not for making every screen tweak find a saving first.
+ */
+const MAIN_BUDGET_KB = 308;
 /**
  * Everything a dynamic import fetches later. Looser: none of it blocks paint.
  *
@@ -97,7 +110,12 @@ const MAIN_BUDGET_KB = 312;
  * than a third of its own saving is making the app heavier to look lighter.
  * Same discipline as before: both numbers, and the ratio, go in the commit.
  */
-const LAZY_BUDGET_KB = 90;
+/*
+ * Raised 90 → 96 in M-K11 for exactly the reason the M-J10 note gives: the
+ * engine tree moved here from main (main −6.68, lazy +7.63, total +0.95), and
+ * a lazy budget that goes red on a migration punishes the fix.
+ */
+const LAZY_BUDGET_KB = 96;
 
 const dir = 'dist/assets';
 let entries;

@@ -14,10 +14,13 @@
 import { useEffect } from 'react';
 import { useForegroundLifecycle } from './useForegroundLifecycle';
 
-type RuntimeCore = typeof import('./useSchedulerRuntime');
+type RuntimeCore = typeof import('./ai-runtime');
 let corePromise: Promise<RuntimeCore> | null = null;
-/** 同一个 promise 复用：StrictMode 的双跑、前后台回调都只触发一次加载。 */
-const loadCore = (): Promise<RuntimeCore> => (corePromise ??= import('./useSchedulerRuntime'));
+/**
+ * 同一个 promise 复用：StrictMode 的双跑、前后台回调都只触发一次加载。
+ * 经 ./ai-runtime 进来（M-K11）：聊天页的发送管线走同一个动态入口，同一个块。
+ */
+const loadCore = (): Promise<RuntimeCore> => (corePromise ??= import('./ai-runtime'));
 
 export function useSchedulerBoot(enabled: boolean): void {
   useEffect(() => {

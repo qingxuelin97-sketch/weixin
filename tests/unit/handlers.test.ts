@@ -468,9 +468,12 @@ describe('sticker_reply delivers the seeded comeback', () => {
 });
 
 describe('斗图 no longer runs on its own timer (铁律 5)', () => {
-  it('ChatPage enqueues the comeback instead of setTimeout-ing it', () => {
-    const page = readFileSync(resolve(__dirname, '../../src/features/chat/ChatPage.tsx'), 'utf8');
-    const send = page.slice(page.indexOf('const sendSticker'), page.indexOf('相册发图'));
+  it('the chat send pipeline enqueues the comeback instead of setTimeout-ing it', () => {
+    // M-K11: the battle moved out of ChatPage into the lazy send pipeline.
+    const pipe = readFileSync(resolve(__dirname, '../../src/features/chat/send-pipeline.ts'), 'utf8');
+    const p0 = pipe.slice(pipe.indexOf('export async function stickerRound'));
+    const send = p0.slice(0, p0.indexOf('\n}\n'));
+    expect(send.length, '找不到 stickerRound').toBeGreaterThan(100);
     // The CALL form, so the comment explaining the ban does not trip it.
     expect(
       /setTimeout\s*\(/.test(send),

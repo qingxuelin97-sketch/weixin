@@ -32,20 +32,35 @@ const msg = (over: Partial<MessageVM>): MessageVM =>
   }) as MessageVM;
 
 describe('W1 · a quoted reply survives, in both chat types', () => {
-  it('the quote is built BEFORE the group branch returns', () => {
-    const page = src('src/features/chat/ChatPage.tsx');
-    const send = page.slice(page.indexOf('const send = async'));
-    const quoteBuilt = send.indexOf('const quoteMeta =');
-    const groupReturn = send.indexOf("if (conv.type === 'group')");
-    expect(quoteBuilt).toBeGreaterThan(-1);
+  it('the quote is built — and the chip cleared — before anything branches on chat type', () => {
     // The original bug exactly: the group branch returned at line 256 while
     // `quoteMeta` was constructed at 276, so quoting in a group dropped the
     // quote AND never ran `setQuote(null)` — the chip then stayed wedged in
     // the composer for the rest of the session.
+    //
+    // M-K11 moved both branches into the lazy send pipeline, so the guard
+    // follows the code to both halves: the PAGE builds the quote and clears
+    // the chip before handing off (and no longer branches at all), and the
+    // PIPELINE passes the quote into the group AND the single call.
+    const page = src('src/features/chat/ChatPage.tsx');
+    const fn = page.slice(page.indexOf('const send = async'));
+    const send = fn.slice(0, fn.indexOf('\n  };'));
+    const quoteBuilt = send.indexOf('const quoteMeta =');
+    const chipCleared = send.indexOf('setQuote(null)');
+    const handoff = send.indexOf('.sendText(convId, text, quoteMeta)');
+    expect(quoteBuilt).toBeGreaterThan(-1);
+    expect(handoff, '发送没有交给管线的 sendText').toBeGreaterThan(-1);
     expect(
-      quoteBuilt < groupReturn,
-      'quoteMeta 必须在群聊分支 return 之前构造，否则群里引用会被丢弃且引用条永久卡住',
+      quoteBuilt < handoff && chipCleared > -1 && chipCleared < handoff,
+      'quoteMeta 必须在交给管线之前构造、引用条在那之前清掉，否则群里引用会被丢弃且引用条永久卡住',
     ).toBe(true);
+    expect(send, '页面不该再自己按会话类型分支——两个分支都在管线里').not.toContain("conv.type === 'group'");
+
+    const pipe = src('src/features/chat/send-pipeline.ts');
+    const p0 = pipe.slice(pipe.indexOf('export async function sendText'));
+    const sendText = p0.slice(0, p0.indexOf('\n}\n'));
+    expect(sendText, '群聊分支丢了引用').toMatch(/sendGroupMessage\([^;]*quoteMeta\)/);
+    expect(sendText, '单聊分支丢了引用').toMatch(/sendUserMessage\([^;]*quoteMeta\)/);
   });
 
   it('the model can actually see what was quoted', () => {
@@ -82,9 +97,15 @@ describe('W2 · sending a photo asks for a reply', () => {
     ).toBe(true);
     const helper = page.slice(page.indexOf('const requestReplyToLatest ='));
     const helperBody = helper.slice(0, helper.indexOf('\n  };'));
+    // M-K11: the helper hands off to the lazy pipeline's replyToNewest, and
+    // THAT is what must reach both engines.
+    expect(helperBody, 'requestReplyToLatest 没有交给管线').toContain('.replyToNewest(convId)');
+    const pipe = src('src/features/chat/send-pipeline.ts');
+    const p0 = pipe.slice(pipe.indexOf('export async function replyToNewest'));
+    const tail = p0.slice(0, p0.indexOf('\n}\n'));
     expect(
-      helperBody.includes('replyToLatest') && helperBody.includes('replyToLatestInGroup'),
-      'requestReplyToLatest 必须真的通到单聊/群聊引擎，否则抽出来的是个空壳',
+      tail.includes('replyToLatest(') && tail.includes('replyToLatestInGroup('),
+      'replyToNewest 必须真的通到单聊/群聊引擎，否则抽出来的是个空壳',
     ).toBe(true);
   });
 

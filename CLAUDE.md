@@ -111,9 +111,15 @@ src/
 - **前台生命周期**（`src/app/useForegroundLifecycle.ts`）：回前台 = 回填 → 撤销并重排通知。
   没有它，`runBackfill` 只在冷启动跑一次——而手机上「切后台→回前台」才是常态。
 - **调度运行时是懒加载的**（M-K10）：App 只挂 `src/app/useSchedulerBoot.ts` 薄壳，hydrate 之后才
-  `import()` `useSchedulerRuntime.ts` 并调 `startSchedulerRuntime()`（先注册全部 handler 再启动排空）。
+  `import()` 并调 `startSchedulerRuntime()`（先注册全部 handler 再启动排空）。
   新 handler 照旧注册在 useSchedulerRuntime.ts——守卫读的就是它；但**不许**在 App 或任何首屏模块里
   静态 import 它，否则 25 个 handler 背后约 200KB 源码重回冷启动（守卫：`k10-startup.test.ts`）。
+- **引擎树只有一个动态入口**（M-K11）：`src/app/ai-runtime.ts` = 调度运行时 + 聊天页发送管线
+  （`features/chat/send-pipeline.ts`，导出为 `chat`）。调度器薄壳与 ChatPage 都只
+  `import('…/ai-runtime')`——分两个入口时 Rollup 会切出三个小块、开销 41%，一个入口是 14%。
+  所以：要碰引擎（单聊 engine / 群聊导演 / 记忆 / 翻译 / 斗图）的 UI 路径，写进发送管线，
+  **不许**在页面或 store 里静态 import `ai/engine`（store 中止回复用 `ai/inflight`）。
+  守卫：`k11-chat-split.test.ts`（静态导入方台账 + 管线路由的行为测试）。
 - **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
   不调 LLM、不碰存储、不读挂钟。它只产出「何时该发生什么」，由 `backfill.ts` 物化成 fireAt
   在过去的 scheduled_actions，交给同一个执行器排空。改限额或窗口规则要同步 `specs/backfill.md`。

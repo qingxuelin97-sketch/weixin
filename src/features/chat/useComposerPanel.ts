@@ -20,7 +20,7 @@ export type ComposerMode = 'none' | 'keyboard' | 'emoji' | 'plus';
 const DEFAULT_PANEL_HEIGHT = 280; // fallback until a real keyboard height is measured
 const PANEL_HEIGHT_KEY = 'composer.lastKeyboardHeight';
 
-interface ComposerState {
+export interface ComposerState {
   mode: ComposerMode;
   /** Space to reserve below the input bar (keyboard or panel height), in px. */
   bottomInset: number;

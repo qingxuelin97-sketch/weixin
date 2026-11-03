@@ -1,13 +1,7 @@
 import type { Mentionable } from '../../lib/mention';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  IconBack,
-  IconMore,
-  IconVoiceCircle,
-  IconEmoji,
-  IconPlus,
-} from '../../components/icons';
+import { IconBack, IconMore } from '../../components/icons';
 import { VoiceInputButton } from './VoiceInput';
 import { saveVoiceClip, voiceClipBlob } from '../../lib/voice';
 import { clearConversationHistory } from '../../native/bridge';
@@ -15,58 +9,55 @@ import { transcribe, isAsrReady } from '../../llm/asr';
 import { Avatar } from '../../components/Avatar';
 import { Badge } from '../../components/Badge';
 import { MessageBubble } from './MessageBubble';
+import { ChatThread } from './ChatThread';
 import { ImageViewer } from '../../components/ImageViewer';
 import { Sheet } from '../../components/Sheet';
 import { contactCardPayload, fileExt } from '../../ai/bubble-materialize';
-import { enterToSend } from '../../lib/chat-prefs';
 import { chatBgStyle, parseChatBg, resolveChatBg, type ChatBg } from '../../lib/chat-bg';
 import { LongPressMenu, type LongPressMenuItem } from '../../components/LongPressMenu';
 import { useDismissable } from '../../app/useDismissable';
 import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
 import { useMedia } from '../../components/useMedia';
-import { recordUserSticker, agentStickerPool } from '../../ai/sticker-taste';
-import { battleReply, stickerStreak } from '../../ai/sticker-battle';
+import { recordUserSticker } from '../../ai/sticker-taste';
 import { totalUnread as totalUnreadOf } from '../../lib/unread';
 import { enqueue } from '../../ai/scheduler';
 import { patLine, shouldPatBack, patBackDelayMs, PAT_SUFFIX_KEY } from '../../ai/pat';
-import { translateText } from '../../ai/translate';
-import { tierOfConversation } from '../../lib/nsfw-tier';
 import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { logError } from '../../lib/errlog';
-import { ComposerPanels } from './ComposerPanels';
+import { Composer } from './Composer';
 import { useComposerPanel } from './useComposerPanel';
 import { storyRunning, applyChoice } from '../../ai/story-service';
 import type { StorySaveRow } from '../../ai/story-gm';
 import { useAppStore } from '../../store/appStore';
 import { showPrompt, showConfirm, showActionSheet } from '../../components/dialog';
-import { regenerateLastTurn } from '../../ai/engine';
 import { useGuard } from '../../app/useGuard';
-import { chatTimestamp, shouldShowTimeBar } from '../../lib/time';
 import { hasUsableProvider } from '../../llm/service';
-import { sendUserMessage, replyToLatest, effectiveTier } from '../../ai/engine';
-import { maybeScheduleMemExtract } from '../../ai/memory-service';
-import { sendGroupMessage, replyToLatestInGroup } from '../../ai/group-engine';
 import { acceptTransfer } from '../../ai/money-service';
 import { payBill } from '../../ai/bill-service';
 import { BillSheet } from './BillSheet';
-import { fenToYuan, seededRng } from '../../lib/money';
-import type { GroupMember } from '../../ai/director';
+import { fenToYuan } from '../../lib/money';
 import { repo } from '../../db/repo';
 import { renderMessageBody } from '../../ai/render-msg';
 import { suggestGroupHref } from '../../ai/agent-invite';
 import { canRecall } from '../../lib/recall';
 import { gameSeed, rollDice, rollRps, type GameKind } from '../../lib/game';
-import type { ContactVM, MessageVM, NsfwTierVM } from '../../data/types';
+import type { ContactVM, MessageVM } from '../../data/types';
 import { typingRhythm } from '../../lib/typing-rhythm';
 import './chat.css';
 import '../settings/settings.css';
-import { useNow } from '../../lib/useNow';
 
 /**
  * Message types the 收藏 menu item is offered for — exactly the ones
  * `FavoriteBody` (features/favorites/FavoritesPage.tsx) knows how to draw.
  * A guard test keeps the two in step; see tests/unit/i18-contacts-gaps.test.ts.
  */
+/**
+ * 发送管线 (M-K11)：一切要碰引擎的路径都在 ./send-pipeline，**只许这样懒加载**。
+ * 静态导入会把整棵引擎树拖回冷启动主包（守卫：k11-chat-split.test.ts）。进聊天页
+ * 时预取，所以第一次发送时它早已就绪；模块只会被加载一次。
+ */
+const pipeline = () => import('../../app/ai-runtime').then((m) => m.chat);
+
 const FAVORITABLE: readonly MessageVM['type'][] = [
   'text',
   'sticker',
@@ -82,7 +73,6 @@ const FAVORITABLE: readonly MessageVM['type'][] = [
 
 export function ChatPage() {
   const guard = useGuard();
-  const NOW = useNow();
   const { convId = '' } = useParams();
   const navigate = useNavigate();
   const conv = useAppStore((s) => s.conversationById(convId));
@@ -91,7 +81,6 @@ export function ChatPage() {
   const personaFor = useAppStore((s) => s.personaFor);
   const appendMessage = useAppStore((s) => s.appendMessage);
   const updateMessage = useAppStore((s) => s.updateMessage);
-  const setTyping = useAppStore((s) => s.setTyping);
   const setActiveConv = useAppStore((s) => s.setActiveConv);
   const patchConversation = useAppStore((s) => s.patchConversation);
   const showToast = useAppStore((s) => s.showToast);
@@ -108,6 +97,11 @@ export function ChatPage() {
       /* 通知栏的历史清不掉不该影响聊天 */
     });
   }, [convId]);
+
+  // 预取发送管线 (M-K11)：页面先画出来，引擎随后到；用户打完第一句时它早就在了。
+  useEffect(() => {
+    void pipeline().catch((e) => logError('chat.pipeline', e));
+  }, []);
 
   // duration comes from the seeded pure function.
   const [typingPaused, setTypingPaused] = useState(false);
@@ -166,7 +160,6 @@ export function ChatPage() {
   const [draft, setDraft] = useState('');
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Presence: entering clears unread + mentions; leaving parks unsent text as
   // the conversation's draft (route param changes don't remount this component).
@@ -206,12 +199,8 @@ export function ChatPage() {
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-      const c = useAppStore.getState().conversationById(convId);
-      const permit = c?.type === 'single' && c.peerId
-        ? (useAppStore.getState().personaFor(c.peerId)?.nsfwPermit ?? false)
-        : false;
-      if (alive) setMicTier(effectiveTier(globalTier, permit));
+      const tier = await (await pipeline()).micTierFor(convId);
+      if (alive) setMicTier(tier);
     })().catch(() => {});
     return () => {
       alive = false;
@@ -312,19 +301,13 @@ export function ChatPage() {
   const [cardSheetOpen, setCardSheetOpen] = useState(false);
 
   // Leaving the chat = the conversation went quiet → queue ONE memory
-  // extraction if enough new material accumulated (M-D2 loop trigger).
+  // extraction if enough new material accumulated (M-D2 loop trigger; groups
+  // too, M-E4 — see memExtractOnLeave in the pipeline).
   useEffect(() => {
     return () => {
-      const c = useAppStore.getState().conversationById(convId);
-      if (c?.type === 'single' && c.peerId) {
-        void maybeScheduleMemExtract(convId, c.peerId, Date.now()).catch(() => {});
-      } else if (c?.type === 'group' && !c.isHidden) {
-        // Groups remember too (M-E4). The subject is the CONVERSATION, not a
-        // person: "群里说下周要一起吃饭" belongs to the group, and every member
-        // should be able to refer to it. Without this the group had no memory at
-        // all — every round started from the last 30 messages and nothing else.
-        void maybeScheduleMemExtract(convId, convId, Date.now(), { group: true }).catch(() => {});
-      }
+      void pipeline()
+        .then((p) => p.memExtractOnLeave(convId))
+        .catch(() => {});
     };
   }, [convId]);
   // The message menu's scrim, dismiss-stack registration and "any further
@@ -345,20 +328,8 @@ export function ChatPage() {
     const c = useAppStore.getState().conversationById(convId);
     if (!c || msg.status !== 'failed') return;
     await updateMessage({ ...msg, status: 'sent' });
-    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
     try {
-      if (c.type === 'group') {
-        const members: GroupMember[] = (c.memberIds ?? []).map((id) => {
-          const ct = contactById(id);
-          return { contactId: id, name: ct?.remark ?? ct?.name ?? id, persona: personaFor(id) };
-        });
-        await replyToLatestInGroup(c, members, globalTier, hooks, contactById);
-        return;
-      }
-      const peer = c.peerId ? contactById(c.peerId) : undefined;
-      const persona = c.peerId ? personaFor(c.peerId) : undefined;
-      if (peer && persona) await replyToLatest(convId, peer, persona, globalTier, hooks);
+      await (await pipeline()).replyToNewest(convId);
     } catch (e) {
       logError('chat.retry', e);
     }
@@ -382,48 +353,9 @@ export function ChatPage() {
    */
   const regenerate = async (steer?: string) => {
     setMenu(null);
-    const c = useAppStore.getState().conversationById(convId);
-    const peerId = c?.peerId;
-    if (!peerId) return;
-    const peerC = contactById(peerId);
-    const persona = useAppStore.getState().personaFor(peerId);
-    if (!peerC || !persona) return;
-    const tier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-    await regenerateLastTurn(
-      convId,
-      peerC,
-      persona,
-      tier,
-      {
-        appendMessage,
-        updateMessage,
-        setTyping,
-        now: () => Date.now(),
-        deleteMessage,
-      },
-      steer,
-    );
+    await (await pipeline()).regenerate(convId, steer);
   };
 
-  // Interleave time bars (WeChat shows a centered time when the gap > 5 min).
-  const rows = useMemo(() => withTimeBars(messages), [messages]);
-
-  // Photo messages resolve through the lazy media registry (M-G1): ask for the
-  // blobs this transcript actually shows, and re-render when they land.
-  // Custom stickers (M-I15) are `idb:` refs too, so they prime the same way.
-  useMedia(
-    useMemo(
-      () =>
-        messages
-          .filter(
-            (m) =>
-              m.type === 'image' ||
-              (m.type === 'sticker' && m.content?.startsWith('idb:')),
-          )
-          .map((m) => m.content),
-      [messages],
-    ),
-  );
 
   // 我的表情 (M-I15): the composer strip's custom stickers. Primed only while
   // the emoji panel is open — the strip is the one place they all draw at once.
@@ -436,127 +368,11 @@ export function ChatPage() {
     ),
   );
 
-  // Keep the view pinned to the newest message as bubbles arrive — but not
-  // when the growth came from loading OLDER messages, which prepends.
-  const pinToBottom = useRef(true);
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!pinToBottom.current) {
-      pinToBottom.current = true;
-      return;
-    }
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [rows.length, isTyping, composer.bottomInset]);
-
-  /**
-   * Re-anchor when the CONTENT grows without the message count changing.
-   *
-   * The effect above fires on `rows.length`, which misses everything that
-   * changes height after the fact: a photo finishing its lazy load, an emoji
-   * falling back to a font that arrives late, a bubble rewrapping. Each of
-   * those pushes the newest message below the fold and leaves it there — the
-   * view was anchored to a height that no longer exists.
-   *
-   * Only re-anchors when the reader is already ~at the bottom, so it can never
-   * yank someone who has scrolled up to read history.
-   */
-  useEffect(() => {
-    const el = scrollRef.current;
-    const inner = listRef.current;
-    if (!el || !inner || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => {
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight;
-    });
-    ro.observe(inner);
-    return () => ro.disconnect();
-  }, [convId]);
-
-  // Older history, on demand (M-G2). Hydration holds a flat 200 per
-  // conversation and everything before that was unreachable — in the database,
-  // invisible to both scrolling and search.
-  const loadOlderMessages = useAppStore((s) => s.loadOlderMessages);
-  const openConversation = useAppStore((s) => s.openConversation);
-
-  // Threads are fetched on open, not at startup (M-G2). `threadReady` is a
-  // real readiness signal rather than test scaffolding: the page now paints
-  // before its messages exist, so anything that needs to observe the settled
-  // thread — the golden screenshots, and a future scroll-restore — has to be
-  // able to tell "still loading" from "loaded and empty".
-  const threadReady = useAppStore((s) => s.hasThread(convId));
-  useEffect(() => {
-    void openConversation(convId).catch((e) => logError('chat.open', e));
-  }, [convId, openConversation]);
-  const [atTop, setAtTop] = useState(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const loadOlder = async () => {
-    const el = scrollRef.current;
-    if (!el || loadingOlder || atTop) return;
-    setLoadingOlder(true);
-    // Anchor on the distance from the BOTTOM: prepending changes scrollHeight,
-    // and restoring scrollTop directly would jump the reader to a random spot.
-    const fromBottom = el.scrollHeight - el.scrollTop;
-    pinToBottom.current = false;
-    try {
-      const n = await loadOlderMessages(convId);
-      if (n === 0) setAtTop(true);
-      requestAnimationFrame(() => {
-        const cur = scrollRef.current;
-        if (cur) cur.scrollTop = cur.scrollHeight - fromBottom;
-      });
-    } finally {
-      setLoadingOlder(false);
-    }
-  };
-
-  // 搜索命中锚定 (M-I6): `?at=<msgId>` — a search hit lands here, pages history
-  // in until the target row exists, scrolls it to center and flashes it once.
-  // Keyed so re-renders don't re-run the jump, but a NEW hit in the same
-  // conversation does.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const atParam = searchParams.get('at');
-  // Nonce (M-J0): a quote tap on the SAME message twice must re-anchor, so the
-  // jump key includes it — without it the anchoredKey guard eats the second tap.
-  const atNonce = searchParams.get('n') ?? '';
-  const [flashId, setFlashId] = useState<number | null>(null);
-  const anchoredKey = useRef<string | null>(null);
-  useEffect(() => {
-    const at = atParam ? Number(atParam) : NaN;
-    if (!Number.isFinite(at) || !threadReady) return;
-    const key = `${convId}:${at}:${atNonce}`;
-    if (anchoredKey.current === key) return;
-    anchoredKey.current = key;
-    let alive = true;
-    void (async () => {
-      // Page older history in until the target is present. Two stop rules
-      // besides success: the top of history, and an oldest-loaded row already
-      // older than the target — that means the message was deleted, and paging
-      // further would walk the whole thread for nothing.
-      for (let guard = 0; guard < 40; guard++) {
-        const list = useAppStore.getState().messagesFor(convId);
-        if (list.some((m) => m.id === at)) break;
-        if (list.length && list[0].id <= at) return;
-        pinToBottom.current = false;
-        const n = await loadOlderMessages(convId, 200);
-        if (!alive || n === 0) return;
-      }
-      if (!alive) return;
-      pinToBottom.current = false;
-      requestAnimationFrame(() => {
-        const el = scrollRef.current?.querySelector(`[data-msg-id="${at}"]`);
-        if (el) {
-          (el as HTMLElement).scrollIntoView({ block: 'center' });
-          setFlashId(at);
-        }
-      });
-    })().catch((e) => logError('chat.anchor', e));
-    return () => {
-      alive = false;
-    };
-  }, [convId, atParam, atNonce, threadReady, loadOlderMessages]);
 
   // Quote tap (M-J0): jump to the quoted message through the SAME ?at= anchor
-  // path the search hits use — one jump implementation, not two.
+  // path the search hits use — one jump implementation, not two. The anchoring
+  // itself lives in <ChatThread/> (M-K11), which reads the same params.
+  const [, setSearchParams] = useSearchParams();
   const onQuoteTap = (quotedId: number) => {
     setSearchParams({ at: String(quotedId), n: String(Date.now()) }, { replace: true });
   };
@@ -575,7 +391,7 @@ export function ChatPage() {
     return () => {
       alive = false;
     };
-  }, [convId, rows.length]);
+  }, [convId, messages.length]);
 
   // 剧情抉择 (V4): the run is parked on a player decision — the bottom option
   // bar is how it moves again. The tap lands the vars, jumps the graph and
@@ -599,49 +415,24 @@ export function ChatPage() {
     const text = draft.trim();
     if (!text || !conv) return;
     setDraft('');
-    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
 
-    // Built BEFORE the group branch. It used to live after it, so replying with
+    // Built, and the chip cleared, BEFORE anything branches on the chat type.
+    // It used to live after the group branch's early return, so replying with
     // a quote in a group silently dropped the quote AND never ran
-    // `setQuote(null)` — the quote chip then stayed wedged in the composer for
-    // the rest of the session. The quote menu item has no `isGroup` guard, so
-    // this was a fully reachable path, just a broken one.
+    // `setQuote(null)` — the chip then stayed wedged in the composer for the
+    // rest of the session. Both branches now live in the pipeline's sendText,
+    // which passes the quote on in each (chat-ops W1).
     // quoteId rides along (M-J0): the schema reserved reply_to_id since M1 but
     // nothing ever wrote it — the collected msgId evaporated right here, which
     // is why quote bubbles could never jump back to their source.
     const quoteMeta = quote ? { quote: quote.text, quoteId: quote.msgId } : undefined;
     setQuote(null);
 
-    // Group: the director stages a cast; single: one persona replies.
-    if (conv.type === 'group') {
-      const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
-        const c = contactById(id);
-        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
-      });
-      await sendGroupMessage(conv, text, members, globalTier, hooks, contactById, quoteMeta);
-      return;
-    }
-
-    const peerId = conv.peerId;
-    const peer = peerId ? contactById(peerId) : undefined;
-    const persona = peerId ? personaFor(peerId) : undefined;
-
-    if (!peer || !persona) {
-      // No persona card configured yet — record the user's message rather than drop it.
-      await appendMessage({
-        convId,
-        senderId: 'self',
-        type: 'text',
-        content: text,
-        status: 'sent',
-        createdAt: Date.now(),
-      });
-      return;
-    }
-
-    await sendUserMessage(convId, text, peer, persona, globalTier, hooks, quoteMeta);
+    await (await pipeline()).sendText(convId, text, quoteMeta);
   };
+  /** 输入条、回车、表情面板的「发送」共用：失败一律以 toast 说明，不静默吞掉。 */
+  const sendWithToast = () =>
+    void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`));
 
   /**
    * Ask the AI side to react to whatever is now newest in the thread —
@@ -649,21 +440,7 @@ export function ChatPage() {
    * games, locations). One round for the whole batch.
    */
   const askReply = async () => {
-    const c = useAppStore.getState().conversationById(convId);
-    if (!c) return;
-    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
-    if (c.type === 'group') {
-      const members: GroupMember[] = (c.memberIds ?? []).map((id) => {
-        const ct = contactById(id);
-        return { contactId: id, name: ct?.remark ?? ct?.name ?? id, persona: personaFor(id) };
-      });
-      await replyToLatestInGroup(c, members, globalTier, hooks, contactById);
-      return;
-    }
-    const peer = c.peerId ? contactById(c.peerId) : undefined;
-    const persona = c.peerId ? personaFor(c.peerId) : undefined;
-    if (peer && persona) await replyToLatest(convId, peer, persona, globalTier, hooks);
+    await (await pipeline()).replyToNewest(convId);
   };
 
   /**
@@ -805,91 +582,9 @@ export function ChatPage() {
     });
     // Taste ledger: only SENT stickers are collectible. Fire-and-forget.
     void recordUserSticker(ref).catch(() => {});
-
-    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
-
-    if (conv.type === 'single' && conv.peerId) {
-      const peer = contactById(conv.peerId);
-      const persona = personaFor(conv.peerId);
-      if (!peer || !persona) return;
-      const tail = useAppStore.getState().messagesFor(convId);
-      const streak = stickerStreak(tail.map((m) => m.type));
-      const pool = await agentStickerPool(conv.peerId).catch(() => [] as string[]);
-      // 表情使用率 (M-I18) rides in from the persona: 高冷的人设 barely joins a
-      // sticker war, 话痨爱斗图的 almost always does.
-      const reply = battleReply(
-        { seed: `${convId}:${saved.id}`, streak, rate: persona.stickerRate },
-        pool,
-        ref,
-      );
-      if (reply) {
-        // A wordless round: the sticker IS the reply. Deliberately NOT routed
-        // through the engine — no prompt, no tokens, no typing indicator; just
-        // the beat of someone scrolling for the right card.
-        //
-        // The BEAT rides scheduled_actions (铁律 5), not a setTimeout. This
-        // produces a real message, so a bare timer was a second time-evolution
-        // path with the usual consequence: back out of the chat inside those
-        // 0.8–2.5s and the reply evaporated, while `stickerStreak` had already
-        // counted the round. The decision above is seeded and complete, so the
-        // queued row carries the finished move and can land whenever the queue
-        // next drains. `sticker_reply` is a FAST_KIND — the beat is the point.
-        const fireAt = Date.now() + reply.delayMs;
-        await enqueue({
-          kind: 'sticker_reply',
-          fireAt,
-          payload: { convId, contactId: peer.id, content: reply.content, at: fireAt },
-          now: Date.now(),
-          id: `stkbattle_${convId}_${saved.id}`,
-        });
-        return;
-      }
-      await replyToLatest(convId, peer, persona, globalTier, hooks);
-      return;
-    }
-    if (conv.type === 'group') {
-      const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
-        const c = contactById(id);
-        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
-      });
-      // 群斗图 (M-J2): the battle was single-chat-only, which is backwards —
-      // a group is where sticker wars actually happen. Same seeded, zero-LLM
-      // decision as the single branch; a few members "reach for their phone"
-      // in seeded order and the first hit posts the comeback. A miss falls
-      // through to the ordinary director round, so the sticker still lands
-      // an answer in words.
-      const tail = useAppStore.getState().messagesFor(convId);
-      const streak = stickerStreak(tail.map((m) => m.type));
-      const order = [...members]
-        .filter((m) => m.persona)
-        .sort(
-          (a, b) =>
-            seededRng(`gbattle:${convId}:${saved.id}:${a.contactId}`)() -
-            seededRng(`gbattle:${convId}:${saved.id}:${b.contactId}`)(),
-        )
-        .slice(0, 3);
-      for (const m of order) {
-        const pool = await agentStickerPool(m.contactId).catch(() => [] as string[]);
-        const reply = battleReply(
-          { seed: `${convId}:${saved.id}:${m.contactId}`, streak, rate: m.persona?.stickerRate },
-          pool,
-          ref,
-        );
-        if (reply) {
-          const fireAt = Date.now() + reply.delayMs;
-          await enqueue({
-            kind: 'sticker_reply',
-            fireAt,
-            payload: { convId, contactId: m.contactId, content: reply.content, at: fireAt },
-            now: Date.now(),
-            id: `stkbattle_${convId}_${saved.id}`,
-          });
-          return;
-        }
-      }
-      await replyToLatestInGroup(conv, members, globalTier, hooks, contactById);
-    }
+    // 斗图 or an ordinary reply — the seeded gate and the queued comeback live
+    // in the pipeline's stickerRound (single and group).
+    await (await pipeline()).stickerRound(convId, saved.id, ref);
   };
 
   /**
@@ -937,21 +632,7 @@ export function ChatPage() {
   /** The shared "she answers whatever just landed" tail (photos, voice clips). */
   const requestReplyToLatest = async () => {
     if (!conv) return;
-    const globalTier = (await repo.getSetting<NsfwTierVM>('nsfwGlobalTier')) ?? 'off';
-    const hooks = { appendMessage, updateMessage, setTyping, now: () => Date.now() };
-    if (conv.type === 'group') {
-      const members: GroupMember[] = (conv.memberIds ?? []).map((id) => {
-        const c = contactById(id);
-        return { contactId: id, name: c?.remark ?? c?.name ?? id, persona: personaFor(id) };
-      });
-      await replyToLatestInGroup(conv, members, globalTier, hooks, contactById);
-      return;
-    }
-    const peer = conv.peerId ? contactById(conv.peerId) : undefined;
-    const persona = conv.peerId ? personaFor(conv.peerId) : undefined;
-    if (peer && persona) {
-      await replyToLatest(convId, peer, persona, globalTier, hooks);
-    }
+    await (await pipeline()).replyToNewest(convId);
   };
 
   /**
@@ -1047,15 +728,13 @@ export function ChatPage() {
   const { imageRefs, imageIndexByMsgId } = useMemo(() => {
     const refs: string[] = [];
     const byId = new Map<number, number>();
-    for (const r of rows) {
-      if (r.kind === 'time') continue;
-      const m = (r as { msg: MessageVM }).msg;
+    for (const m of messages) {
       if (m.type !== 'image' || m.isRecalled || !m.content) continue;
       byId.set(m.id, refs.length);
       refs.push(m.content);
     }
     return { imageRefs: refs, imageIndexByMsgId: byId };
-  }, [rows]);
+  }, [messages]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const onImageTap = (msg: MessageVM, el: HTMLElement | null) => {
     // Hand the tapped bubble's rect to the viewer so the photo grows out of it
@@ -1344,16 +1023,8 @@ export function ChatPage() {
               await updateMessage({ ...m, meta: { ...m.meta, translation: undefined } });
               return;
             }
-            // 铁律 6：消息正文就是会话内容，tier 一律推导，不许调用点自造。
-            const memberIds = conv.type === 'group'
-              ? (conv.memberIds ?? [])
-              : conv.peerId
-                ? [conv.peerId]
-                : [];
-            const tier = await tierOfConversation(memberIds, personaFor).catch(
-              () => 'off' as const,
-            );
-            const out = await translateText(m.content ?? '', tier, convId);
+            // 铁律 6：tier 由会话成员推导，不许调用点自造（见管线 translateMessage）。
+            const out = await (await pipeline()).translateMessage(convId, m.content ?? '');
             if (!out) {
               showToast('翻译失败');
               return;
@@ -1483,139 +1154,73 @@ export function ChatPage() {
         </div>
       )}
 
-      <div
-        ref={scrollRef}
-        data-thread-ready={threadReady ? '1' : '0'}
-        onScroll={(e) => {
-          if (e.currentTarget.scrollTop <= 8) void loadOlder();
-        }}
-        className="chat-page__scroll"
-        style={{ paddingBottom: composer.bottomInset }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="chat-page__messages" ref={listRef}>
-          {/* Top-of-history affordance. Silent when there is nothing more:
-              WeChat shows no marker at the start of a thread either. */}
-          {loadingOlder && <div className="chat-page__older">正在加载更早的消息…</div>}
-          {rows.map((row) =>
-            row.kind === 'time' ? (
-              <div className="msg-time" key={`t${row.ts}`}>
-                {chatTimestamp(row.ts, NOW)}
-              </div>
-            ) : (
-              <div
-                key={row.msg.id}
-                data-msg-id={row.msg.id}
-                className={
-                  [selecting && 'msg-selectable', flashId === row.msg.id && 'msg-anchor-flash']
-                    .filter(Boolean)
-                    .join(' ') || undefined
-                }
-                onAnimationEnd={
-                  flashId === row.msg.id
-                    ? // Child animations (bubble entrances) bubble up too — only
-                      // the flash itself may clear the flag.
-                      (e) => e.animationName === 'msg-anchor-flash' && setFlashId(null)
-                    : undefined
-                }
-                onClickCapture={
-                  selecting
-                    ? (e) => {
-                        // Selection swallows every inner tap — a checkbox mode
-                        // that still opens red packets is a trap.
-                        e.stopPropagation();
-                        if (row.msg.type !== 'system' && !row.msg.isRecalled)
-                          toggleSelect(row.msg.id);
-                      }
-                    : undefined
-                }
-              >
-                {selecting && row.msg.type !== 'system' && !row.msg.isRecalled && (
-                  <span
-                    className={`msg-select-dot${selected.has(row.msg.id) ? ' msg-select-dot--on' : ''}`}
-                    aria-hidden
-                  />
-                )}
-                <MessageBubble
-                  msg={row.msg}
-                  sender={senderFor(row.msg.senderId)}
-                  isSelf={row.msg.senderId === 'self'}
-                  showNickname={isGroup}
-                  mentionable={mentionable}
-                  onMentionTap={(cid) => {
-                    if (cid !== 'self' && contactById(cid)) navigate(`/contact/${cid}`);
-                  }}
-                  onMoneyTap={onMoneyTap}
-                  onBillTap={onBillTap}
-                  onImageTap={onImageTap}
-                  onMergedTap={(m) => navigate(`/merged/${convId}/${m.id}`)}
-                  onQuoteTap={onQuoteTap}
-                  onAvatarPat={(m) => void patPeer(m)}
-                  onContactTap={(m) => {
-                    const cid = m.meta?.contactId as string | undefined;
-                    if (cid && contactById(cid)) navigate(`/contact/${cid}`);
-                    else showToast('该联系人已不存在');
-                  }}
-                  nameOf={(cid) => {
-                    const c = contactById(cid);
-                    return c ? (c.remark ?? c.name) : undefined;
-                  }}
-                  // 拉群提议 (M-I3): hand the roster to 发起群聊 pre-ticked. The
-                  // AI proposes; the group is only born when the USER taps 完成
-                  // on that screen — so this navigates, it never creates a room.
-                  onSuggestGroupTap={(_m, memberIds) => {
-                    const alive = memberIds.filter((id) => contactById(id));
-                    if (alive.length < 2) {
-                      showToast('提议里的好友已不存在');
-                      return;
-                    }
-                    navigate(suggestGroupHref(alive));
-                  }}
-                  onLongPress={(m, x, y) => {
-                    if (selecting) return;
-                    // Openable on anything that is still a message (M-I18).
-                    //
-                    // This gate predates I6/I13 and still asked the I5-era
-                    // question: is there COPY, RECALL or REGENERATE to offer?
-                    // Meanwhile the menu grew 收藏 / 转发 / 多选, which apply to
-                    // every type — so long-pressing a photo, a voice clip, a
-                    // location, a link or a card did nothing at all, and so did
-                    // long-pressing your own message three minutes after
-                    // sending it. "Press and nothing happens" reads as a broken
-                    // gesture, not a missing feature; it is also why six of the
-                    // favorites page's eight type filters could never fill up.
-                    if (m.type !== 'system' && !m.isRecalled) setMenu({ msg: m, x, y });
-                  }}
-                  onReEdit={(m) => setDraft(m.content ?? '')}
-                  onRetry={(m) => guard('chat.retry', () => retrySend(m))}
-                  readMark={!isGroup && row.msg.id === readMarkId}
-                />
-              </div>
-            ),
-          )}
-          {typingShown && !isGroup && (
-            <div className="msg-row msg--enter" aria-label="对方正在输入">
-              <div className="msg-row__avatar">
-                <Avatar
-                  color={peerContact?.avatarColor ?? 'var(--color-brand)'}
-                  text={peerContact?.avatarText ?? '?'}
-                  imageRef={peerContact?.avatarRef}
-                  size={40}
-                />
-              </div>
-              <div className="msg-row__col">
-                <div className="msg-row__body">
-                  <div className="bubble bubble--other typing-bubble">
-                    <span className="typing-bubble__dot" />
-                    <span className="typing-bubble__dot" />
-                    <span className="typing-bubble__dot" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      <ChatThread
+        convId={convId}
+        messages={messages}
+        isTyping={isTyping}
+        typingPeer={peerContact}
+        showTyping={typingShown && !isGroup}
+        bottomInset={composer.bottomInset}
+        selecting={selecting}
+        selected={selected}
+        onToggleSelect={toggleSelect}
+        renderMessage={(msg) => (
+          <MessageBubble
+            msg={msg}
+            sender={senderFor(msg.senderId)}
+            isSelf={msg.senderId === 'self'}
+            showNickname={isGroup}
+            mentionable={mentionable}
+            onMentionTap={(cid) => {
+              if (cid !== 'self' && contactById(cid)) navigate(`/contact/${cid}`);
+            }}
+            onMoneyTap={onMoneyTap}
+            onBillTap={onBillTap}
+            onImageTap={onImageTap}
+            onMergedTap={(m) => navigate(`/merged/${convId}/${m.id}`)}
+            onQuoteTap={onQuoteTap}
+            onAvatarPat={(m) => void patPeer(m)}
+            onContactTap={(m) => {
+              const cid = m.meta?.contactId as string | undefined;
+              if (cid && contactById(cid)) navigate(`/contact/${cid}`);
+              else showToast('该联系人已不存在');
+            }}
+            nameOf={(cid) => {
+              const c = contactById(cid);
+              return c ? (c.remark ?? c.name) : undefined;
+            }}
+            // 拉群提议 (M-I3): hand the roster to 发起群聊 pre-ticked. The
+            // AI proposes; the group is only born when the USER taps 完成
+            // on that screen — so this navigates, it never creates a room.
+            onSuggestGroupTap={(_m, memberIds) => {
+              const alive = memberIds.filter((id) => contactById(id));
+              if (alive.length < 2) {
+                showToast('提议里的好友已不存在');
+                return;
+              }
+              navigate(suggestGroupHref(alive));
+            }}
+            onLongPress={(m, x, y) => {
+              if (selecting) return;
+              // Openable on anything that is still a message (M-I18).
+              //
+              // This gate predates I6/I13 and still asked the I5-era
+              // question: is there COPY, RECALL or REGENERATE to offer?
+              // Meanwhile the menu grew 收藏 / 转发 / 多选, which apply to
+              // every type — so long-pressing a photo, a voice clip, a
+              // location, a link or a card did nothing at all, and so did
+              // long-pressing your own message three minutes after
+              // sending it. "Press and nothing happens" reads as a broken
+              // gesture, not a missing feature; it is also why six of the
+              // favorites page's eight type filters could never fill up.
+              if (m.type !== 'system' && !m.isRecalled) setMenu({ msg: m, x, y });
+            }}
+            onReEdit={(m) => setDraft(m.content ?? '')}
+            onRetry={(m) => guard('chat.retry', () => retrySend(m))}
+            readMark={!isGroup && msg.id === readMarkId}
+          />
+        )}
+      />
 
       {menu && (
         <LongPressMenu
@@ -1738,200 +1343,83 @@ export function ChatPage() {
         </div>
       )}
 
-      <div
-        className="composer"
-        style={{
-          paddingBottom: composer.mode === 'none' ? 'var(--safe-bottom)' : 0,
-          ...(selecting ? { display: 'none' } : {}),
+      <Composer
+        composer={composer}
+        hidden={selecting}
+        isGroup={isGroup}
+        draft={draft}
+        setDraft={setDraft}
+        quote={quote}
+        onClearQuote={() => setQuote(null)}
+        voiceMode={voiceMode}
+        setVoiceMode={setVoiceMode}
+        micTier={micTier}
+        onAtTrigger={() => setAtPicker(true)}
+        onSend={sendWithToast}
+        onClip={(blob, ms) =>
+          void sendVoiceClip(blob, ms).catch((err) =>
+            showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+          )
+        }
+        onAction={(key) => {
+          if (key === 'redpacket') navigate(`/rp/send/${convId}`);
+          else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
+          else if (key === 'groupbill' && isGroup) {
+            composer.closeAll();
+            setBillSheetOpen(true);
+          }
+          else if (key === 'call' && conv.type === 'single') {
+            // 名实相符 (M-J6)：这一格从 M5 起就写着「视频通话」，点进去却是
+            // 语音页。现在真的问一句——两种通话都从这里走。
+            composer.closeAll();
+            void showActionSheet({ actions: ['视频通话', '语音通话'] }).then((i) => {
+              if (i === 0) navigate(`/call/${convId}?video=1`);
+              else if (i === 1) navigate(`/call/${convId}`);
+            });
+          }
+          else if (key === 'call' && isGroup) {
+            // 群语音 (M-J6c)：这一格在群里从来是死的。群没有视频，直接进。
+            composer.closeAll();
+            navigate(`/group-call/${convId}`);
+          }
+          else if (key === 'album') albumInputRef.current?.click();
+          else if (key === 'location') {
+            composer.closeAll();
+            void showPrompt({
+              title: '发送位置',
+              placeholder: '地名，如：星巴克(中山公园店)',
+            }).then((name) => {
+              if (name?.trim())
+                void sendLocation(name.trim()).catch((err) => logError('chat.location', err));
+            });
+          } else if (key === 'fav') navigate('/favorites');
+          else if (key === 'camera') cameraInputRef.current?.click();
+          else if (key === 'voiceinput') {
+            composer.closeAll();
+            setVoiceSheetOpen(true);
+          } else if (key === 'namecard') {
+            composer.closeAll();
+            setCardSheetOpen(true);
+          } else if (key === 'file') fileInputRef.current?.click();
         }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {quote && (
-          <div className="composer__quote">
-            <span className="composer__quote-text">{quote.text}</span>
-            <button className="composer__quote-x" aria-label="取消引用" onClick={() => setQuote(null)}>
-              ×
-            </button>
-          </div>
-        )}
-        <div className="composer__bar">
-          <button
-            className="composer__icon"
-            aria-label={voiceMode ? '切回键盘' : '切到语音'}
-            onClick={() => {
-              composer.closeAll();
-              setVoiceMode((v) => !v);
-            }}
-          >
-            <IconVoiceCircle />
-          </button>
-          {voiceMode ? (
-            // 语音模式：整条输入区换成「按住 说话」。同一个 VoiceInputButton、
-            // 同一套三区手势、同一个录音器——只是命中区变成一整条。
-            <VoiceInputButton
-              variant="bar"
-              tier={micTier}
-              onText={(t) => {
-                // 从 文 区回来的文字：退出语音模式，让人能改完再发。
-                setVoiceMode(false);
-                setDraft((d) => (d ? d + t : t));
-              }}
-              onClip={(blob, ms) =>
-                void sendVoiceClip(blob, ms).catch((err) =>
-                  showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
-                )
-              }
-            />
-          ) : (
-          <div className="composer__pill">
-            <textarea
-              ref={composer.inputRef}
-              className="composer__input"
-              rows={1}
-              value={draft}
-              onChange={(e) => {
-                const next = e.target.value;
-                // 群 @ 选择器 (M-I6): typing '@' in a group summons the member
-                // picker. Inserted as `@名字 ` — exactly what the director's
-                // findMentions matches, so a mention is a REAL summons.
-                if (isGroup && next.length > draft.length && next.endsWith('@')) {
-                  setAtPicker(true);
-                }
-                setDraft(next);
-              }}
-              onFocus={composer.openKeyboard}
-              onKeyDown={(e) => {
-                // 回车键发送消息 (M-K4 设置 › 聊天)：关掉时回车只是换行。
-                if (e.key === 'Enter' && !e.shiftKey && enterToSend()) {
-                  e.preventDefault();
-                  void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`));
-                }
-              }}
-              placeholder=""
-            />
-            <VoiceInputButton
-              tier={micTier}
-              onText={(t) => setDraft((d) => (d ? d + t : t))}
-              onClip={(blob, ms) =>
-                void sendVoiceClip(blob, ms).catch((err) =>
-                  showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
-                )
-              }
-            />
-          </div>
-          )}
-          <button className="composer__icon" aria-label="表情" onClick={composer.toggleEmoji}>
-            <IconEmoji />
-          </button>
-          {draft.trim() ? (
-            <button className="composer__send btn-morph-in" onClick={() => void send().catch((err) => showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`))}>
-              发送
-            </button>
-          ) : (
-            <button className="composer__icon" aria-label="更多" onClick={composer.togglePlus}>
-              <IconPlus />
-            </button>
-          )}
-        </div>
-        <ComposerPanels
-          mode={composer.mode}
-          height={composer.panelHeight}
-          // 单聊/群聊各一套面板 (M-K1)：钱那一格按场景换（转账 ⇄ 群收款），
-          // 不再把对方场景用不了的格子灰着摆在那儿。
-          isGroup={isGroup}
-          onAction={(key) => {
-            if (key === 'redpacket') navigate(`/rp/send/${convId}`);
-            else if (key === 'transfer' && conv.type === 'single') navigate(`/transfer/${convId}`);
-            else if (key === 'groupbill' && isGroup) {
-              composer.closeAll();
-              setBillSheetOpen(true);
-            }
-            else if (key === 'call' && conv.type === 'single') {
-              // 名实相符 (M-J6)：这一格从 M5 起就写着「视频通话」，点进去却是
-              // 语音页。现在真的问一句——两种通话都从这里走。
-              composer.closeAll();
-              void showActionSheet({ actions: ['视频通话', '语音通话'] }).then((i) => {
-                if (i === 0) navigate(`/call/${convId}?video=1`);
-                else if (i === 1) navigate(`/call/${convId}`);
-              });
-            }
-            else if (key === 'call' && isGroup) {
-              // 群语音 (M-J6c)：这一格在群里从来是死的。群没有视频，直接进。
-              composer.closeAll();
-              navigate(`/group-call/${convId}`);
-            }
-            else if (key === 'album') albumInputRef.current?.click();
-            else if (key === 'location') {
-              composer.closeAll();
-              void showPrompt({
-                title: '发送位置',
-                placeholder: '地名，如：星巴克(中山公园店)',
-              }).then((name) => {
-                if (name?.trim())
-                  void sendLocation(name.trim()).catch((err) => logError('chat.location', err));
-              });
-            } else if (key === 'fav') navigate('/favorites');
-            else if (key === 'camera') cameraInputRef.current?.click();
-            else if (key === 'voiceinput') {
-              composer.closeAll();
-              setVoiceSheetOpen(true);
-            } else if (key === 'namecard') {
-              composer.closeAll();
-              setCardSheetOpen(true);
-            } else if (key === 'file') fileInputRef.current?.click();
-          }}
-          onEmoji={(e) => setDraft((d) => d + e)}
-          onEmojiDelete={() => setDraft((d) => Array.from(d).slice(0, -1).join(''))}
-          // 表情面板右下角的「发送」(M-K2)：选完表情直接发，不必先把键盘叫回来。
-          onSend={() =>
-            void send().catch((err) =>
-              showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
-            )
-          }
-          canSend={Boolean(draft.trim())}
-          onGame={(kind) => void sendGame(kind).catch((err) => logError('chat.game', err))}
-          stickers={customStickers}
-          onSticker={(ref) =>
-            void sendSticker(ref).catch((err) =>
-              showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
-            )
-          }
-          onManageStickers={() => navigate('/settings/media')}
-        />
-        <input
-          ref={albumInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(e) => {
-            void sendImages(e.target.files);
-            e.target.value = '';
-          }}
-        />
-        <input
-          ref={cameraInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          hidden
-          onChange={(e) => {
-            void sendImages(e.target.files);
-            e.target.value = '';
-          }}
-        />
-        <input
-          ref={fileInputRef}
-          type="file"
-          hidden
-          onChange={(e) => {
-            void sendFileCard(e.target.files?.[0]).catch((err) =>
-              showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
-            );
-            e.target.value = '';
-          }}
-        />
-      </div>
+        onGame={(kind) => void sendGame(kind).catch((err) => logError('chat.game', err))}
+        stickers={customStickers}
+        onSticker={(ref) =>
+          void sendSticker(ref).catch((err) =>
+            showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+          )
+        }
+        onManageStickers={() => navigate('/settings/media')}
+        onImages={(files) => void sendImages(files)}
+        onFile={(f) =>
+          void sendFileCard(f).catch((err) =>
+            showToast(`发送失败：${err instanceof Error ? err.message : String(err)}`),
+          )
+        }
+        albumInputRef={albumInputRef}
+        cameraInputRef={cameraInputRef}
+        fileInputRef={fileInputRef}
+      />
       {viewerIndex != null && imageRefs.length > 0 && (
         <ImageViewer refs={imageRefs} index={viewerIndex} onClose={() => setViewerIndex(null)} />
       )}
@@ -1980,17 +1468,4 @@ export function ChatPage() {
       </Sheet>
     </div>
   );
-}
-
-type Row = { kind: 'time'; ts: number } | { kind: 'msg'; msg: MessageVM };
-
-function withTimeBars(messages: MessageVM[]): Row[] {
-  const rows: Row[] = [];
-  let prevTs: number | null = null;
-  for (const msg of messages) {
-    if (shouldShowTimeBar(prevTs, msg.createdAt)) rows.push({ kind: 'time', ts: msg.createdAt });
-    rows.push({ kind: 'msg', msg });
-    prevTs = msg.createdAt;
-  }
-  return rows;
 }

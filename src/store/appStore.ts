@@ -45,7 +45,9 @@ import { registerMediaMeta, materializeMedia } from '../data/media-registry';
 import { makePersona } from '../data/persona-defaults';
 import { recordRelEvent } from '../ai/relationship';
 import { cancelActionsForConversation } from '../ai/scheduler';
-import { abortConversation } from '../ai/engine';
+// From the tiny registry, NOT from ../ai/engine (M-K11): that one import was
+// what kept the whole engine tree in the cold-start bundle.
+import { abortConversation } from '../ai/inflight';
 import { applyStoryStamp } from '../ai/story-stamp';
 import { collectMomentsNews, type MomentsNews } from '../ai/moments-news';
 import { logError } from '../lib/errlog';

@@ -39,7 +39,10 @@ describe('冷启动不为调度运行时付费', () => {
   it('薄壳动态加载核心，并且只在加载完成且未卸载时启动', () => {
     const boot = code('src/app/useSchedulerBoot.ts');
     expect(staticImports(boot)).not.toContain('./useSchedulerRuntime');
-    expect(boot).toContain("import('./useSchedulerRuntime')");
+    expect(staticImports(boot)).not.toContain('./ai-runtime');
+    // M-K11：经 ai-runtime 这一个动态入口进来（聊天页的发送管线走同一个，同一个块）。
+    expect(boot).toContain("import('./ai-runtime')");
+    expect(staticImports(code('src/app/ai-runtime.ts'))).toContain('./useSchedulerRuntime');
     expect(boot).toMatch(/if \(!disposed\) stop = core\.startSchedulerRuntime\(\)/);
   });
 

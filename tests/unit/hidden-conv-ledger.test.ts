@@ -99,6 +99,13 @@ const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
     via: 'filters',
     why: '按 id 直达面（URL 可伪造），isHidden 行渲染「不存在」兜底。',
   },
+  'features/chat/send-pipeline.ts': {
+    via: 'not-ui',
+    why:
+      'M-K11 从 ChatPage 抽出的发送编排，不渲染任何 UI；按 convId 现读会话只为' +
+      '交给引擎回复——调用它的 ChatPage 已经对 isHidden 渲染「不存在」，隐藏会话的页面' +
+      '根本画不出发送入口；翻译/话筒档位读到的也只是这个会话自己的成员。',
+  },
   'features/chat/ChatPage.tsx': {
     via: 'filters',
     why: '按 id 直达面（URL 可伪造），isHidden 行渲染兜底；转发选择器另有 !isHidden 过滤。',

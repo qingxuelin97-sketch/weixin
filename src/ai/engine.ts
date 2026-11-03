@@ -21,6 +21,7 @@ import {
   STANCE_MENTION_DELTA,
 } from './relationship';
 import { noteUserReplied } from './agent-state';
+import { inFlight, releaseInFlight } from './inflight';
 import { assembleSystemPrompt, promptStats, relationsForPrompt, type PersonaView } from './prompt';
 import { selectFactsForInjection, touchFacts, withConvSummary } from './memory';
 import { getRouter } from '../llm/service';
@@ -72,36 +73,9 @@ export interface EngineHooks {
   now: () => number;
 }
 
-/** Per-conversation in-flight controller so a new send cancels the old reply. */
-const inFlight = new Map<string, AbortController>();
-
-/**
- * Release the slot, but only if it is still ours — a newer send may have taken
- * it over, and deleting unconditionally would let two replies play at once.
- *
- * The slot doubles as the "she is mid-conversation" guard for heartbeats, so a
- * leaked entry does not merely waste a Map key: it permanently silences that
- * AI's proactive messages for the rest of the process. It leaked whenever a
- * storage read threw between claiming the slot and entering the generator's
- * own try/finally — i.e. exactly on the failure paths, where losing her voice
- * is least recoverable and hardest to notice.
- */
-function releaseInFlight(convId: string, ctrl: AbortController): void {
-  if (inFlight.get(convId) === ctrl) inFlight.delete(convId);
-}
-
-/**
- * Hard-stop whatever this conversation is generating (M-I1).
- *
- * Exists for the deleteContact cascade: a reply that lands AFTER its thread
- * was deleted re-creates message rows for a conversation that no longer has a
- * contact. The map slot is cleared too — this abort is deliberate teardown,
- * not a takeover by a newer send.
- */
-export function abortConversation(convId: string): void {
-  inFlight.get(convId)?.abort();
-  inFlight.delete(convId);
-}
+// The in-flight registry lives in ./inflight (M-K11) so the store's delete
+// cascade can abort a reply without statically importing this whole module.
+export { abortConversation } from './inflight';
 
 const RECENT_WINDOW = 30; // messages of context sent to the model
 
