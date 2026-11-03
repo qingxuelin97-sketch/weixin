@@ -212,6 +212,15 @@ describe('heartbeat: a deleted conversation ends the chain, not the wallet', () 
     expect(calls).toEqual(['chainHb:ai_lin:conv_lin']);
   });
 
+  it('a nudge is a one-off extra, not a link — firing it must not fork a second chain', async () => {
+    // The standing chain already has its own successor pending. Chaining here
+    // too left the persona with two chains after the first ignored message,
+    // three after the second… (M-K9).
+    const { deps, calls } = harness();
+    await chainHeartbeat(deps, { contactId: 'ai_lin', convId: 'conv_lin', nudge: true });
+    expect(calls).toEqual([]);
+  });
+
   it('heartbeatTarget refuses a contact with no persona', () => {
     const { deps } = harness({ personaFor: () => undefined });
     expect(heartbeatTarget(deps, { contactId: 'ai_lin', convId: 'conv_lin' })).toBeNull();

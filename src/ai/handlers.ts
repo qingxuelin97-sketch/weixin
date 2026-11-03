@@ -27,7 +27,7 @@ import type {
   NsfwTierVM,
 } from '../data/types';
 import type { LlmRouter } from '../llm/router';
-import type { ScheduledAction } from './scheduler';
+import { isChainOneOff, type ScheduledAction } from './scheduler';
 import type { DmPlan } from './agent-dm';
 import type { GiftPayload } from './gift-service';
 import type { EngineHooks } from './engine';
@@ -331,11 +331,28 @@ export function heartbeatTarget(
   return { convId, peer, persona };
 }
 
-/** Queue the NEXT heartbeat. Runs before the generation (see registerChainedHandler). */
+/**
+ * Queue the NEXT heartbeat. Runs before the generation (see registerChainedHandler).
+ *
+ * Only for links OF the chain — `isChainOneOff` says which rows are not.
+ * Two producers ride the heartbeat kind as one-off extras: a nudge
+ * (`nudge: true`) and a backfilled past message (offline catch-up, carries
+ * `at`). scheduler.ts already said a nudge must not count as the standing
+ * chain, but this step ran for both anyway (M-K9 found it): every fired
+ * one-off queued a successor while the standing chain still had its own
+ * pending, so the persona came out of it with TWO chains — one more for every
+ * ignored message and for every backfilled message after a long absence. Her
+ * proactive messages multiplied; the 24h cooldown spaced the chains out but
+ * merged them only by accident (when two landed on the same fireAt id).
+ * A one-off's job ends with its one message. Existing forks are trimmed by
+ * the foreground pass (`forkedChains`). moment_post and agent_dm had the same
+ * flaw for backfilled rows and take the same guard below.
+ */
 export async function chainHeartbeat(
   d: HandlerDeps,
   payload: Record<string, unknown>,
 ): Promise<void> {
+  if (isChainOneOff(payload)) return;
   const target = heartbeatTarget(d, payload);
   if (!target) return; // deleted conversation → chain ends here, deliberately
   // From the conversation ROW, not the message slice: threads are loaded on
@@ -593,7 +610,9 @@ export function dmPlanFrom(payload: Record<string, unknown>, fallbackNow: number
 }
 
 /** Chain the next DM session. Runs first: one failed exchange must not end the mechanism. */
-export async function chainAgentDm(d: HandlerDeps): Promise<void> {
+export async function chainAgentDm(d: HandlerDeps, payload: Record<string, unknown> = {}): Promise<void> {
+  // A backfilled past session is a one-off, not a link (M-K9, see chainHeartbeat).
+  if (isChainOneOff(payload)) return;
   await d.chainAgentDm();
 }
 
@@ -980,6 +999,8 @@ export async function chainMomentPost(
   d: HandlerDeps,
   payload: Record<string, unknown>,
 ): Promise<void> {
+  // A backfilled past post is a one-off, not a link (M-K9, see chainHeartbeat).
+  if (isChainOneOff(payload)) return;
   const persona = d.personaFor(str(payload.contactId));
   if (persona) await d.chainMomentPost(persona);
 }

@@ -156,12 +156,78 @@ export async function hasPendingOfKind(kind: ActionKind): Promise<boolean> {
 }
 
 /**
+ * Is a CHAIN link of this kind pending — one-offs not counted (M-K9)? The
+ * roster-wide DM chain is armed only when this says no; a pending backfilled
+ * DM no longer chains, so counting it would leave the roster with none.
+ */
+export async function hasPendingChainOfKind(kind: ActionKind): Promise<boolean> {
+  return (await pendingActions()).some((a) => {
+    if (a.kind !== kind) return false;
+    const p = payloadOf(a);
+    return p != null && !isChainOneOff(p);
+  });
+}
+
+/**
  * The same question against an already-loaded pending set.
  *
  * Callers that ask about many contacts in a row (the foreground pass asks
  * twice per conversation) load the set once and use these instead of paying
  * for a query each time.
  */
+/**
+ * A row of a self-chaining kind that is NOT a link of its chain (M-K9).
+ *
+ * Two producers write such rows: a nudge (`nudge: true`, a one-off heartbeat
+ * for an ignored message) and offline backfill, whose planned past events
+ * always carry `at` (backfill.ts) — live chain rows never do (heartbeat:
+ * `{contactId, convId, body?}`; moment_post: `{contactId}`; agent_dm: the
+ * plan). A one-off must not queue a successor, and must not count as "the
+ * chain is armed" — otherwise, once it stops chaining, nothing re-arms it.
+ */
+export function isChainOneOff(payload: Record<string, unknown>): boolean {
+  return payload.nudge === true || typeof payload.at === 'number';
+}
+
+/** Per-contact chains (one each), and the one roster-wide chain. */
+const CHAIN_KEYS: Partial<Record<ActionKind, (p: Record<string, unknown>) => string | null>> = {
+  heartbeat: (p) => (typeof p.contactId === 'string' ? p.contactId : null),
+  moment_post: (p) => (typeof p.contactId === 'string' ? p.contactId : null),
+  agent_dm: () => '*',
+};
+
+/**
+ * Forked chains to cancel (M-K9). Each of these kinds runs exactly one chain
+ * per key (a persona's heartbeat, a persona's posting, the roster's DM
+ * sessions); more than one pending LINK under one key can only be a fork left
+ * by the old one-off bug (see handlers.chainHeartbeat). Keeps the earliest link
+ * per key — the one that would fire next anyway — and returns the ids of the
+ * rest. One-offs are left alone: they are meant to coexist with the chain.
+ */
+export function forkedChains(pending: readonly ScheduledAction[]): Set<string> {
+  const keep = new Map<string, ScheduledAction>();
+  const extra = new Set<string>();
+  for (const a of pending) {
+    const keyOf = CHAIN_KEYS[a.kind];
+    if (!keyOf) continue;
+    const p = payloadOf(a);
+    if (!p || isChainOneOff(p)) continue;
+    const k = keyOf(p);
+    if (k == null) continue;
+    const slot = `${a.kind}:${k}`;
+    const cur = keep.get(slot);
+    if (!cur) {
+      keep.set(slot, a);
+    } else if (a.fireAt < cur.fireAt) {
+      extra.add(cur.id);
+      keep.set(slot, a);
+    } else {
+      extra.add(a.id);
+    }
+  }
+  return extra;
+}
+
 export function isPendingForIn(
   pending: readonly ScheduledAction[],
   kind: ActionKind,
@@ -170,7 +236,8 @@ export function isPendingForIn(
   return pending.some((a) => {
     if (a.kind !== kind) return false;
     const p = payloadOf(a);
-    return p != null && p.contactId === contactId && p.nudge !== true;
+    // One-offs (a nudge, a backfilled past row) are not the chain (M-K9).
+    return p != null && p.contactId === contactId && !isChainOneOff(p);
   });
 }
 

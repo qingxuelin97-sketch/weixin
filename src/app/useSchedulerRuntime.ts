@@ -12,9 +12,11 @@ import {
   gcActions,
   startScheduler,
   stopScheduler,
-  hasPendingOfKind,
+  hasPendingChainOfKind,
   pendingActions,
   isPendingForIn,
+  forkedChains,
+  cancelPendingWhere,
   payloadOf,
   enqueue,
   actionExists,
@@ -432,7 +434,7 @@ registerChainedHandler('heartbeat', {
   work: (p, a) => handleHeartbeat(deps, p, a),
 });
 registerChainedHandler('agent_dm', {
-  chain: () => chainAgentDmStep(deps),
+  chain: (p) => chainAgentDmStep(deps, p),
   work: (p) => handleAgentDm(deps, p),
 });
 registerChainedHandler('moment_post', {
@@ -796,7 +798,13 @@ async function runForegroundPass(): Promise<void> {
   //    the whole action store 2×N times and JSON.parsed every row on each pass.
   //    Rows queued inside this loop are tracked locally so the checks below
   //    still see them — the snapshot must not go stale mid-loop.
-  const pending = await pendingActions();
+  const loaded = await pendingActions();
+  // 分叉的链 (M-K9)：一次性的行（nudge、离线回填）曾经也会续链，于是同一个人
+  // 身上跑着两三条心跳/发帖链、名单上跑着几条私信链。病根在 handlers 里修了；
+  // 存量在这里剪：每条链只留下一个最早的环，其余取消（取消不删除，id 仍挡复活）。
+  const forked = forkedChains(loaded);
+  if (forked.size) await cancelPendingWhere((_p, a) => forked.has(a.id));
+  const pending = forked.size ? loaded.filter((a) => !forked.has(a.id)) : loaded;
   const queuedHere = new Set<string>();
   const alreadyQueued = (kind: 'heartbeat' | 'moment_post', contactId: string) =>
     queuedHere.has(`${kind}:${contactId}`) || isPendingForIn(pending, kind, contactId);
@@ -912,7 +920,7 @@ async function runForegroundPass(): Promise<void> {
 
   // 3) Seed the first AI↔AI DM session if none is queued.
   try {
-    if (!(await hasPendingOfKind('agent_dm'))) await scheduleNextAgentDm();
+    if (!(await hasPendingChainOfKind('agent_dm'))) await scheduleNextAgentDm();
   } catch (e) {
     // Never blocks the foreground path — but if this throws every pass, the
     // entire AI↔AI chemistry layer is dead and nothing else would ever say so.
