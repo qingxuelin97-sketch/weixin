@@ -16,8 +16,9 @@ import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 let providerReady = false;
-vi.mock('../../src/llm/service', async (orig) => ({
-  ...(await orig<typeof import('../../src/llm/service')>()),
+// The page reads this from the light config facade (M-L1), not from service.ts.
+vi.mock('../../src/llm/config', async (orig) => ({
+  ...(await orig<typeof import('../../src/llm/config')>()),
   hasUsableProvider: async () => providerReady,
 }));
 

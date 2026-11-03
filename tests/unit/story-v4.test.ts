@@ -1,3 +1,4 @@
+import { validateScript } from '../../src/ai/story-schema';
 import { describe, it, expect, beforeEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { readFileSync } from 'node:fs';
@@ -5,7 +6,6 @@ import { resolve } from 'node:path';
 import { repo } from '../../src/db/repo';
 import { idbGetAll, idbDelete } from '../../src/db/idb';
 import {
-  validateScript,
   outEdgesOf,
   strandedNodes,
   reachableFrom,

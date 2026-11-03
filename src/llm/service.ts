@@ -4,7 +4,15 @@
  * This is the seam between "what the user configured" and "how a turn is run".
  */
 import type { ChatProvider } from './types';
-import { makeProvider, PRESETS } from './presets';
+import { makeProvider } from './presets';
+import {
+  configEpoch,
+  invalidateRouter,
+  isPermissive,
+  loadConfig,
+  withDeadline,
+  type ResolvedConfig,
+} from './config';
 import type { OpenAiCompatibleProvider } from './openai-compatible';
 import { LlmRouter, type RoutingPolicy, type RouteRequest, type RoutePlan, type Role } from './router';
 import type { ProviderVM } from '../data/types';
@@ -52,67 +60,8 @@ function buildProvider(vm: ProviderVM): ChatProvider {
   });
 }
 
-export interface ResolvedConfig {
-  providers: ProviderVM[];
-  /** Provider id chosen for everyday chat/director/memory. */
-  defaultProviderId?: string;
-  /** Provider id used for the NSFW-full permissive route. */
-  nsfwProviderId?: string;
-}
 
-/**
- * Model ids that used to ship as preset defaults but have rotated out of the
- * providers' catalogs (requests with them 400 as "model not found"). Only a
- * list that still EXACTLY equals the stale default is migrated — a user-edited
- * list is theirs and stays untouched.
- */
-const STALE_DEFAULT_MODELS: Record<string, string[][]> = {
-  zen: [
-    ['deepseek-v3', 'glm-4.6', 'kimi-k2'],
-    ['big-pickle', 'minimax-m2.5-free'], // shipped briefly; minimax-m2.5-free rotated out
-  ],
-  minimax: [['MiniMax-Text-01', 'abab6.5s-chat']],
-};
 
-async function migrateStaleModels(providers: ProviderVM[]): Promise<void> {
-  for (const p of providers) {
-    const staleLists = STALE_DEFAULT_MODELS[p.kind];
-    const fresh = PRESETS[p.kind]?.defaultModels;
-    if (!staleLists || !fresh) continue;
-    const isStale = staleLists.some(
-      (stale) => p.models.length === stale.length && p.models.every((m, i) => m === stale[i]),
-    );
-    if (isStale) {
-      p.models = [...fresh];
-      await repo.putProvider(p);
-    }
-  }
-}
-
-/** Run the stale-id migration for UI surfaces that read providers directly. */
-export async function ensureFreshModelDefaults(): Promise<void> {
-  await migrateStaleModels(await repo.getProviders());
-}
-
-async function loadConfig(): Promise<ResolvedConfig> {
-  const providers = (await repo.getProviders()).filter((p) => p.enabled);
-  await migrateStaleModels(providers);
-  const defaultProviderId = await repo.getSetting<string>('defaultProviderId');
-  const nsfwProviderId = await repo.getSetting<string>('nsfwProviderId');
-  return { providers, defaultProviderId, nsfwProviderId };
-}
-
-/** A concrete policy built from resolved config. Pure given its inputs. */
-/** Channels allowed to carry full-tier NSFW context (constitution rule #6). */
-const PERMISSIVE_KINDS = new Set(['zen', 'custom']);
-const isPermissive = (p: ProviderVM): boolean => PERMISSIVE_KINDS.has(p.kind);
-
-/**
- * Whether a provider KIND qualifies as a permissive channel (M-J3, for the
- * config page's badge). Exported as a function over the same set the policy
- * reads, so the badge can never say one thing while the router does another.
- */
-export const isPermissiveKind = (kind: string): boolean => PERMISSIVE_KINDS.has(kind);
 
 export function makePolicy(cfg: ResolvedConfig): RoutingPolicy {
   const byId = new Map(cfg.providers.map((p) => [p.id, p]));
@@ -170,7 +119,20 @@ export function makePolicy(cfg: ResolvedConfig): RoutingPolicy {
   };
 }
 
+// The light half (config reads, hasUsableProvider, withDeadline, invalidation)
+// lives in ./config since M-L1; re-exported so existing importers keep working.
+export {
+  ensureFreshModelDefaults,
+  hasUsableProvider,
+  invalidateRouter,
+  isPermissiveKind,
+  loadConfig,
+  withDeadline,
+  type ResolvedConfig,
+} from './config';
+
 let routerPromise: Promise<LlmRouter> | null = null;
+let routerEpoch = -1;
 
 /**
  * The app-wide router, built once from persisted config. A singleton is what
@@ -178,6 +140,11 @@ let routerPromise: Promise<LlmRouter> | null = null;
  * router per message forgets it (and re-reads config from IDB every turn).
  */
 export function getRouter(): Promise<LlmRouter> {
+  // A config edit bumps the epoch (config.invalidateRouter): rebuild once.
+  if (routerEpoch !== configEpoch()) {
+    routerPromise = null;
+    routerEpoch = configEpoch();
+  }
   if (!routerPromise) {
     routerPromise = loadConfig().then((cfg) => new LlmRouter(makePolicy(cfg)));
     // A failed load must not poison the cache forever.
@@ -188,19 +155,7 @@ export function getRouter(): Promise<LlmRouter> {
   return routerPromise;
 }
 
-/** Call after any provider/default/nsfw config edit so the next turn sees it. */
-export function invalidateRouter(): void {
-  routerPromise = null;
-}
 
-/** Whether at least one enabled provider has a stored key (i.e. chat can work). */
-export async function hasUsableProvider(): Promise<boolean> {
-  const cfg = await loadConfig();
-  for (const p of cfg.providers) {
-    if (await getSecret(p.keyAlias)) return true;
-  }
-  return false;
-}
 
 /**
  * Live model catalog for the config page's "拉取模型列表" button. Gateways
@@ -346,22 +301,6 @@ function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/**
- * UI-level hard deadline. The native bridge is supposed to time out on its own,
- * but the device symptom "spinner forever" proves some layer can still hang —
- * the UI must never trust lower layers with its own liveness.
- */
-export function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`等待 ${Math.round(ms / 1000)}s 无响应——请求没有返回，通常是代理未覆盖本应用或断网`)),
-        ms,
-      ),
-    ),
-  ]);
-}
 
 /** Quick connectivity probe used by the API config page's "测试连接" button. */
 export async function testConnection(vm: ProviderVM): Promise<{ ok: boolean; message: string }> {

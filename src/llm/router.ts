@@ -9,6 +9,7 @@
  *   2. switch to the permissive fallback chain, sticky for the next N turns
  *   3. persona-styled refusal / half-sent-then-recalled — original refusal never shown
  */
+import { runLlmPreflight, isBudgetError } from './preflight';
 import {
   type ChatProvider,
   type GenerateOptions,
@@ -106,28 +107,10 @@ export function isRefusal(result: CompletionResult): boolean {
   return false;
 }
 
-/**
- * Pre-dispatch gate (M-J1): runs before ANY provider call this router makes.
- *
- * Installed by the app shell with `cost-gate.checkBudget` — it lives behind a
- * setter because the dependency direction is `ai → llm`, never the reverse
- * (constitution §1): the router cannot import the gate, so the gate installs
- * itself into the router. Throwing `LlmError('budget')` here aborts the call
- * BEFORE the degradation ladder — every rung of that ladder is itself a call,
- * so laddering an over-budget request would spend money to honour a spending
- * limit. Unset (tests, cold paths) = no gate.
- */
-export type LlmPreflight = (now: number) => Promise<void>;
-
-let preflight: LlmPreflight | null = null;
-
-export function setLlmPreflight(fn: LlmPreflight | null): void {
-  preflight = fn;
-}
-
-export function isBudgetError(e: unknown): boolean {
-  return e instanceof LlmError && e.kind === 'budget';
-}
+// The pre-dispatch gate and isBudgetError live in ./preflight (M-L1): the cost
+// gate installs itself from a page that is in the cold-start bundle, and
+// importing the setter from HERE dragged the whole router (and zod) along.
+export { setLlmPreflight, isBudgetError, type LlmPreflight } from './preflight';
 
 export interface GenerateContext {
   /** Rewrite a user turn more obliquely for a same-model retry (tier 1). */
@@ -199,7 +182,7 @@ export class LlmRouter {
 
     // The global cost gate (M-J1) — checked before anything leaves the
     // process, and before the counter below, so a rejected call is not billed.
-    if (preflight) await preflight(Date.now());
+    await runLlmPreflight(Date.now());
 
     // Every call the app makes passes through here — the one honest place to
     // count them. The user's own key pays for the heartbeats, memory passes and
@@ -308,7 +291,7 @@ export class LlmRouter {
       try {
         // Same gate as complete(): a budget rejection here falls through to the
         // one-shot path below, which re-checks and throws it out to the caller.
-        if (preflight) await preflight(Date.now());
+        await runLlmPreflight(Date.now());
         void recordUsage(usageKindFor(req.role, convKey), Date.now()).catch(() => {});
         usageRecorded = true;
         for await (const b of primary.provider.generateStream({ ...opts, model: primary.model })) {

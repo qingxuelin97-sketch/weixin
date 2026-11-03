@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { SubNav } from '../../components/SubNav';
-import { PRESETS } from '../../llm/presets';
+import { PRESETS } from '../../llm/preset-data';
 import {
-  testConnection,
-  fetchModels,
   invalidateRouter,
   ensureFreshModelDefaults,
-  diagnoseProvider,
   withDeadline,
   isPermissiveKind,
-} from '../../llm/service';
+} from '../../llm/config';
+
+/**
+ * 测试连接 / 诊断 / 拉模型真的要调 Provider：按下按钮时才加载 LLM 运行时（M-L1）。
+ * 静态导入 service.ts 曾把路由器、三家 Provider 与 zod 放进每一次冷启动。
+ */
+const llm = () => import('../../llm/service');
 import { repo } from '../../db/repo';
 import { logError } from '../../lib/errlog';
 import { setSecret, hasSecret, deleteSecret } from '../../lib/keystore';
@@ -153,7 +156,7 @@ export function ApiConfigPage() {
     setTestMsg(null);
     const t0 = performance.now();
     try {
-      const r = await withDeadline(testConnection(editing), 25_000);
+      const r = await withDeadline(llm().then((m) => m.testConnection(editing)), 25_000);
       const ms = Math.round(performance.now() - t0);
       setTestMsg({ ok: r.ok, text: r.ok ? `${r.message}（${ms}ms）` : r.message });
     } catch (e) {
@@ -170,7 +173,7 @@ export function ApiConfigPage() {
     setTesting(true);
     setTestMsg(null);
     try {
-      const lines = await diagnoseProvider(editing);
+      const lines = await (await llm()).diagnoseProvider(editing);
       const ok = lines.every((l) => l.includes('OK'));
       setTestMsg({ ok, text: lines.join('\n') });
     } catch (e) {
@@ -186,7 +189,7 @@ export function ApiConfigPage() {
     setTestMsg(null);
     try {
       // Belt-and-braces: even if a lower layer hangs, the button recovers.
-      const ids = await withDeadline(fetchModels(editing), 20_000);
+      const ids = await withDeadline(llm().then((m) => m.fetchModels(editing)), 20_000);
       if (ids.length) {
         const next = { ...editing, models: ids };
         setEditing(next);

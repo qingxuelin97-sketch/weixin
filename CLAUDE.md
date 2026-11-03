@@ -118,11 +118,17 @@ src/
   新 handler 照旧注册在 useSchedulerRuntime.ts——守卫读的就是它；但**不许**在 App 或任何首屏模块里
   静态 import 它，否则 25 个 handler 背后约 200KB 源码重回冷启动（守卫：`k10-startup.test.ts`）。
 - **引擎树只有一个动态入口**（M-K11）：`src/app/ai-runtime.ts` = 调度运行时 + 聊天页发送管线
-  （`features/chat/send-pipeline.ts`，导出为 `chat`）。调度器薄壳与 ChatPage 都只
-  `import('…/ai-runtime')`——分两个入口时 Rollup 会切出三个小块、开销 41%，一个入口是 14%。
-  所以：要碰引擎（单聊 engine / 群聊导演 / 记忆 / 翻译 / 斗图）的 UI 路径，写进发送管线，
-  **不许**在页面或 store 里静态 import `ai/engine`（store 中止回复用 `ai/inflight`）。
-  守卫：`k11-chat-split.test.ts`（静态导入方台账 + 管线路由的行为测试）。
+  （`features/chat/send-pipeline.ts`，导出为 `chat`）+ 朋友圈赞评排期（`moments`，M-L1）。调度器
+  薄壳、ChatPage、发朋友圈页都只 `import('…/ai-runtime')`——分两个入口时 Rollup 会切出三个小块、
+  开销 41%，一个入口是 14%。所以：要碰引擎（单聊 engine / 群聊导演 / 记忆 / 翻译 / 斗图 /
+  朋友圈生成）的 UI 路径，写进这个入口导出的模块，**不许**在页面或 store 里静态 import 它们。
+- **LLM 运行时也不在冷启动里**（M-L1）：页面渲染时要的只许从轻量门面拿——`llm/config`
+  （读配置 / hasUsableProvider / withDeadline / isPermissiveKind / invalidateRouter）、
+  `llm/errors`、`llm/preflight`、`llm/preset-data`；真要调模型（getRouter / 测试连接 / 拉模型）
+  在动作发生时 `import('…/llm/service')`。剧本的 zod 校验在 `ai/story-schema`，运行时路径上懒加载。
+  **守卫看的是真的静态导入图**（`l1-lean-main.test.ts`，从 src/main.tsx 沿静态 import 走）：
+  K11 那条「谁直接导入了 engine」的守卫只看一层，发朋友圈页 → moments-service → moments-engine
+  → engine 这条传递路径它看不见——K11 说引擎树离开了主包，其实单聊引擎一直在里面。
 - **`simulate(t0,t1,state,seed)`**（`src/ai/simulate.ts`）：离线回填的规划器，纯函数——
   不调 LLM、不碰存储、不读挂钟。它只产出「何时该发生什么」，由 `backfill.ts` 物化成 fireAt
   在过去的 scheduled_actions，交给同一个执行器排空。改限额或窗口规则要同步 `specs/backfill.md`。

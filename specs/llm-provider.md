@@ -83,3 +83,28 @@ NSFW 全开=宽松通道（Zen: deepseek-v3→glm→kimi）。
 - [ ] 正常返回直出；拒答走宽松链并粘性；tier-1 prefill 可救场；全失败出人设拒绝；auth 不 ladder。
 - [ ] NDJSON/数组/纯文本/坏 JSON 均能解析出气泡；delay 越界被 clamp。
 - [ ] （M2 真机）三家各跑通对话 + 降级路径；全开档零流量流向国内官方端点。
+
+## M-L1：LLM 运行时离开冷启动主包
+
+主包 306.9 → 268.1KB（gz）。拿 source map 把主包的压缩字节归到源文件上，才看清两大块：zod
+（53.5KB min）与 LLM 运行时 + 单聊引擎（43.7KB min）。它们几乎都只在「真的要调模型」时才用得到，
+却因为页面在渲染时要一两个小函数而整片静态进了首屏。拆法：
+
+| 模块 | 装什么 | 规则 |
+|---|---|---|
+| `llm/config.ts` | `loadConfig` / `hasUsableProvider` / `withDeadline` / `isPermissiveKind` / `ensureFreshModelDefaults` / `invalidateRouter` | 页面渲染与保存时只从这里拿；不许引入路由器、Provider、bubbles、zod |
+| `llm/errors.ts` | `LlmError` | http / tts / 成本闸只要这个类；`types.ts` 为 BubbleSchema 引入了 zod |
+| `llm/preflight.ts` | 成本闸的安装点与 `isBudgetError` | 成本闸从主包里的页面安装自己 |
+| `llm/preset-data.ts` | 三家预设的描述（纯数据） | 配置页渲染它；Provider 类留在 `presets.ts` |
+| `llm/service.ts` | `getRouter` / `testConnection` / `fetchModels` / `diagnoseProvider` | 只在动作发生时 `import()`；仍转导出轻量那一半，老导入点不必全改 |
+
+- **`invalidateRouter` 变成「配置纪元」**：config 里只记一个递增的数，service 的路由器单例记住自己
+  建于哪个纪元，纪元变了就重建——于是配置页让路由器失效，却不必导入路由器。
+- **剧本的 zod 在 `ai/story-schema.ts`**：`story-script.ts` 只剩纯函数与 `export type`（类型在构建时擦除，
+  不带 zod）；`story-gm` 在读/存剧本时懒加载校验器；剧本库列表直接 `JSON.parse`（每一行存进来时都校验过，
+  渲染时再跑 zod 只为一行摘要）；生成器在按下「生成」时才加载。
+- 守卫：`tests/unit/l1-lean-main.test.ts` 从 `src/main.tsx` 沿**静态 import**（不算 `import type`、不算
+  `import()`）走一遍真的导入图，断言引擎、路由器、Provider、类型模块、剧本 schema 与 zod 都走不到；
+  走得到就打印整条路径。轻量模块的静态闭包也被逐个检查。变异验证：把发朋友圈页的静态导入加回去，
+  报出 `MomentPublishPage → moments-service → moments-engine → engine` 整条链。
+

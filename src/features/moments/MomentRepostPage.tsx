@@ -13,7 +13,6 @@ import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { repo } from '../../db/repo';
 import { repostMoment, repostExcerpt, canRepost } from '../../ai/moment-repost';
-import { scheduleReactionsFor } from '../../ai/moments-service';
 import { logError } from '../../lib/errlog';
 import type { MomentVM } from '../../data/types';
 import './moments.css';
@@ -74,7 +73,7 @@ export function MomentRepostPage() {
     }
     // Reposts draw reactions like any other post. Failure must not lose it.
     try {
-      await scheduleReactionsFor(posted, contacts, personaFor, now);
+      await (await import('../../app/ai-runtime')).moments.scheduleReactionsFor(posted, contacts, personaFor, now);
     } catch (e) {
       logError('moment.repost.reactions', e);
     }

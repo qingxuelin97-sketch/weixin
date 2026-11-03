@@ -10,7 +10,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Avatar } from '../../components/Avatar';
 import { IconCheck } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
-import { hasUsableProvider } from '../../llm/service';
+import { hasUsableProvider } from '../../llm/config';
 import { logError } from '../../lib/errlog';
 import { markOnboarded, scheduleWelcomeGreeting } from './welcome';
 import './welcome.css';

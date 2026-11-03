@@ -3,7 +3,7 @@
  * HTTP bridge (bypasses CORS, which blocks direct browser calls to DeepSeek et al.);
  * in the browser/dev/test we fall back to fetch. Callers never see the difference.
  */
-import { LlmError } from './types';
+import { LlmError } from './errors';
 
 export interface HttpRequest {
   url: string;

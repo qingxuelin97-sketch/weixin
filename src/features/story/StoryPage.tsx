@@ -27,11 +27,9 @@ import {
   type StorySaveRow,
 } from '../../ai/story-gm';
 import { seedBuiltinScripts } from '../../ai/story-service';
-import { generateScript, routerDeps, tierForPremise } from '../../ai/story-generate';
 import { galleryFor, gallerySummary, runStateLabel } from '../../ai/story-runs';
-import { getRouter } from '../../llm/service';
 import { globalTier } from '../../lib/nsfw-tier';
-import { ScriptSchema, type Script } from '../../ai/story-script';
+import type { Script } from '../../ai/story-script';
 import './story.css';
 import '../settings/settings.css';
 
@@ -70,8 +68,12 @@ export function StoryPage() {
     const m = new Map<string, string>();
     for (const row of scripts) {
       try {
-        const parsed = ScriptSchema.safeParse(JSON.parse(row.dagJson));
-        if (parsed.success) m.set(row.id, gallerySummary(galleryFor(parsed.data, saves)));
+        // No schema pass here (M-L1): every row went through validateScript when it
+        // was SAVED, and running zod again on each render would put zod in the
+        // cold-start bundle for a summary line. A shape check keeps a corrupted
+        // row quiet; anything worse throws into the catch below.
+        const parsed = JSON.parse(row.dagJson) as Script | null;
+        if (parsed && Array.isArray(parsed.nodes)) m.set(row.id, gallerySummary(galleryFor(parsed, saves)));
       } catch {
         /* corrupted row: no summary beats a crashed library */
       }
@@ -93,6 +95,12 @@ export function StoryPage() {
     setBusy(true);
     setStatus('正在写大纲…');
     try {
+      // 生成器与 LLM 运行时按需加载（M-L1）：生成器靠 zod 校验输出，静态导入会把 zod
+      // 连同路由器一起放进冷启动主包——而剧本库这一页大多数时候只是看看。
+      const [{ generateScript, routerDeps, tierForPremise }, { getRouter }] = await Promise.all([
+        import('../../ai/story-generate'),
+        import('../../llm/service'),
+      ]);
       const tier = tierForPremise(premise, await globalTier());
       const router = await getRouter();
       setStatus('正在生成剧本结构…');

@@ -83,7 +83,22 @@ import { join } from 'node:path';
  * on golden-gated pages that must stay in main, and the ratchet is for step
  * changes, not for making every screen tweak find a saving first.
  */
-const MAIN_BUDGET_KB = 308;
+/*
+ * M-L1 took main from 306.9 to 268.1: the whole LLM runtime and zod left the
+ * cold-start bundle. Found by attributing the main chunk's minified bytes to
+ * source files through its source map — zod 53.5KB min, and the single-chat
+ * engine still in main (K11 had moved only the group side: the moments
+ * publish page reached engine.ts through moments-service → moments-engine, a
+ * transitive path K11's one-level guard could not see). Cuts: a light
+ * llm/config facade (render-time needs), llm/errors + llm/preflight + preset
+ * data split from the zod/router modules, action-time `import()` of
+ * llm/service and app/ai-runtime, zod schemas moved to ai/story-schema and
+ * loaded lazily. main −38.78 / lazy +42.86 / total +4.08 = 10.5%, inside the
+ * one-third line. Re-tightened 308 → 271 (≈3KB above the real number, the same
+ * slack K11 kept). Guard: tests/unit/l1-lean-main.test.ts walks the real
+ * static import graph from src/main.tsx.
+ */
+const MAIN_BUDGET_KB = 271;
 /**
  * Everything a dynamic import fetches later. Looser: none of it blocks paint.
  *
@@ -122,7 +137,13 @@ const MAIN_BUDGET_KB = 308;
  * of every install paying 2KB for a screen shown once. A deliberate new
  * deferred screen is exactly the "legitimately needs more room" case.
  */
-const LAZY_BUDGET_KB = 98;
+/*
+ * 98 → 142 in M-L1: the LLM runtime + zod + the single-chat engine moved here
+ * from main (main −38.78, lazy +42.86, total +4.08 = 10.5%). A migration, by
+ * the M-J10 reasoning — a lazy budget that goes red on a migration punishes
+ * the fix.
+ */
+const LAZY_BUDGET_KB = 142;
 
 const dir = 'dist/assets';
 let entries;

@@ -19,7 +19,7 @@ import {
   resolveTtsSource,
   synthesize,
 } from '../../llm/tts';
-import { withDeadline } from '../../llm/service';
+import { withDeadline } from '../../llm/config';
 import { repo } from '../../db/repo';
 import { setSecret, hasSecret } from '../../lib/keystore';
 import { logError } from '../../lib/errlog';

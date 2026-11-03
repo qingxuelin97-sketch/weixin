@@ -17,7 +17,7 @@
  * turn; see specs/nsfw.md.
  */
 import { httpJson } from './http';
-import { LlmError } from './types';
+import { LlmError } from './errors';
 import { getSecret, hasSecret } from '../lib/keystore';
 import { recordUsage } from '../lib/usage';
 import { repo } from '../db/repo';

@@ -31,7 +31,6 @@ import { humanizePersona, HUMANIZE_LEVEL_LABELS, type HumanizeLevel } from '../.
 import { applyPersonaPatch, strippedNote } from '../../data/persona-patch';
 import { HumanizeDiffSheet } from './HumanizeDiffSheet';
 import { showActionSheet, showConfirm } from '../../components/dialog';
-import { getRouter } from '../../llm/service';
 import { globalTier } from '../../lib/nsfw-tier';
 import './settings.css';
 import { Switch } from '../../components/Switch';
@@ -204,7 +203,8 @@ export function PersonaEditPage() {
     if (idx == null) return;
     setHBusy(true);
     try {
-      const router = await getRouter();
+      // LLM 运行时按需加载（M-L1）：只有真的要生成时才拉进来。
+      const router = await (await import('../../llm/service')).getRouter();
       // Rule #6: the tier is derived from the global setting, never declared.
       const tier = await globalTier();
       const out = await humanizePersona(

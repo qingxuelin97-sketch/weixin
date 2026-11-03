@@ -13,7 +13,8 @@
  * overwrite each other in a store keyed by id.
  */
 import type { LlmRouter, NsfwTier } from '../llm/router';
-import { validateScript, type Script, type ValidationIssue } from './story-script';
+import type { Script, ValidationIssue } from './story-script';
+import { validateScript } from './story-schema';
 import { runChain, extractJson, repairPrompt, MAX_REPAIRS } from './generate-chain';
 
 export { extractJson, repairPrompt, MAX_REPAIRS };

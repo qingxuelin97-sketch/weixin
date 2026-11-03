@@ -23,7 +23,6 @@
 import type { PersonaVM } from '../data/types';
 import { repo } from '../db/repo';
 import { logError } from '../lib/errlog';
-import { getRouter } from '../llm/service';
 import { runChain, type ChainDeps } from './generate-chain';
 import {
   GOAL_TEMPLATES,
@@ -159,7 +158,10 @@ export async function ensureGoalTemplates(
       deps ??
       ({
         complete: async (messages, opts) => {
-          const router = await getRouter();
+          // The LLM runtime loads when a template is actually generated (M-L1):
+          // this module sits behind the status page, which is in the cold-start
+          // bundle, and a static import put the router, providers and zod there.
+          const router = await (await import('../llm/service')).getRouter();
           const r = await router.complete(
             { role: 'reasoning', nsfwTier: 'off' },
             { messages, json: opts.json, maxTokens: opts.maxTokens },

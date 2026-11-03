@@ -32,7 +32,7 @@ import type { StorySaveRow } from '../../ai/story-gm';
 import { useAppStore } from '../../store/appStore';
 import { showPrompt, showConfirm, showActionSheet } from '../../components/dialog';
 import { useGuard } from '../../app/useGuard';
-import { hasUsableProvider } from '../../llm/service';
+import { hasUsableProvider } from '../../llm/config';
 import { acceptTransfer } from '../../ai/money-service';
 import { payBill } from '../../ai/bill-service';
 import { BillSheet } from './BillSheet';

@@ -11,3 +11,6 @@
  */
 export * from './useSchedulerRuntime';
 export * as chat from '../features/chat/send-pipeline';
+// 发朋友圈后排 AI 的赞评（M-L1）：moments-service 经 moments-engine 拖着整棵引擎树，
+// 发表页在冷启动主包里——所以它和聊天页一样，只经这一个动态入口拿。
+export * as moments from '../ai/moments-service';

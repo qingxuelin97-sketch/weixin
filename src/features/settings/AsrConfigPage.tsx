@@ -21,7 +21,7 @@ import {
   type AsrConfigVM,
 } from '../../llm/asr';
 import { isRecordingSupported, pickAudioMime } from '../../lib/recorder';
-import { withDeadline } from '../../llm/service';
+import { withDeadline } from '../../llm/config';
 import { setSecret, hasSecret, deleteSecret } from '../../lib/keystore';
 import { showConfirm } from '../../components/dialog';
 import { logError } from '../../lib/errlog';

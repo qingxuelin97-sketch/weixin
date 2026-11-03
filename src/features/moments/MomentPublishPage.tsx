@@ -20,7 +20,6 @@ import { useAppStore } from '../../store/appStore';
 import { repo } from '../../db/repo';
 import { registerMedia } from '../../data/media-registry';
 import { availableRefs, resolveImageRef } from '../../data/moments-images';
-import { scheduleReactionsFor } from '../../ai/moments-service';
 import {
   audienceCandidates,
   audienceLabel,
@@ -154,7 +153,8 @@ export function MomentPublishPage() {
     }
     // Queue who reacts and when. Failure here must not lose the post itself.
     try {
-      await scheduleReactionsFor(moment, contacts, personaFor, now);
+      // 赞评排期在 AI 运行时里（M-L1）：只经 ai-runtime 这一个懒入口拿。
+      await (await import('../../app/ai-runtime')).moments.scheduleReactionsFor(moment, contacts, personaFor, now);
     } catch (e) {
       logError('moment.scheduleReactions', e); // the post stands; it just won't draw reactions
     }

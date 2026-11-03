@@ -15,7 +15,6 @@ import { repo } from '../../db/repo';
 import { humanizePersona } from '../../ai/humanize';
 import { applyPersonaPatch, strippedNote } from '../../data/persona-patch';
 import { HumanizeDiffSheet } from '../settings/HumanizeDiffSheet';
-import { getRouter } from '../../llm/service';
 import { globalTier } from '../../lib/nsfw-tier';
 import { storyRunning } from '../../ai/story-service';
 import { runOf, type StorySaveRow } from '../../ai/story-gm';
@@ -185,7 +184,8 @@ export function ChatInfoPage() {
     if (!ok) return;
     setBatchBusy(true);
     try {
-      const router = await getRouter();
+      // LLM 运行时按需加载（M-L1）：只有真的要生成时才拉进来。
+      const router = await (await import('../../llm/service')).getRouter();
       // Rule #6: derived tier, never declared at the call site.
       const tier = await globalTier();
       const generated: string[] = [];

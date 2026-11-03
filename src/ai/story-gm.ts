@@ -36,8 +36,10 @@ import {
   directiveTextFor,
   effectiveStoryLevel,
   parseWhen,
-  validateScript,
 } from './story-script';
+
+/** The validator brings zod; this module is on the chat page's path (M-L1). */
+const loadValidator = async () => (await import('./story-schema')).validateScript;
 
 /* ==================================================================== */
 /* Persistence shapes                                                    */
@@ -215,6 +217,7 @@ export async function getScript(id: string): Promise<Script | null> {
   const row = await idbGet<StoryScriptRow>(SCRIPTS, id);
   if (!row) return null;
   try {
+    const validateScript = await loadValidator();
     const parsed = validateScript(JSON.parse(row.dagJson));
     return parsed.script ?? null;
   } catch {
@@ -231,7 +234,7 @@ export async function saveScript(
   origin: StoryScriptRow['origin'],
   now: number,
 ): Promise<{ ok: true; id: string } | { ok: false; issues: string[] }> {
-  const result = validateScript(script);
+  const result = (await loadValidator())(script);
   if (!result.ok || !result.script) {
     return { ok: false, issues: result.issues.map((i) => i.message) };
   }

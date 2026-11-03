@@ -26,8 +26,8 @@
  * state — nothing here feeds `simulate()` or a seeded decision.
  */
 import { repo } from '../db/repo';
-import { LlmError } from '../llm/types';
-import { setLlmPreflight, isBudgetError } from '../llm/router';
+import { LlmError } from '../llm/errors';
+import { setLlmPreflight, isBudgetError } from '../llm/preflight';
 import type { ScheduledActionKind } from '../db/schema';
 
 export { isBudgetError };

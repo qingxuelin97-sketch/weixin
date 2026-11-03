@@ -1,9 +1,9 @@
+import { validateScript } from '../../src/ai/story-schema';
 import { describe, it, expect, beforeEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { repo } from '../../src/db/repo';
 import { idbGetAll, idbPut } from '../../src/db/idb';
 import {
-  validateScript,
   evalExpr,
   parseWhen,
   evaluateTriggers,
