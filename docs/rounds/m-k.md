@@ -129,5 +129,5 @@ THEME_INVARIANT 台账（深色下每个语义 token 必须表态）· 原生 `<
 
 ### 锚点
 
-收官提交之后 CI 全绿的那个尖端（本机执行 `git tag -a m-k <tip> -F docs/rounds/m-k.md`，与 M-J 同）。
+**`5714668`**——K13 收官提交，CI run 203 全绿。本机执行 `git tag -a m-k 5714668 -F docs/rounds/m-k.md`（与 M-J 同）。
 

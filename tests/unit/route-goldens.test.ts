@@ -121,6 +121,17 @@ describe('route ↔ smoke ledger (M-J0 — the two lists must never fork again)'
     expect(smokePaths().length + smokeSkips().length).toBe(Object.keys(ROUTE_LEDGER).length);
   });
 
+  it('sweep.spec.ts (M-L0 走查门禁) walks THIS ledger too, and keeps no list of its own', () => {
+    const spec = readFileSync(join(ROOT, 'tests', 'screenshot', 'sweep.spec.ts'), 'utf8');
+    expect(spec).toMatch(/from '\.\.\/lib\/route-ledger'/);
+    expect(spec).toMatch(/for \(const route of smokePaths\(\)\)/);
+    expect(spec).not.toMatch(/const ROUTES\s*[:=]/);
+    // Every detector is proven alive on a planted control before the walk.
+    for (const control of ['sweep-control-light', 'sweep-control-wide', 'sweep-control-clip']) {
+      expect(spec, `${control} 对照没了——门禁可能已经失明`).toContain(control);
+    }
+  });
+
   it('route-smoke.spec.ts derives from THIS ledger and keeps no list of its own', () => {
     const spec = readFileSync(join(ROOT, 'tests', 'screenshot', 'route-smoke.spec.ts'), 'utf8');
     expect(spec, 'smoke spec 不再 import 共享台账——两份清单又要分叉了').toMatch(
