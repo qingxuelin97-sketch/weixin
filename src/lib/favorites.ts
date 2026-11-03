@@ -143,3 +143,30 @@ export function forwardableConversations(
 ): ConversationVM[] {
   return conversations.filter((c) => !c.isHidden && c.id !== excludeConvId);
 }
+
+/**
+ * Deliver one forward (M-L2): the forwarded item, then — if the user typed one on
+ * the confirm card — the「给朋友留言」as a plain text right after it. That is the
+ * order WeChat shows, and it has to be sequential: rows are inserted in call
+ * order (rowid order == time order), so the note may only be appended once the
+ * item has landed. A blank note is no note. The chat page and the favorites page
+ * both send through this; each used to hand-roll its own copy.
+ */
+export async function deliverForward(
+  append: (m: Omit<MessageVM, 'id'>) => Promise<unknown>,
+  item: Omit<MessageVM, 'id'>,
+  note: string | undefined,
+  now: () => number,
+): Promise<void> {
+  await append(item);
+  const text = note?.trim();
+  if (!text) return;
+  await append({
+    convId: item.convId,
+    senderId: 'self',
+    type: 'text',
+    content: text,
+    status: 'sent',
+    createdAt: Math.max(now(), item.createdAt),
+  });
+}

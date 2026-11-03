@@ -190,3 +190,37 @@ test('red packet detail (手气榜)', async ({ page }) => {
   await settle(page);
   await expect(page).toHaveScreenshot('rp-detail.png', { fullPage: false });
 });
+
+/**
+ * 转发「选择一个聊天」(M-L2)。右键 = 长按（useLongPress 的桌面兜底），菜单里点「转发」。
+ * 两张：整页列表（搜索、「最近聊天」、带头像的会话），与点了一个会话之后的确认卡——
+ * 发送前确认是这一期的核心：此前点一下名字就直接发出去了。
+ */
+test('forward picker (选择一个聊天 + 确认卡)', async ({ page }) => {
+  await page.goto('/#/chat/conv_lin');
+  await settle(page);
+  await page.getByText('超好喝，改天带你去').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '转发' }).click();
+  await settle(page);
+  await expect(page.getByRole('dialog', { name: '选择一个聊天' })).toBeVisible();
+  await expect(page).toHaveScreenshot('forward-picker.png', { fullPage: false });
+  await page.locator('.cpick__row', { hasText: '周末爬山小分队' }).click();
+  await settle(page);
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await expect(page).toHaveScreenshot('forward-confirm.png', { fullPage: false });
+});
+
+/** 群里打出「@」(M-L2)：整页「选择提醒的人」，带头像的成员——此前是半屏的一列名字。 */
+test('group @ picker (选择提醒的人)', async ({ page }) => {
+  await page.goto('/#/chat/conv_group');
+  await settle(page);
+  const ack = page.getByRole('button', { name: '我知道了' });
+  if (await ack.isVisible().catch(() => false)) {
+    await ack.click();
+    await settle(page);
+  }
+  await page.locator('.composer__input').pressSequentially('@');
+  await settle(page);
+  await expect(page.getByRole('dialog', { name: '选择提醒的人' })).toBeVisible();
+  await expect(page).toHaveScreenshot('mention-picker.png', { fullPage: false });
+});

@@ -239,6 +239,15 @@ export function IconComment({ size = 24 }: IconProps) {
   );
 }
 
+/** 整页选择器左上角的关闭 (M-L2)：一个细叉。 */
+export function IconClose({ size = 22 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** 资料页「音视频通话」(M-K8)：描边摄像机——机身圆角矩形 + 右侧梯形镜头。 */
 export function IconVideoCall({ size = 24 }: IconProps) {
   return (

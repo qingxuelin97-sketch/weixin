@@ -13,7 +13,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Sheet } from '../../components/Sheet';
-import { ForwardSheet } from '../../components/ForwardSheet';
+import { ForwardPicker } from '../../components/ForwardPicker';
+import { renderMessageBody } from '../../ai/render-msg';
 import { showConfirm } from '../../components/dialog';
 import { useLongPress } from '../../components/useLongPress';
 import { LongPressMenu, type LongPressMenuItem } from '../../components/LongPressMenu';
@@ -24,6 +25,7 @@ import { chatTimestamp } from '../../lib/time';
 import { useNow } from '../../lib/useNow';
 import {
   filterFavorites,
+  deliverForward,
   forwardMessageOf,
   isForwardable,
   makeNoteFavorite,
@@ -127,14 +129,16 @@ export function FavoritesPage() {
     }
   };
 
-  const forwardTo = async (f: FavoriteVM, convId: string, convTitle: string) => {
+  const forwardTo = async (f: FavoriteVM, convId: string, note: string | undefined) => {
     const msg = forwardMessageOf(f, convId, Date.now());
     if (!msg) return;
     try {
-      await appendMessage(msg);
-      showToast(`已转发给 ${convTitle}`);
+      // 「给朋友留言」lands right after the forwarded item, as on device (M-L2).
+      await deliverForward(appendMessage, msg, note, Date.now);
+      showToast('已发送');
     } catch (e) {
       logError('favorites.forward', e);
+      showToast('发送失败');
     }
   };
 
@@ -232,12 +236,16 @@ export function FavoritesPage() {
         />
       )}
 
-      <ForwardSheet
+      <ForwardPicker
         open={forwarding != null}
         onClose={() => setForwarding(null)}
-        onPick={(c) => {
+        preview={(() => {
+          const m = forwarding && forwardMessageOf(forwarding, '', 0);
+          return m ? renderMessageBody({ ...m, id: 0 }, { maxChars: 80 }) : '';
+        })()}
+        onSend={(c, note) => {
           const f = forwarding;
-          if (f) void forwardTo(f, c.id, c.title);
+          if (f) void forwardTo(f, c.id, note);
         }}
       />
 

@@ -1,0 +1,223 @@
+/* 整页选择器 (M-L2)：转发「选择一个聊天」与群 @「选择提醒的人」。
+   从底部升起的整页（微信同款模态页），不是半屏面板。 */
+
+.cpick {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-sheet);
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--safe-top, 0);
+  background: var(--color-page-bg);
+  animation: cpick-rise 240ms var(--ease-standard) backwards;
+}
+@keyframes cpick-rise {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.cpick__nav {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  flex: none;
+  background: var(--color-nav-bg);
+}
+.cpick__close {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--color-nav-title);
+  cursor: pointer;
+}
+.cpick__title {
+  font-size: var(--fs-nav-title);
+  font-weight: 500;
+  color: var(--color-nav-title);
+}
+
+.cpick__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px;
+  padding: 0 10px;
+  height: 36px;
+  border-radius: 6px;
+  background: var(--color-cell-bg);
+  color: var(--color-text-placeholder);
+  flex: none;
+}
+.cpick__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.cpick__search input::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.cpick__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--safe-bottom, 0);
+}
+.cpick__section {
+  padding: 10px 16px 6px;
+  font-size: var(--fs-small-gray);
+  color: var(--color-text-secondary);
+}
+.cpick__empty {
+  padding: 48px 24px;
+  text-align: center;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-secondary);
+}
+.cpick__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 16px;
+  border: 0;
+  background: var(--color-cell-bg);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  position: relative;
+}
+.cpick__row + .cpick__row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 68px;
+  right: 0;
+  height: 1px;
+  background: var(--color-hairline);
+}
+.cpick__row:active {
+  background: var(--color-cell-bg-pressed);
+}
+.cpick__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+
+/* 发送前确认 (转发)：居中卡片——发给谁、发的是什么、给朋友留言、取消 / 发送。 */
+.cpick__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--color-overlay);
+}
+.cpick__confirm {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-cell-bg);
+}
+.cpick__confirm-body {
+  padding: 20px 20px 16px;
+}
+.cpick__confirm-label {
+  font-size: var(--fs-cell-title);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.cpick__confirm-to {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.cpick__preview {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--color-page-bg);
+  font-size: var(--fs-small-gray);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.cpick__note {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 4px;
+  background: var(--color-cell-bg);
+  font: inherit;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-primary);
+}
+.cpick__note::placeholder {
+  color: var(--color-text-placeholder);
+}
+.cpick__actions {
+  display: flex;
+  border-top: 1px solid var(--color-hairline);
+}
+.cpick__actions button {
+  flex: 1;
+  height: 52px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-cell-title);
+  cursor: pointer;
+}
+.cpick__actions button + button {
+  border-left: 1px solid var(--color-hairline);
+}
+.cpick__cancel {
+  color: var(--color-text-primary);
+}
+.cpick__send {
+  color: var(--color-brand);
+  font-weight: 500;
+}
+.cpick__actions button:active {
+  background: var(--color-cell-bg-pressed);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cpick {
+    animation: none !important;
+  }
+}

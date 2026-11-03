@@ -10,6 +10,9 @@ import { Avatar } from '../../components/Avatar';
 import { Badge } from '../../components/Badge';
 import { MessageBubble } from './MessageBubble';
 import { ChatThread } from './ChatThread';
+import { MentionPicker } from './MentionPicker';
+import { ForwardPicker } from '../../components/ForwardPicker';
+import { deliverForward } from '../../lib/favorites';
 import { ImageViewer } from '../../components/ImageViewer';
 import { Sheet } from '../../components/Sheet';
 import { contactCardPayload, fileExt } from '../../ai/bubble-materialize';
@@ -273,7 +276,6 @@ export function ChatPage() {
       items,
     });
   };
-  const allConversations = useAppStore((s) => s.conversations);
   // 名片选择器 (M-K1) 的候选：稳定引用，过滤在渲染里做（宪法 3.5）。
   const contacts = useAppStore((s) => s.contacts);
 
@@ -1238,81 +1240,76 @@ export function ChatPage() {
         />
       )}
 
-      {atPicker && conv.type === 'group' && (
-        <Sheet open onClose={() => setAtPicker(false)} title="提醒谁看">
-          {(conv.memberIds ?? [])
-            .map((id) => contactById(id))
-            .filter((c): c is NonNullable<typeof c> => Boolean(c))
-            .map((c) => (
-              <div
-                key={c.id}
-                className="settings__row settings__row--divided"
-                onClick={() => {
-                  const name = c.remark ?? c.name;
-                  // The '@' that summoned the picker is already in the draft.
-                  setDraft((d) => `${d}${name} `);
-                  setAtPicker(false);
-                  composer.inputRef.current?.focus();
-                }}
-              >
-                <span className="settings__label">{c.remark ?? c.name}</span>
-              </div>
-            ))}
-        </Sheet>
-      )}
+      {/* 群 @ (M-I6 → M-L2 整页)：「选择提醒的人」。'@' 已经在草稿里，选中的人接在后面。 */}
+      <MentionPicker
+        open={atPicker && conv.type === 'group'}
+        members={(conv.memberIds ?? [])
+          .map((id) => contactById(id))
+          .filter((c): c is NonNullable<typeof c> => Boolean(c))}
+        onClose={() => setAtPicker(false)}
+        onPick={(c) => {
+          // The '@' that summoned the picker is already in the draft.
+          setDraft((d) => `${d}${c.remark ?? c.name} `);
+          setAtPicker(false);
+          composer.inputRef.current?.focus();
+        }}
+      />
 
-      {(forwarding || mergedForward) && (
-        <Sheet
-          open
-          onClose={() => {
-            setForwarding(null);
-            setMergedForward(null);
-          }}
-          title="发送给"
-        >
-          {allConversations
-            .filter((c) => !c.isHidden && c.id !== convId)
-            .map((c) => (
-              <div
-                key={c.id}
-                className="settings__row settings__row--divided"
-                onClick={() => {
-                  const m = forwarding;
-                  const merged = mergedForward;
-                  setForwarding(null);
-                  setMergedForward(null);
-                  if (merged) {
-                    void appendMessage({
-                      convId: c.id,
-                      senderId: 'self',
-                      type: 'merged',
-                      content: merged.title,
-                      meta: { title: merged.title, items: merged.items },
-                      status: 'sent',
-                      createdAt: Date.now(),
-                    }).then(() => {
-                      showToast(`已转发给 ${c.title}`);
-                      exitSelect();
-                    });
-                    return;
-                  }
-                  if (!m) return;
-                  void appendMessage({
-                    convId: c.id,
-                    senderId: 'self',
-                    type: m.type,
-                    content: m.content,
-                    ...(m.meta ? { meta: { ...m.meta } } : {}),
-                    status: 'sent',
-                    createdAt: Date.now(),
-                  }).then(() => showToast(`已转发给 ${c.title}`));
-                }}
-              >
-                <span className="settings__label">{c.title}</span>
-              </div>
-            ))}
-        </Sheet>
-      )}
+      {/* 转发 (M-I6 → M-L2 整页)：「选择一个聊天」+ 发送前确认卡。与收藏页同一个选择器——
+          聊天页此前留着一份自己的内联面板，手写着同一条隐藏会话过滤。 */}
+      <ForwardPicker
+        open={Boolean(forwarding || mergedForward)}
+        excludeConvId={convId}
+        preview={
+          mergedForward
+            ? `[聊天记录] ${mergedForward.title}`
+            : forwarding
+              ? renderMessageBody(forwarding, { maxChars: 80 })
+              : ''
+        }
+        onClose={() => {
+          setForwarding(null);
+          setMergedForward(null);
+        }}
+        onSend={(c, note) => {
+          const m = forwarding;
+          const merged = mergedForward;
+          setForwarding(null);
+          setMergedForward(null);
+          const item: Omit<MessageVM, 'id'> | null = merged
+            ? {
+                convId: c.id,
+                senderId: 'self',
+                type: 'merged',
+                content: merged.title,
+                meta: { title: merged.title, items: merged.items },
+                status: 'sent',
+                createdAt: Date.now(),
+              }
+            : m
+              ? {
+                  convId: c.id,
+                  senderId: 'self',
+                  type: m.type,
+                  content: m.content,
+                  ...(m.meta ? { meta: { ...m.meta } } : {}),
+                  status: 'sent',
+                  createdAt: Date.now(),
+                }
+              : null;
+          if (!item) return;
+          // 「给朋友留言」lands right after what was forwarded, as on device.
+          void deliverForward(appendMessage, item, note, Date.now)
+            .then(() => {
+              showToast('已发送');
+              if (merged) exitSelect();
+            })
+            .catch((e) => {
+              logError('chat.forward', e);
+              showToast('发送失败');
+            });
+        }}
+      />
 
       {selecting && (
         <div className="select-bar" onClick={(e) => e.stopPropagation()}>

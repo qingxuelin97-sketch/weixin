@@ -7,6 +7,7 @@ import { useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
+import { ConvAvatar } from '../../components/ConvAvatar';
 import { useAppStore } from '../../store/appStore';
 import { chatOnlyIds, groupByTag } from '../../lib/friend-perms';
 import '../settings/settings.css';
@@ -28,7 +29,9 @@ export function GroupListPage() {
               className="settings__row settings__row--divided"
               onClick={() => navigate(`/chat/${g.id}`)}
             >
-              <Avatar color={g.avatarColor} text={g.avatarText} size={40} members={g.memberAvatars} />
+              {/* Same live-resolved grid as the chat list (M-L2) — this row used to
+                  draw placeholders even after members got real avatars. */}
+              <ConvAvatar conv={g} size={40} />
               <span className="settings__label" style={{ marginLeft: 10 }}>
                 {g.title}（{(g.memberIds?.length ?? 0) + 1}）
               </span>

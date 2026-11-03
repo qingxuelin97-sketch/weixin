@@ -56,12 +56,12 @@ const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
       '打回「群聊不存在」。隐藏 DM 都是 single 型本就进不来；isHidden 是第二道，' +
       '防将来出现隐藏群。入口只在可见群聊的 + 面板里。',
   },
-  'components/ForwardSheet.tsx': {
+  'components/ForwardPicker.tsx': {
     via: 'helper',
     helper: 'forwardableConversations',
     why:
-      '转发选择器（M-J12 从 ChatPage 抽出，收藏「转发回聊天」复用）；候选列表' +
-      '走 lib/favorites.forwardableConversations，isHidden 行在 helper 内部被排除。',
+      '转发「选择一个聊天」整页（M-L2，取代 M-J12 的 ForwardSheet；聊天页与收藏页共用）；' +
+      '候选列表走 lib/favorites.forwardableConversations，isHidden 行在 helper 内部被排除。',
   },
   'app/TabScaffold.tsx': {
     via: 'helper',
@@ -112,7 +112,9 @@ const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
   },
   'features/chat/ChatPage.tsx': {
     via: 'filters',
-    why: '按 id 直达面（URL 可伪造），isHidden 行渲染兜底；转发选择器另有 !isHidden 过滤。',
+    why:
+      '按 id 直达面（URL 可伪造），isHidden 行渲染兜底；转发目标列表交给共用的 ' +
+      'components/ForwardPicker（M-L2 起本页不再自带一份过滤），那一行另有台账。',
   },
   'features/contacts/ContactListPages.tsx': {
     via: 'filters',

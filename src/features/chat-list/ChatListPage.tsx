@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NavBar } from '../../components/NavBar';
-import { Avatar } from '../../components/Avatar';
+import { ConvAvatar } from '../../components/ConvAvatar';
 import { Badge } from '../../components/Badge';
 import { IconPlus, IconSearch } from '../../components/icons';
 import { useAppStore } from '../../store/appStore';
@@ -204,17 +204,9 @@ function ConversationRow({
   onDelete: () => void;
 }) {
   const NOW = useNow();
-  const contactById = useAppStore((s) => s.contactById);
   const badge = conv.unreadCount > 0;
   // Muted conversations show a small red dot instead of a numeric badge (device behavior).
   const dotOnly = conv.isMuted;
-  // Real avatars resolve through the live contact, not the denormalized conv
-  // fields — assigning a new avatar updates every row without a data migration.
-  const peerRef = conv.type === 'single' && conv.peerId ? contactById(conv.peerId)?.avatarRef : undefined;
-  const memberAvatars = conv.memberAvatars?.map((m, i) => ({
-    ...m,
-    imageRef: conv.memberIds?.[i] ? contactById(conv.memberIds[i])?.avatarRef : undefined,
-  }));
 
   // Shared long-press physics (M-I0) — this copy used to cancel on ANY pointer
   // movement, which made the press nearly impossible to land on a touchscreen.
@@ -292,7 +284,9 @@ function ConversationRow({
       role="button"
     >
       <div className="conv-row__avatar">
-        <Avatar color={conv.avatarColor} text={conv.avatarText} size={48} imageRef={peerRef} members={memberAvatars} />
+        {/* Real avatars resolve through the live contact (ConvAvatar), not the
+            denormalized conv fields — the forward picker draws the same thing. */}
+        <ConvAvatar conv={conv} size={48} />
         {badge && (
           // One badge component; the roll lives inside it (M-I0 × M-I8), so
           // there is no `key` remount trick and no per-site `badge-roll`.

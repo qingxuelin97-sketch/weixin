@@ -23,8 +23,16 @@
 - [x] 收藏二期（M-J12）：/favorites 全文搜索（正文/来源/meta 可读值，
       `lib/favorites.filterFavorites`）；「笔记」= `type:'note'` 的收藏行
       （右上角 + → 编辑 Sheet；长按可编辑，编辑不换 id 不动 favedAt）；
-      长按菜单「转发到聊天」复用 `components/ForwardSheet`（自 ChatPage
-      抽出的"发送给"选择器），note 以 text 出门、meta 克隆不别名。
+      长按菜单「转发到聊天」复用聊天页的转发选择器（M-L2 起是整页的
+      `components/ForwardPicker`），note 以 text 出门、meta 克隆不别名。
+- [x] 整页选择器（M-L2）：转发「选择一个聊天」与群 @「选择提醒的人」从半屏面板
+      改成从底部升起的整页（搜索、带头像的行；转发多一段「最近聊天」）。转发点了
+      会话**不立刻发**，先弹确认卡：发送给谁（`ConvAvatar` + 名字）、发的是什么
+      （单条走 `renderMessageBody`，合并转发是「[聊天记录] 标题」）、「给朋友留言」、
+      取消 / 发送。留言以 text 落在被转发的东西**后面**——两处（聊天页、收藏页）都经
+      `lib/favorites.deliverForward`，顺序只有一份实现。返回键先关确认卡再关整页。
+      M-L2 之前聊天页还留着一份自己的内联转发面板，手写着同一条 `!isHidden` 过滤，
+      现在两处共用一个选择器、候选只经 `forwardableConversations`。
 
 ## 设计要点
 
