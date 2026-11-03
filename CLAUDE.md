@@ -87,7 +87,10 @@ src/
   前三关是 `Record<ActionKind, …>`，漏一个直接编译不过。
   自续链的那几种用
   `registerChainedHandler`（先续链后干活，失败只暂停不终结），并且必须进 wiring 测试的
-  SELF_CHAINING 清单。
+  SELF_CHAINING 清单。**续链只给链上的环**（M-K9）：同一个 kind 里还有一次性的行——nudge
+  （`nudge: true`）与离线回填（payload 带 `at`）——它们的 chain 步骤必须直接返回
+  （`isChainOneOff`），「链已就位」的判断也不许算它们。否则每一次 nudge、每一次长时间离开后
+  的回填都给同一个人再接出一条链，她的主动消息越晾越多（前台一遍用 `forkedChains` 剪存量）。
 - **`NOTIFY_STANCE` 台账**（`src/ai/notify-service.ts`，M-J4）：每个 kind 还必须表态
   「App 关着时该不该出通知」——`Record<ActionKind, eligible | silent+why>` 编译期强制
   全覆盖，守卫再断言键集合与 `SCHEDULED_ACTION_KINDS` 相等。**加 kind 不表态即转红**。
@@ -224,6 +227,15 @@ src/
 - **`@keyframes` 里用独立 `translate` 属性要进 `KEYFRAME_EXEMPTIONS`**（motion 守卫
   只认 transform/opacity）。它本身是合成类属性、截图门禁同样冻结，用它是为了让平移
   与 `transform: scale` 在同一元素上叠加而不互相覆盖——但豁免必须有名有由地登记。
+- **定义了却没人用的 token 同样不报错**（M-K12，J13 的另一半）：气泡按压的两个 pressed token
+  从 M1 起定义着、深浅都有，全仓没有一处用过——按住气泡从不变色，所有检查都绿。现在每个
+  `--color-*` 必须有人引用，运行时拼出来的前缀走有名有由的台账（`k12-feel.test.tsx`）。
+- **种子数据不许把派生值写死**（M-K8）：种子群叫「周末爬山小分队(5)」——人数是名字的一部分，
+  会话列表多出一个尾巴、进 prompt、加人后永远是 5。派生的东西在显示处派生；改种子要想到老安装
+  里已经写进库的那一行（`fixLegacySeedTitles`：只订正种子原文，不碰用户改过的）。
+- **`vi.mock` 的工厂会被提升到所有顶层声明之前**：工厂里引用的变量要用 `vi.hoisted` 一起提升，
+  否则整份测试文件在收集阶段就挂了。而这种失败只体现在「Test Files N failed」那一行——只看
+  「Tests N passed」汇总的话，同一次运行里别的文件的通过数会把它盖住（M-K12 踩过）。
 - **未定义的 CSS 变量什么都不画，而且没有任何东西会报错**（M-J13）：
   `var(--color-cell-pressed)`（不存在）不是错误，只是那条声明整个消失——按下态、
   边框、阴影就这么静默不见，硬编码颜色检查照样绿。反过来那半边由
