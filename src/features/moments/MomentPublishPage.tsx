@@ -10,13 +10,15 @@
  * drivers and the reaction planner. This page only has to record the intent
  * correctly; it is structurally incapable of being the thing that leaks.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Sheet } from '../../components/Sheet';
 import { Avatar } from '../../components/Avatar';
 import { showActionSheet } from '../../components/dialog';
 import { useAppStore } from '../../store/appStore';
+import { repo } from '../../db/repo';
+import { registerMedia } from '../../data/media-registry';
 import { availableRefs, resolveImageRef } from '../../data/moments-images';
 import { scheduleReactionsFor } from '../../ai/moments-service';
 import {
@@ -58,6 +60,29 @@ export function MomentPublishPage() {
   // fresh array re-renders forever (CLAUDE.md §3.5).
   const people = audienceCandidates(contacts);
 
+  const albumRef = useRef<HTMLInputElement>(null);
+  /** 相册导入：每张存进素材库（tags=朋友圈，跟着备份走），并直接选上，不超过 9 张。 */
+  const importAlbum = async (files: FileList | null) => {
+    if (!files?.length) return;
+    for (const f of Array.from(files)) {
+      if (!f.type.startsWith('image/')) continue;
+      const item = {
+        id: crypto.randomUUID(),
+        kind: 'photo' as const,
+        tags: ['朋友圈'],
+        mime: f.type,
+        blob: f as Blob,
+        createdAt: Date.now(),
+      };
+      try {
+        await repo.putMedia(item);
+        registerMedia(item.id, { url: URL.createObjectURL(f), kind: 'photo', tags: item.tags });
+        setPicked((cur) => (cur.length >= MAX_IMAGES ? cur : [...cur, `idb:${item.id}`]));
+      } catch (e) {
+        logError('moment.album', e);
+      }
+    }
+  };
   const toggle = (ref: string) =>
     setPicked((cur) =>
       cur.includes(ref)
@@ -175,6 +200,16 @@ export function MomentPublishPage() {
         选择图片（{picked.length}/{MAX_IMAGES}）
       </div>
       <div className="publish__picker">
+        {/* 「＋」从相册添加（M-K7）：微信发朋友圈的第一格。导入走素材库，与聊天发图、
+            聊天背景同一条管线，导入后直接选上。 */}
+        <button
+          type="button"
+          className="publish__thumb publish__thumb--add"
+          aria-label="从相册添加"
+          onClick={() => albumRef.current?.click()}
+        >
+          ＋
+        </button>
         {pool.map((ref) => {
           const { url, background } = resolveImageRef(ref);
           const idx = picked.indexOf(ref);
@@ -192,6 +227,18 @@ export function MomentPublishPage() {
           );
         })}
       </div>
+
+      <input
+        ref={albumRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          void importAlbum(e.target.files);
+          e.target.value = '';
+        }}
+      />
 
       {/* The person picker is a plain Sheet (I0) rather than another hand-rolled
           overlay, so the back button closes it like every other sheet. Its rows

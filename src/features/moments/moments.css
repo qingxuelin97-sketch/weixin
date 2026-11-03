@@ -593,3 +593,17 @@
     animation: none !important;
   }
 }
+
+/* 「＋」从相册添加 (M-K7)：和照片格同尺寸的虚线方块，中间一个加号。 */
+.publish__thumb--add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--color-hairline);
+  background: var(--color-cell-bg);
+  font-size: 30px;
+  color: var(--color-text-secondary);
+}
+.publish__thumb--add:active {
+  background: var(--color-cell-bg-pressed);
+}
