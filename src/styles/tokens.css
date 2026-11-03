@@ -187,6 +187,8 @@
   --color-moments-bg: var(--wx-white);
   --color-moments-comment-bg: var(--wx-moments-comment-bg);
   --color-moments-action-bg: var(--wx-moments-comment-bg);
+  /* 按住一条评论时的底色 (M-K7)——比评论块深一档。 */
+  --color-moments-comment-pressed: var(--wx-page-pressed);
   --color-moments-cover-a: var(--wx-moments-cover-a);
   --color-moments-cover-b: var(--wx-moments-cover-b);
   --color-moments-image-empty: var(--wx-page); /* grid cell before art loads */
@@ -382,6 +384,7 @@
 
   --color-moments-bg: var(--wxd-bg-2);
   --color-moments-comment-bg: var(--wxd-bg-3);
+  --color-moments-comment-pressed: var(--wxd-bg-active);
   --color-moments-action-bg: var(--wxd-bg-5);
   --color-moments-image-empty: var(--wxd-bg-5);
 

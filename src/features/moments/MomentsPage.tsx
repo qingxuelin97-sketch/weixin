@@ -30,6 +30,7 @@ import { usePullRefresh } from '../../components/usePullRefresh';
 import { PullRefresh } from '../../components/PullRefresh';
 import { useStagger } from '../../lib/useStagger';
 import type { MomentCommentVM } from '../../data/types';
+import type { MomentsNews } from '../../ai/moments-news';
 import './moments.css';
 
 /** Cover height in px; the nav is fully opaque once this much has scrolled by. */
@@ -67,11 +68,35 @@ export function MomentsPage() {
     void loadMoments();
   }, [loadMoments]);
 
-  // Looking at the feed consumes the news badge (M-I15). On mount, not on
-  // every render — the watermark is "when you last opened the page".
+  /**
+   * Looking at the feed consumes the news badge (M-I15). On mount, not on
+   * every render — the watermark is "when you last opened the page".
+   *
+   * 新消息胶囊 (M-K7): but the news itself must survive into THIS visit — it is
+   * what the「N条新消息」capsule under the cover shows, and tapping it is how
+   * you find out who liked what. So: snapshot first, then advance the
+   * watermark. The snapshot is local state; the store's badge clears as before.
+   *
+   * The watermark is the time captured BEFORE the refresh, not after it: a
+   * like landing while the refresh is in flight is newer than what the capsule
+   * shows, so it must stay news for next time rather than be marked read
+   * unseen.
+   */
+  const refreshMomentsNews = useAppStore((s) => s.refreshMomentsNews);
+  const [news, setNews] = useState<MomentsNews>(() => useAppStore.getState().momentsNews);
   useEffect(() => {
-    void markMomentsSeen(Date.now()).catch(() => {});
-  }, [markMomentsSeen]);
+    let alive = true;
+    const seenAt = Date.now();
+    void (async () => {
+      await refreshMomentsNews().catch(() => {});
+      const fresh = useAppStore.getState().momentsNews;
+      if (alive && fresh.count > 0) setNews(fresh);
+      await markMomentsSeen(seenAt).catch(() => {});
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [refreshMomentsNews, markMomentsSeen]);
 
   // 封面 (M-I15): user-chosen library photo behind the name/avatar corner.
   const [coverRef, setCoverRef] = useState<string | undefined>();
@@ -177,7 +202,6 @@ export function MomentsPage() {
    * that arrived while the feed was open is exactly what the pull is for.
    */
   const pullRef = useRef<HTMLDivElement>(null);
-  const refreshMomentsNews = useAppStore((s) => s.refreshMomentsNews);
   const pull = usePullRefresh({
     ref: pullRef,
     scroller: () => scrollRef.current,
@@ -263,9 +287,41 @@ export function MomentsPage() {
           {coverUrl && <img className="moments__cover-img" src={coverUrl} alt="" />}
           <div className="moments__self">
             <span className="moments__self-name">{self ? (self.remark ?? self.name) : '我'}</span>
-            <Avatar text={self?.avatarText ?? '我'} color={self?.avatarColor ?? 'var(--color-text-secondary)'} imageRef={self?.avatarRef} size={64} />
+            {/* Your own face → your own album, as on device. The cover around
+                it is the「更换封面」target, so the tap stops here. */}
+            <button
+              className="moments__self-avatar"
+              aria-label="我的朋友圈"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate('/moments/album/self');
+              }}
+            >
+              <Avatar text={self?.avatarText ?? '我'} color={self?.avatarColor ?? 'var(--color-text-secondary)'} imageRef={self?.avatarRef} size={64} />
+            </button>
           </div>
         </div>
+
+        {/* 新消息胶囊 (M-K7): who reacted to your posts since you last looked —
+            the newest actor's face and a count, centred under the cover. */}
+        {news.count > 0 && (
+          <div className="moments__news-wrap">
+            <button
+              className="moments__news"
+              onClick={() => navigate(`/moments/messages?n=${news.count}`)}
+            >
+              {news.actorId && (
+                <Avatar
+                  text={byId.get(news.actorId)?.avatarText ?? '?'}
+                  color={byId.get(news.actorId)?.avatarColor ?? 'var(--color-text-placeholder)'}
+                  imageRef={byId.get(news.actorId)?.avatarRef}
+                  size={28}
+                />
+              )}
+              <span>{news.count}条新消息</span>
+            </button>
+          </div>
+        )}
 
         {visitor && (
           <div className="moments__visitor">

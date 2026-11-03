@@ -1,0 +1,94 @@
+/* 朋友圈「消息」列表 (M-K7). Its own stylesheet, imported only by the lazy
+   MomentMessagesPage, so the page's CSS rides in its chunk instead of the
+   cold-start sheet every launch pays for. */
+/* 消息 list: avatar · who + what + when · the post on the right. */
+.mmsg {
+  background: var(--color-cell-bg);
+}
+.mmsg__empty {
+  padding: 72px 24px 0;
+  text-align: center;
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-secondary);
+}
+.mmsg__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--color-hairline);
+  background: var(--color-cell-bg);
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.mmsg__row:active {
+  background: var(--color-cell-bg-pressed);
+}
+.mmsg__main {
+  flex: 1;
+  min-width: 0;
+}
+.mmsg__name {
+  font-size: var(--fs-comment);
+  font-weight: 500;
+  color: var(--color-link);
+}
+.mmsg__what {
+  margin-top: 4px;
+  font-size: var(--fs-comment);
+  line-height: 1.45;
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+.mmsg__heart {
+  display: inline-flex;
+  color: var(--color-link);
+  vertical-align: -2px;
+}
+.mmsg__time {
+  margin-top: 4px;
+  font-size: var(--fs-timestamp);
+  color: var(--color-text-timestamp);
+}
+.mmsg__post {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  background: var(--color-moments-image-empty);
+}
+.mmsg__post img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* A text-only post previews as its first lines, grey, in the same square. */
+.mmsg__post--text {
+  padding: 4px;
+  background: var(--color-moments-comment-bg);
+  font-size: var(--fs-timestamp);
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+.mmsg__post--text span {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mmsg__more {
+  display: block;
+  width: 100%;
+  padding: 14px 0;
+  border: 0;
+  background: var(--color-cell-bg);
+  font-size: var(--fs-cell-sub);
+  color: var(--color-link);
+  cursor: pointer;
+}

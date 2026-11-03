@@ -96,6 +96,7 @@ const EnvDiagPage = lazyPage(() => import('./features/settings/EnvDiagPage'), 'E
 const GroupCreatePage = lazyPage(() => import('./features/contacts/GroupCreatePage'), 'GroupCreatePage');
 const MomentRepostPage = lazyPage(() => import('./features/moments/MomentRepostPage'), 'MomentRepostPage');
 const MomentTopicPage = lazyPage(() => import('./features/moments/MomentTopicPage'), 'MomentTopicPage');
+const MomentMessagesPage = lazyPage(() => import('./features/moments/MomentMessagesPage'), 'MomentMessagesPage');
 const StoragePage = lazyPage(() => import('./features/settings/StoragePage'), 'StoragePage');
 const CallPage = lazyPage(() => import('./features/call/CallPage'), 'CallPage');
 const GroupCallPage = lazyPage(() => import('./features/call/GroupCallPage'), 'GroupCallPage');
@@ -199,6 +200,7 @@ export function App() {
               <Route path="/moments/repost/:momentId" element={<Push><MomentRepostPage /></Push>} />
               <Route path="/moments/topic/:tag" element={<Push><MomentTopicPage /></Push>} />
               <Route path="/moments/album/:contactId" element={<Push><MomentAlbumPage /></Push>} />
+              <Route path="/moments/messages" element={<Push><MomentMessagesPage /></Push>} />
               <Route path="/profile" element={<Push><ProfilePage /></Push>} />
               <Route path="/settings" element={<Push><SettingsPage /></Push>} />
               <Route path="/settings/api" element={<Push><ApiConfigPage /></Push>} />

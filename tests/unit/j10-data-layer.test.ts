@@ -67,14 +67,18 @@ describe('体积棘轮：主/懒双账本', () => {
     expect(src).toContain('if (lazyKb > LAZY_BUDGET_KB)');
   });
 
-  it('主账本按 index.html 引用的入口 chunk + 全部 CSS 划定', () => {
-    // 「冷启动要解析什么」不是靠文件名猜的，是 index.html 说了算。
+  it('主账本按 index.html 引用的入口 chunk + 入口 CSS 划定', () => {
+    // 「冷启动要解析什么」不是靠文件名猜的，是 index.html 说了算——CSS 也一样
+    // （M-K7）：只被懒模块引用的样式表，Vite 会拆成独立文件、跟着它的 chunk
+    // 一起加载。此前「全部 CSS 算主包」只在构建恰好只产出一张样式表时成立。
     expect(src).toContain("readFileSync('dist/index.html'");
-    expect(src).toContain("f.endsWith('.css') || entryJs.has(f)");
+    expect(src).toContain('entryCss.has(f) || entryJs.has(f)');
+    expect(src).not.toContain("f.endsWith('.css') ||");
   });
 
   it('入口找不到时必须失败，不许静默地把 main 记成 0', () => {
     expect(src).toContain('entryJs.size === 0');
+    expect(src).toContain('entryCss.size === 0');
   });
 
   it('写清了为什么单一总量口径是错的指标（后人别再合回去）', () => {

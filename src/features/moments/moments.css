@@ -41,8 +41,8 @@
 .moments__nav-title {
   flex: 1;
   text-align: center;
-  font-size: 17px;
-  font-weight: 600;
+  font-size: var(--fs-nav-title);
+  font-weight: 500;
   opacity: var(--nav-alpha);
 }
 
@@ -77,8 +77,8 @@
 }
 .moments__self-name {
   margin-bottom: 26px;
-  font-size: 17px;
-  font-weight: 600;
+  font-size: var(--fs-moment-name);
+  font-weight: 500;
   color: var(--color-text-on-brand);
   text-shadow: 0 1px 2px var(--color-overlay);
 }
@@ -106,8 +106,8 @@
   min-width: 0;
 }
 .moment__author {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--fs-moment-name);
+  font-weight: 500;
   color: var(--color-link);
 }
 /* 「刚刚活跃」绿点 (M-I16): seeded low-frequency presence hint by the name. */
@@ -122,7 +122,7 @@
 }
 .moment__text {
   margin: 4px 0 0;
-  font-size: 15px;
+  font-size: var(--fs-moment-body);
   line-height: 1.45;
   color: var(--color-text-primary);
   white-space: pre-wrap;
@@ -174,14 +174,15 @@
   margin-top: 8px;
 }
 .moment__time {
-  font-size: 12px;
+  font-size: var(--fs-timestamp);
   color: var(--color-text-timestamp);
 }
 
+/* The popover hangs off this box, so it no longer takes room in the row. */
 .moment__actions {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
 }
 .moment__dots {
   display: flex;
@@ -202,54 +203,112 @@
   background: var(--color-link);
 }
 
-.moment__capsule {
-  display: flex;
-  align-items: center;
-  height: 30px;
+/* 「··」赞评浮层 (M-K7). Absolutely positioned to the LEFT of the button and
+   vertically centred on it: in the flex row it used to shove the timestamp
+   (and the 删除 link) aside every time it opened.
+
+   The slide is transform-only. The outer box is a fixed-size clip; the inner
+   row starts parked behind the button (translateX(100%)) and slides left into
+   view, so it reads as unrolling out of the ·· rather than growing. */
+.moment__pop {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  margin-top: -19px;
+  height: 38px;
   border-radius: 4px;
-  background: var(--color-menu-bg);
   overflow: hidden;
 }
-.moment__capsule button {
-  padding: 0 14px;
+.moment__pop-row {
+  display: flex;
+  align-items: center;
   height: 100%;
+  background: var(--color-menu-bg);
+  animation: moment-pop-in 180ms var(--ease-standard) backwards;
+}
+.moment__pop-row button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 18px;
   border: 0;
   background: none;
-  font-size: 13px;
+  font-size: var(--fs-cell-sub);
   color: var(--color-text-on-brand);
+  white-space: nowrap;
   cursor: pointer;
 }
-.moment__capsule-div {
-  width: 1px;
-  height: 14px;
+.moment__pop-row button:active {
   background: var(--color-on-color-divider);
+}
+.moment__pop-div {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  background: var(--color-on-color-divider);
+}
+@keyframes moment-pop-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 /* ---- Likes & comments block ---- */
+/* 评论条 (M-K7): WeChat's grey block carries a small notch at its top-left,
+   pointing up at the timestamp row it belongs to. The notch is a bordered
+   zero-size box in the block's own colour, so it themes with the block. */
 .moment__reactions {
-  margin-top: 8px;
-  padding: 6px 8px;
+  position: relative;
+  margin-top: 12px;
+  padding: 4px 0;
   border-radius: 3px;
   background: var(--color-moments-comment-bg);
-  font-size: 14px;
+  font-size: var(--fs-comment);
   line-height: 1.5;
 }
+.moment__reactions::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 12px;
+  border: 6px solid transparent;
+  border-top: 0;
+  border-bottom-color: var(--color-moments-comment-bg);
+}
 .moment__likes {
+  padding: 0 8px;
   color: var(--color-link);
   word-break: break-word;
 }
+/* Outlined heart, link-blue, sitting on the text baseline like WeChat's. */
 .moment__heart {
+  display: inline-flex;
   margin-right: 4px;
-  font-size: 12px;
+  vertical-align: -2px;
+}
+/* In em, so the heart grows with「字体大小」like the names beside it. */
+.moment__heart svg {
+  width: 1em;
+  height: 1em;
 }
 .moment__reaction-div {
   height: 1px;
-  margin: 5px 0;
+  margin: 4px 0;
   background: var(--color-hairline);
 }
+/* Each comment is its own press target (tap = 回复 / 删除), so it gets the
+   pressed tint across the block's full width, as on device. */
 .moment__comment {
+  padding: 1px 8px;
   color: var(--color-text-primary);
   word-break: break-word;
+}
+.moment__comment:active {
+  background: var(--color-moments-comment-pressed);
 }
 .moment__comment-author {
   color: var(--color-link);
@@ -275,7 +334,7 @@
   border: 0;
   border-radius: 4px;
   background: var(--color-input-field-bg);
-  font-size: 15px;
+  font-size: var(--fs-comment);
   color: var(--color-text-primary);
 }
 .moments__composer button {
@@ -381,10 +440,14 @@
 /* ---- M-I15: cover photo, visitor hint, topics, repost card, album ---- */
 
 /* User-chosen cover photo fills the gradient box; the gradient stays as the
-   loading/placeholder ground underneath. */
-.moments__cover {
-  overflow: hidden;
-}
+   loading/placeholder ground underneath.
+
+   M-K7: the box itself must NOT clip. M-I15 put `overflow: hidden` here, and
+   that silently cut off the bottom 20px of the avatar that `.moments__self`
+   hangs below the cover edge on purpose (`bottom: -20px`) — WeChat's most
+   recognisable moments detail rendered as a squashed 64×44 tile for two
+   rounds. The photo is `inset: 0` + `object-fit: cover`, so it never
+   overflows; nothing here needs a clip. Guard: k7-moments.test.ts. */
 .moments__cover-img {
   position: absolute;
   inset: 0;
@@ -451,7 +514,7 @@
   padding: 6px 10px;
   border-radius: 4px;
   background: var(--color-moments-comment-bg);
-  font-size: 13px;
+  font-size: var(--fs-small-gray);
   color: var(--color-text-secondary);
 }
 .moments__visitor-eye {
@@ -474,7 +537,7 @@
   padding: 8px 10px;
   border-radius: 3px;
   background: var(--color-moments-comment-bg);
-  font-size: 14px;
+  font-size: var(--fs-cell-sub);
   line-height: 1.5;
   color: var(--color-text-primary);
   word-break: break-word;
@@ -518,8 +581,8 @@
   padding: 14px 16px 6px;
 }
 .moments__topic-tag {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: var(--fs-name);
+  font-weight: 500;
   color: var(--color-link);
 }
 .moments__topic-count {
@@ -589,7 +652,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .moment-anchor-flash {
+  .moment-anchor-flash,
+  .moment__pop-row {
     animation: none !important;
   }
 }
@@ -606,4 +670,48 @@
 }
 .publish__thumb--add:active {
   background: var(--color-cell-bg-pressed);
+}
+
+/* ---- M-K7: own-avatar button, 新消息胶囊, 消息 list ---- */
+
+/* The avatar on the cover is a button now (→ your own album). Reset it to the
+   bare tile so the overhang geometry above is unchanged. */
+.moments__self-avatar {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  line-height: 0;
+  cursor: pointer;
+}
+
+/* The capsule sits under the cover, so it inherits the list's clearance for
+   the avatar hanging below the cover edge; whatever follows it then only
+   needs a normal gap. */
+.moments__news-wrap {
+  display: flex;
+  justify-content: center;
+  padding-top: 40px;
+}
+.moments__news-wrap + .moments__visitor {
+  margin-top: 12px;
+}
+.moments__news-wrap + .moments__list {
+  padding-top: 12px;
+}
+.moments__news {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 18px 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--color-menu-bg);
+  font-size: var(--fs-cell-sub);
+  color: var(--color-text-on-brand);
+  cursor: pointer;
+}
+.moments__news:active {
+  opacity: 0.85;
 }

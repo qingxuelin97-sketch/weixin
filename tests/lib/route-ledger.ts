@@ -42,6 +42,13 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
     smoke: { path: '/moments/topic/深夜' }, // any tag boots; empty list is a valid state
   },
   '/moments/album/:contactId': { golden: 'moments-album', smoke: { path: '/moments/album/ai_lin' } },
+  '/moments/messages': {
+    // The seed has no posts of the user's own, so the only seeded state is the
+    // empty list. The populated list (heart / comment / repost rows, the 'n'
+    // cut-off and 查看更早的消息) is rendered in jsdom by k7-moments.test.tsx.
+    exempt: 'seed has no own posts → only the empty state is seedable; rows tested in jsdom',
+    smoke: { path: '/moments/messages' },
+  },
   '/profile': { golden: 'profile', smoke: { path: '/profile' } },
   '/favorites': { golden: 'favorites', smoke: { path: '/favorites' } },
   '/settings': { golden: 'settings', smoke: { path: '/settings' } },

@@ -124,6 +124,23 @@ try {
   process.exit(1);
 }
 const entryJs = new Set([...html.matchAll(/assets\/([\w.-]+\.js)/g)].map((m) => m[1]));
+/**
+ * Stylesheets linked from index.html (M-K7). Only THESE block first paint.
+ *
+ * Until M-K7 every .css counted as main, on the reasoning written beside the
+ * classifier below — "it is linked from index.html". That was true while the
+ * build emitted exactly one stylesheet. A CSS file imported only by lazy
+ * modules is split by Vite into its own file and fetched WITH its chunk, the
+ * same as that chunk's JS: lazy weight. Classify by the same evidence the JS
+ * side uses — what index.html actually references.
+ */
+const entryCss = new Set([...html.matchAll(/assets\/([\w.-]+\.css)/g)].map((m) => m[1]));
+if (entryCss.size === 0) {
+  // Same failure mode as above: a ratchet that measures "0 KB of CSS" passes
+  // exactly when it must not.
+  console.error('✗ no stylesheet linked from dist/index.html — the ratchet cannot measure main CSS.');
+  process.exit(1);
+}
 if (entryJs.size === 0) {
   // Fail loudly rather than silently measuring "0 KB of main": a build whose
   // entry cannot be found is exactly when this check must not pass.
@@ -135,9 +152,10 @@ const files = entries
   .filter((f) => f.endsWith('.js') || f.endsWith('.css'))
   .map((f) => {
     const bytes = gzipSync(readFileSync(join(dir, f)), { level: 9 }).length;
-    // CSS is always cold-start weight: it is linked from index.html and blocks
-    // first paint whether or not the JS that uses it is lazy.
-    const main = f.endsWith('.css') || entryJs.has(f);
+    // Entry CSS is cold-start weight: linked from index.html, it blocks first
+    // paint whether or not the JS that uses it is lazy. A lazy chunk's own
+    // stylesheet is not linked there and loads with the chunk (see entryCss).
+    const main = entryCss.has(f) || entryJs.has(f);
     return { f, kb: bytes / 1024, main };
   })
   .sort((a, b) => b.kb - a.kb);

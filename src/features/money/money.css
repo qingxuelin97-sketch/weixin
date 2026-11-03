@@ -54,10 +54,6 @@
   text-align: center;
   margin-top: 8px;
 }
-.amount-display__label {
-  font-size: var(--fs-small-gray);
-  color: var(--color-text-secondary);
-}
 .amount-display__value {
   font-size: 44px;
   font-weight: var(--fw-medium);
@@ -429,29 +425,9 @@
 }
 
 /* ---- Wallet ---- */
-.wallet__balance {
-  background: var(--color-cell-bg);
-  padding: 32px 16px;
-  text-align: center;
-}
-.wallet__label {
-  font-size: var(--fs-preview);
-  color: var(--color-text-secondary);
-}
-.wallet__value {
-  margin-top: 10px;
-  font-size: 44px;
-  font-weight: var(--fw-medium);
-  color: var(--color-text-primary);
-}
 .wallet__list {
   background: var(--color-cell-bg);
   margin-top: 8px;
-}
-.wallet__title {
-  padding: 12px 16px 6px;
-  font-size: var(--fs-small-gray);
-  color: var(--color-text-secondary);
 }
 .wallet__row {
   display: flex;
@@ -513,11 +489,6 @@
   border-color: var(--color-rp-envelope);
   color: var(--color-rp-envelope);
   font-weight: var(--fw-medium);
-}
-.rp-mode__who {
-  appearance: none;
-  border: none;
-  background: transparent;
 }
 
 /* ---- M-J8: 账单页（分页 + 按月小计 + 筛选） ---- */

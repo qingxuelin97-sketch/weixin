@@ -110,13 +110,6 @@
   animation: none !important;
   transition: none !important;
 }
-.page-stack__scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: var(--color-black-scrim);
-  pointer-events: none;
-}
 
 /* ---- Composer panel rises like the keyboard it replaces. */
 .composer-panel {
@@ -251,10 +244,6 @@
 }
 .tabbar__item svg {
   transition: transform var(--dur-fast) var(--ease-standard);
-}
-.moment__like-btn:active,
-.moment__comment-btn:active {
-  opacity: 0.55;
 }
 .error-screen__btn:active {
   filter: brightness(0.92);

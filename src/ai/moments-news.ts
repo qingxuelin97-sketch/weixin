@@ -23,6 +23,8 @@ export interface MomentsNewsItem {
   actorId: string;
   momentId: string;
   at: number;
+  /** kind 'comment' only: which comment, so the 消息 list (M-K7) can quote it. */
+  commentId?: string;
 }
 
 export interface MomentsNews {
@@ -61,7 +63,13 @@ export function collectMomentsNews(
     }
     for (const c of commentsByMoment[id] ?? []) {
       if (c.authorId !== 'self' && c.createdAt > seenAt) {
-        items.push({ kind: 'comment', actorId: c.authorId, momentId: id, at: c.createdAt });
+        items.push({
+          kind: 'comment',
+          actorId: c.authorId,
+          momentId: id,
+          at: c.createdAt,
+          commentId: c.id,
+        });
       }
     }
   }

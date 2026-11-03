@@ -225,6 +225,34 @@ export function IconBackspace({ size = 24 }: IconProps) {
   );
 }
 
+/** 朋友圈「··」浮层的「评论」(M-K7)：描边的方圆对话框，左下一个小尾巴。 */
+export function IconComment({ size = 24 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M5.5 5h13A2 2 0 0 1 20.5 7v8.5a2 2 0 0 1-2 2h-8L6.5 20.5v-3h-1a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** 朋友圈「··」浮层的「转发」(M-K7)：从方框里向右上弯出的箭头。 */
+export function IconShare({ size = 24 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M13 5.5 19.5 11 13 16.5V13c-4 0-6.8 1.3-8.5 4.5C5 12.5 7.8 9.6 13 9V5.5z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** 表情面板底栏「收藏的表情」tab (M-K2)：描边爱心。 */
 export function IconHeart({ size = 24 }: IconProps) {
   return (

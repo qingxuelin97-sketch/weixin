@@ -209,6 +209,9 @@ src/
   ② **带 golden 的路由不许 `React.lazy`**：懒页首帧是 Suspense 兜底，而基线拍的正是
   首帧，CI 下次 regen 会安安静静铸出一张空白基线，那一页的门禁从此永远为真。
   守卫在 `tests/unit/route-goldens.test.ts`，它落地当场就抓住了我自己拆错的一条。
+  ③ **CSS 也按 index.html 划账**（M-K7）：只被懒模块 import 的样式表，Vite 会拆成独立文件、
+  随 chunk 加载，记懒账本；此前「全部 CSS 算主包」只在构建恰好只产出一张样式表时成立。
+  所以懒页的样式**单独写一个文件**，别塞进首屏页面共用的那张表（`moment-messages.css` 先例）。
 - **`useMedia(refs)` 只做预热，不回传 URL**（返回 `void`）：URL 要另外走
   `resolveImageRef(ref).url`（`src/data/moments-images.ts`，Avatar/MessageBubble 都是
   这个配法）。写成 `const url = useMedia(x)` 会拿到 undefined 然后静默画占位图。

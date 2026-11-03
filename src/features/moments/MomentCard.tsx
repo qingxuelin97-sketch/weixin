@@ -5,6 +5,13 @@
  * The "··" button toggles a small dark capsule with 赞 / 评论 — WeChat slides it
  * out from the right of the button, anchored to the timestamp row.
  *
+ * M-K7: the capsule is a real popover now — absolutely positioned (it used to
+ * sit in the flex row and shove the timestamp aside), icon + label per item,
+ * slides out from behind the button, and closes on any tap elsewhere or any
+ * scroll, which is also what keeps at most one card's popover open. The
+ * reaction block grew WeChat's notch pointing up at the timestamp row and an
+ * outlined heart (it was a font glyph that rendered as a filled blob).
+ *
  * M-I15 additions:
  *  - #话题# runs render as tappable links into the topic page;
  *  - a repost renders the ROOT original as a grey quote card (snapshot fields,
@@ -12,9 +19,10 @@
  *  - the author name is tappable (→ 个人相册页) when the parent wires it;
  *  - the capsule gains 转发 on posts the parent allows reposting.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Avatar } from '../../components/Avatar';
 import { ImageViewer } from '../../components/ImageViewer';
+import { IconComment, IconHeart, IconShare } from '../../components/icons';
 import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
 import { resolveImageRef } from '../../data/moments-images';
 import { momentTimestamp } from '../../lib/time';
@@ -203,6 +211,24 @@ export function MomentCard({
   const imgs = moment.imageRefs.slice(0, 9);
   const hasReactions = likes.length > 0 || comments.length > 0;
 
+  // 浮层开着时，点别处或滚动就收起 (M-K7)。捕获阶段监听：滚动事件不冒泡，
+  // 而按下另一张卡的「··」时，这张卡要先收起，那张才打开——所以同一时刻
+  // 只会有一个浮层，不需要任何跨卡片的状态。
+  const actionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const onDown = (e: Event) => {
+      if (!actionsRef.current?.contains(e.target as Node)) setActionsOpen(false);
+    };
+    const onScroll = () => setActionsOpen(false);
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('scroll', onScroll, true);
+    };
+  }, [actionsOpen]);
+
   return (
     <article className="moment">
       <Avatar
@@ -281,40 +307,47 @@ export function MomentCard({
               </button>
             )}
           </span>
-          <div className="moment__actions">
+          <div className="moment__actions" ref={actionsRef}>
             {actionsOpen && (
-              <div className="moment__capsule" role="group">
-                <button
-                  onClick={() => {
-                    onToggleLike();
-                    setActionsOpen(false);
-                    setLikeBeat((n) => n + 1);
-                  }}
-                >
-                  {selfLiked ? '取消' : '赞'}
-                </button>
-                <span className="moment__capsule-div" />
-                <button
-                  onClick={() => {
-                    onComment();
-                    setActionsOpen(false);
-                  }}
-                >
-                  评论
-                </button>
-                {onRepost && (
-                  <>
-                    <span className="moment__capsule-div" />
-                    <button
-                      onClick={() => {
-                        onRepost();
-                        setActionsOpen(false);
-                      }}
-                    >
-                      转发
-                    </button>
-                  </>
-                )}
+              // The outer box is the clip; the inner row is what slides out
+              // from behind the button (transform-only, see moments.css).
+              <div className="moment__pop" role="group" aria-label="赞或评论">
+                <div className="moment__pop-row">
+                  <button
+                    onClick={() => {
+                      onToggleLike();
+                      setActionsOpen(false);
+                      setLikeBeat((n) => n + 1);
+                    }}
+                  >
+                    <IconHeart size={18} />
+                    {selfLiked ? '取消' : '赞'}
+                  </button>
+                  <span className="moment__pop-div" />
+                  <button
+                    onClick={() => {
+                      onComment();
+                      setActionsOpen(false);
+                    }}
+                  >
+                    <IconComment size={18} />
+                    评论
+                  </button>
+                  {onRepost && (
+                    <>
+                      <span className="moment__pop-div" />
+                      <button
+                        onClick={() => {
+                          onRepost();
+                          setActionsOpen(false);
+                        }}
+                      >
+                        <IconShare size={18} />
+                        转发
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
             <button
@@ -336,8 +369,8 @@ export function MomentCard({
                 className={`moment__likes${likeBeat > 0 ? ' like-burst' : ''}`}
                 key={`likes-${likeBeat}`}
               >
-                <span className="moment__heart" aria-hidden="true">
-                  ♥
+                <span className="moment__heart">
+                  <IconHeart size={15} />
                 </span>
                 {likes.map((l) => nameOf(l.contactId)).join('，')}
               </div>
