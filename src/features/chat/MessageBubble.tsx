@@ -6,6 +6,7 @@ import { fenToYuan } from '../../lib/money';
 import { playVoice, playVoiceRef } from '../../lib/voice';
 import { canReEdit } from '../../lib/recall';
 import { resolveImageRef } from '../../data/moments-images';
+import { imageBox, storedImageSize } from '../../lib/image-box';
 import { RPS_GLYPHS, diceResult, rpsResult } from '../../lib/game';
 import { humanSize } from '../../ai/bubble-materialize';
 import { parseSuggestGroup, inviteCardNames } from '../../ai/agent-invite';
@@ -279,19 +280,33 @@ function VoiceBubble({ msg, isSelf }: { msg: MessageVM; isSelf: boolean }) {
  * A `ph:` ref is NOT loading: its gradient is the content. Only a ref with a
  * real URL gets a shimmer.
  */
-function ImageBubble({ refImage }: { refImage: string }) {
+function ImageBubble({ refImage, stored }: { refImage: string; stored: { w: number; h: number } | null }) {
   const [loaded, setLoaded] = useState(false);
+  // The box (M-L3, lib/image-box): from the size stored at send time when there
+  // is one — the bubble then has its final shape before the picture arrives —
+  // otherwise from the decoded picture. Until either is known, the CSS envelope.
+  const [natural, setNatural] = useState(stored);
+  const box = natural ? imageBox(natural.w, natural.h) : null;
   const { url, background } = resolveImageRef(refImage);
   if (!url) return <div className="msg-image msg-image--ph" style={{ background }} />;
   return (
-    <span className="msg-image-wrap">
+    <span className={`msg-image-wrap${box ? ' msg-image-wrap--sized' : ''}`}>
       {!loaded && <span className="msg-image-skeleton skeleton" aria-hidden />}
       <img
         className="msg-image"
         src={url}
         alt=""
         loading="lazy"
-        onLoad={() => setLoaded(true)}
+        style={
+          box
+            ? { width: box.width, height: box.height, objectPosition: box.anchor === 'top' ? 'center top' : 'center' }
+            : undefined
+        }
+        onLoad={(e) => {
+          const img = e.currentTarget;
+          if (!natural && img.naturalWidth > 0) setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+          setLoaded(true);
+        }}
         onError={() => setLoaded(true)}
       />
     </span>
@@ -428,7 +443,7 @@ function BubbleContent({
     case 'image':
       // content is an image ref (idb:/img:/ph:) — schema had the type since M1,
       // but nothing rendered it until M-C2 (it fell through to the text bubble).
-      return <ImageBubble refImage={msg.content ?? ''} />;
+      return <ImageBubble refImage={msg.content ?? ''} stored={storedImageSize(msg.meta)} />;
 
     case 'voice':
       return <VoiceBubble msg={msg} isSelf={isSelf} />;

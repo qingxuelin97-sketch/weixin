@@ -13,6 +13,7 @@ import { ChatThread } from './ChatThread';
 import { MentionPicker } from './MentionPicker';
 import { ForwardPicker } from '../../components/ForwardPicker';
 import { deliverForward } from '../../lib/favorites';
+import { measureImage } from '../../lib/image-box';
 import { ImageViewer } from '../../components/ImageViewer';
 import { Sheet } from '../../components/Sheet';
 import { contactCardPayload, fileExt } from '../../ai/bubble-materialize';
@@ -609,7 +610,11 @@ export function ChatPage() {
         createdAt: Date.now(),
       };
       await repo.putMedia(item);
-      registerMedia(item.id, { url: URL.createObjectURL(f), kind: 'photo', tags: item.tags });
+      const url = URL.createObjectURL(f);
+      registerMedia(item.id, { url, kind: 'photo', tags: item.tags });
+      // Its size travels with the message (M-L3) so the bubble is drawn at its
+      // final box before the picture decodes — no jump when history reloads.
+      const size = await measureImage(url);
       await appendMessage({
         convId,
         senderId: 'self',
@@ -619,7 +624,7 @@ export function ChatPage() {
         // SOMETHING to say about the photo even when vision is off or the
         // model cannot see. `meta.tags` had a rendering branch since M-E1 and
         // no writer at all, which is why every picture read as "[发了一张图片]".
-        meta: { tags: item.tags },
+        meta: { tags: item.tags, ...(size ? { w: size.w, h: size.h } : {}) },
         status: 'sent',
         createdAt: Date.now(),
       });

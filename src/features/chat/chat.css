@@ -101,10 +101,20 @@
   margin: 8px 0;
   padding: 0 10px;
 }
+/* System lines (撤回 / 拍一拍 / 群通知 / 邀请…), M-L3.
+   Two fixes. (1) They sit inside the thread's per-message wrapper (the
+   data-msg-id div, a block box), where the shared `align-self: center` never
+   applied — every one of them rendered as a full-width, left-aligned gray band.
+   Auto inline margins centre a fit-content box in both contexts (block child,
+   or flex item in select mode); long notices wrap centred inside 80%.
+   (2) Flat gray text, no capsule: WeChat dropped the pill behind system tips in
+   7.0, and 8.0 draws them exactly like the timestamps above them. */
 .msg-system {
-  background: var(--color-system-msg-bg);
-  border-radius: 3px;
-  padding: 2px 8px;
+  width: fit-content;
+  max-width: 80%;
+  margin-inline: auto;
+  text-align: center;
+  line-height: 1.5;
 }
 
 /* Message row: avatar + bubble; self mirrors to the right. */
@@ -657,6 +667,12 @@
      height; this keeps the shimmer at the bubble's usual footprint. */
   min-width: 150px;
   min-height: 110px;
+}
+/* Once the box is known (M-L3) the <img> carries its exact size, so the shimmer
+   just fills it — the 150×110 floor would spill out of a narrow long-screenshot box. */
+.msg-image-wrap--sized .msg-image-skeleton {
+  min-width: 0;
+  min-height: 0;
 }
 
 /* M-D3: 聊天信息页 member grid */
@@ -1399,8 +1415,10 @@
   color: var(--color-text-secondary);
 }
 
-/* 有聊天背景时 (M-K5)：时间行垫一层半透明胶囊——灰字直接落在渐变或照片上读不出来。 */
-.chat-page--bg .msg-time {
+/* 有聊天背景时 (M-K5)：时间行垫一层半透明胶囊——灰字直接落在渐变或照片上读不出来。
+   系统提示行 (M-L3) 同理：去掉常驻胶囊之后，它在照片上也要这一层。 */
+.chat-page--bg .msg-time,
+.chat-page--bg .msg-system {
   background: var(--color-chat-stamp-pill);
   border-radius: 3px;
   padding: 2px 8px;
