@@ -177,7 +177,9 @@ export const seedConversations: ConversationVM[] = [
   {
     id: 'conv_group',
     type: 'group',
-    title: '周末爬山小分队(5)',
+    // 群名不带人数 (M-K8)：人数由页面派生（成员 + 自己）。老安装的
+    // 「周末爬山小分队(5)」在水合时订正，见 appStore 的 fixLegacySeedTitles。
+    title: '周末爬山小分队',
     memberIds: ['ai_lin', 'ai_chen', 'ai_ada', 'ai_mao'],
     avatarColor: '#74c0fc',
     avatarText: '群',

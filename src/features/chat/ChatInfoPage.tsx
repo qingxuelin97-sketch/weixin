@@ -25,6 +25,7 @@ import { useGuard } from '../../app/useGuard';
 import '../settings/settings.css';
 import './chat.css';
 import { Switch } from '../../components/Switch';
+import { groupHeadcount } from '../../lib/group-headcount';
 
 const ACTIVITY_LABELS = ['冷清', '偏静', '正常', '热闹'] as const;
 const SPICE_LABELS = ['和气', '正常', '敢拌嘴', '火药味'] as const;
@@ -312,7 +313,14 @@ export function ChatInfoPage() {
 
   return (
     <>
-      <SubNav title="聊天信息" />
+      {/* 群聊的标题带人数 (M-K8)：「聊天信息(5)」——成员加上你自己，微信同款；单聊不带。 */}
+      <SubNav
+        title={
+          isGroup
+            ? `聊天信息(${groupHeadcount(conv.memberIds, (id) => Boolean(contactById(id)))})`
+            : '聊天信息'
+        }
+      />
       <div className="page-body settings">
         <div className="settings__group">
           <div className="chatinfo-members">
@@ -453,7 +461,8 @@ export function ChatInfoPage() {
             className="settings__row settings__row--divided"
             onClick={() => navigate(`/search?conv=${conv.id}`)}
           >
-            <span className="settings__label">查找聊天记录</span>
+            {/* 微信 8.0 的说法是「查找聊天内容」(M-K8)。 */}
+            <span className="settings__label">查找聊天内容</span>
             <span className="settings__chevron">›</span>
           </div>
           <div className="settings__row settings__row--divided" onClick={() => guard('chatinfo.pin', () => toggle('isPinned'))}>
@@ -484,9 +493,16 @@ export function ChatInfoPage() {
           </div>
         </div>
 
-        <button className="btn-ghost" onClick={() => guard('chatinfo.delete', removeChat)}>
-          {isGroup ? '退出群聊' : '删除该聊天'}
-        </button>
+        {/* 危险操作是一整条白 cell、居中红字 (M-K8)，不是带边框的按钮。 */}
+        <div className="settings__group">
+          <div
+            className="settings__row settings__row--danger"
+            role="button"
+            onClick={() => guard('chatinfo.delete', removeChat)}
+          >
+            {isGroup ? '退出群聊' : '删除该聊天'}
+          </div>
+        </div>
       </div>
 
       {batch && (() => {

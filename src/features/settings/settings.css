@@ -503,3 +503,11 @@ label.settings__row {
   background: var(--color-brand);
   color: var(--color-text-on-brand);
 }
+
+/* 危险操作 cell (M-K8)：退出群聊 / 删除联系人 / 删除该聊天。微信的写法是一整条白 cell、
+   居中红字，不是带边框的按钮——按钮读起来像「再来一个普通选项」。 */
+.settings__row--danger {
+  justify-content: center;
+  color: var(--color-text-danger);
+  font-size: var(--fs-cell-title);
+}

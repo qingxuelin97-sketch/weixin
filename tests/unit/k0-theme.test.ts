@@ -79,6 +79,7 @@ const THEME_INVARIANT: Record<string, string> = {
   '--color-rp-detail-gold': '红包详情的金色金额——金子在深色里还是金子（色相，且字够粗够大）',
   '--color-black-scrim': '已经是黑色半透明（侧滑返回时压暗下层页）',
   '--color-swipe-danger': '左滑「删除」是红色',
+  '--color-text-danger': '退出群聊 / 删除联系人的红字 —— WeUI RED 深浅同值，白 cell 与深色 cell 上都够对比',
   '--color-viewer-bg': '看图背景本来就是纯黑',
   '--color-call-bg': '通话页本身就是深色设计',
   '--color-call-hangup': '挂断红',

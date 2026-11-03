@@ -53,6 +53,9 @@ const SHOTS: Array<[name: string, path: string]> = [
   // 字体大小 / 聊天背景 (M-K5)：默认态——标准档、无背景。
   ['settings-font-size', '/settings/font-size'],
   ['settings-chat-bg', '/settings/chat-bg'],
+  // 群聊信息 (M-K8)：/chat/:convId/info 的 golden 一直只拍单聊；群聊那一版
+  // （九宫格成员、带人数的标题、群聊风格、退出群聊）从来没进过门禁。
+  ['chat-info-group', '/chat/conv_group/info'],
 ];
 
 for (const [name, path] of SHOTS) {

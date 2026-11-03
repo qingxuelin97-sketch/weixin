@@ -52,7 +52,7 @@ export function SearchPage() {
   const [query, setQuery] = useState('');
 
   // 会话内搜索 (M-I6): `?conv=<id>` scopes everything to one thread. The
-  // ChatInfoPage「查找聊天记录」entry lands here; without the param this is the
+  // ChatInfoPage「查找聊天内容」entry lands here; without the param this is the
   // global search it always was.
   const [params] = useSearchParams();
   const scopeConvId = params.get('conv') ?? undefined;

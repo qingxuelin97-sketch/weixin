@@ -219,6 +219,27 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 type Set = (partial: Partial<AppState>) => void;
 type Get = () => AppState;
 
+/**
+ * 种子群名的一次性订正 (M-K8)。
+ *
+ * 种子把人数写死进了群的**名字**：「周末爬山小分队(5)」。微信的人数是派生的——聊天页
+ * 标题与聊天信息页标题显示「群名(成员数+自己)」，会话列表只显示群名——而写死的那个
+ * 「(5)」在会话列表里本不该出现、进模型的 prompt 时被当成群名的一部分、加人减人后
+ * 还永远是 5。人数改成派生之后，老安装里那一行会读成「周末爬山小分队(5)(5)」，所以在
+ * 水合时订正一次：只动种子那一行（固定 id），且只在名字**仍是种子原文**时动——用户
+ * 改过的群名一个字都不碰。幂等：订正过的那一行不再匹配。
+ */
+export const LEGACY_SEED_GROUP = { id: 'conv_group', title: '周末爬山小分队(5)', fixed: '周末爬山小分队' };
+export async function fixLegacySeedTitles(convs: ConversationVM[]): Promise<ConversationVM[]> {
+  const i = convs.findIndex((c) => c.id === LEGACY_SEED_GROUP.id && c.title === LEGACY_SEED_GROUP.title);
+  if (i < 0) return convs;
+  const fixed = { ...convs[i], title: LEGACY_SEED_GROUP.fixed };
+  await repo.putConversation(fixed);
+  const out = convs.slice();
+  out[i] = fixed;
+  return out;
+}
+
 async function doHydrate(set: Set, _get: Get): Promise<void> {
   // Choose the storage driver BEFORE the first Repo read (M-I17): on a native
   // device that completed the SQLite migration this swaps the driver in;
@@ -250,10 +271,11 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
       createdAt: SEED_BASE,
     });
   }
-  const [contacts, conversations] = await Promise.all([
+  const [contacts, storedConvs] = await Promise.all([
     repo.getContacts(),
     repo.getConversations(),
   ]);
+  const conversations = await fixLegacySeedTitles(storedConvs);
   // Messages are NOT loaded here. Hydration used to pull 200 per conversation
   // — on the critical path of a white screen, growing linearly with how much
   // the app is used — when the only thing the first screen draws is the

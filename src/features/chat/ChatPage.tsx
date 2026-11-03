@@ -20,6 +20,7 @@ import { registerMedia, listRegisteredMedia } from '../../data/media-registry';
 import { useMedia } from '../../components/useMedia';
 import { recordUserSticker } from '../../ai/sticker-taste';
 import { totalUnread as totalUnreadOf } from '../../lib/unread';
+import { groupHeadcount } from '../../lib/group-headcount';
 import { enqueue } from '../../ai/scheduler';
 import { patLine, shouldPatBack, patBackDelayMs, PAT_SUFFIX_KEY } from '../../ai/pat';
 import { captureFlipSource, FLIP_KEYS } from '../../lib/flip';
@@ -1081,7 +1082,12 @@ export function ChatPage() {
           </button>
         </div>
         <div className="navbar__title chat-nav__title">
-          {typingShown ? '对方正在输入…' : conv.title}
+          {typingShown
+            ? '对方正在输入…'
+            : isGroup
+              ? // 群名(人数)，人数派生——成员加上你自己 (M-K8)。
+                `${conv.title}(${groupHeadcount(conv.memberIds, (id) => Boolean(contactById(id)))})`
+              : conv.title}
         </div>
         <div className="navbar__right">
           <button className="navbar__btn" aria-label="更多" onClick={() => navigate(`/chat/${convId}/info`)}>

@@ -447,7 +447,7 @@ export async function searchAll(
 /* ==================================================================== */
 
 /**
- * Search inside ONE conversation — the ChatInfoPage「查找聊天记录」entry.
+ * Search inside ONE conversation — the ChatInfoPage「查找聊天内容」entry.
  *
  * Reuses `search()` on a scoped input rather than re-implementing matching, so
  * scoring, excerpting and the recall rule stay in exactly one place. The hidden

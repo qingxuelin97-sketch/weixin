@@ -239,6 +239,16 @@ export function IconComment({ size = 24 }: IconProps) {
   );
 }
 
+/** 资料页「音视频通话」(M-K8)：描边摄像机——机身圆角矩形 + 右侧梯形镜头。 */
+export function IconVideoCall({ size = 24 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="2.8" y="6.5" width="13" height="11" rx="2.2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="m15.8 10.6 5.4-3v8.8l-5.4-3" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /** 朋友圈「··」浮层的「转发」(M-K7)：从方框里向右上弯出的箭头。 */
 export function IconShare({ size = 24 }: IconProps) {
   return (
