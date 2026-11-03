@@ -12,6 +12,8 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { SubNav } from '../../components/SubNav';
 import { Avatar } from '../../components/Avatar';
+import { PickerRow } from '../../components/PickerRow';
+import { Slider } from '../../components/Slider';
 import { MediaPicker } from '../../components/MediaPicker';
 import { useAppStore } from '../../store/appStore';
 import { VOICE_OPTIONS, DEFAULT_VOICE } from '../../llm/tts';
@@ -325,56 +327,48 @@ export function PersonaEditPage() {
 
         <div className="settings__group">
           <div className="settings__group-title">行为</div>
-          <div className="field field--divided">
-            <span className="field__label">主动找你的频率</span>
-            <select
-              className="field__input"
-              value={String(
-                HEARTBEAT_PRESETS.find((h) => h.min === p.heartbeatBaseMin)?.min ?? p.heartbeatBaseMin,
-              )}
-              onChange={(e) => set('heartbeatBaseMin', Number(e.target.value))}
-            >
-              {HEARTBEAT_PRESETS.map((h) => (
-                <option key={h.min} value={h.min}>
-                  {h.label}
-                </option>
-              ))}
-              {!HEARTBEAT_PRESETS.some((h) => h.min === p.heartbeatBaseMin) && (
-                <option value={p.heartbeatBaseMin}>自定义（{p.heartbeatBaseMin} 分钟）</option>
-              )}
-            </select>
-          </div>
+          <PickerRow
+              label="主动找你的频率"
+              value={String(HEARTBEAT_PRESETS.find((h) => h.min === p.heartbeatBaseMin)?.min ?? p.heartbeatBaseMin)}
+              options={[
+                ...HEARTBEAT_PRESETS.map((h) => ({ value: String(h.min), label: h.label })),
+                ...(!HEARTBEAT_PRESETS.some((h) => h.min === p.heartbeatBaseMin)
+                  ? [{ value: String(p.heartbeatBaseMin), label: `自定义（${p.heartbeatBaseMin} 分钟）` }]
+                  : []),
+              ]}
+              onChange={(v) => set('heartbeatBaseMin', Number(v))}
+            />
           <div className="field field--divided">
             <span className="field__label">主动性：{p.proactivity.toFixed(2)}（0=从不追问）</span>
-            <input
-              type="range"
+            <Slider
+              label="proactivity"
               min={0}
               max={1}
               step={0.05}
               value={p.proactivity}
-              onChange={(e) => set('proactivity', Number(e.target.value))}
+              onChange={(v) => set('proactivity', v)}
             />
           </div>
           <div className="field field--divided">
             <span className="field__label">打字速度（字/分）：{p.typingCpm}</span>
-            <input
-              type="range"
+            <Slider
+              label="typingCpm"
               min={120}
               max={500}
               step={10}
               value={p.typingCpm}
-              onChange={(e) => set('typingCpm', Number(e.target.value))}
+              onChange={(v) => set('typingCpm', v)}
             />
           </div>
           <div className="field field--divided">
             <span className="field__label">温度：{p.temperature.toFixed(2)}</span>
-            <input
-              type="range"
+            <Slider
+              label="temperature"
               min={0}
               max={1.5}
               step={0.05}
               value={p.temperature}
-              onChange={(e) => set('temperature', Number(e.target.value))}
+              onChange={(v) => set('temperature', v)}
             />
           </div>
           <div className="field field--divided">
@@ -392,13 +386,13 @@ export function PersonaEditPage() {
             <span className="field__label">
               表情使用率：{p.stickerRate.toFixed(2)}（发表情包与斗图的频率）
             </span>
-            <input
-              type="range"
+            <Slider
+              label="stickerRate"
               min={0}
               max={1}
               step={0.05}
               value={p.stickerRate}
-              onChange={(e) => set('stickerRate', Number(e.target.value))}
+              onChange={(v) => set('stickerRate', v)}
             />
           </div>
           <div className="field">
@@ -419,43 +413,37 @@ export function PersonaEditPage() {
 
         <div className="settings__group">
           <div className="settings__group-title">朋友圈</div>
-          <div className="field field--divided">
-            <span className="field__label">发帖频率</span>
-            <select
-              className="field__input"
+          <PickerRow
+              label="发帖频率"
               value={String(MOMENTS_PRESETS.find((m) => m.v === p.momentsPerDay)?.v ?? p.momentsPerDay)}
-              onChange={(e) => set('momentsPerDay', Number(e.target.value))}
-            >
-              {MOMENTS_PRESETS.map((m) => (
-                <option key={m.v} value={m.v}>
-                  {m.label}
-                </option>
-              ))}
-              {!MOMENTS_PRESETS.some((m) => m.v === p.momentsPerDay) && (
-                <option value={p.momentsPerDay}>自定义（{p.momentsPerDay}/天）</option>
-              )}
-            </select>
-          </div>
+              options={[
+                ...MOMENTS_PRESETS.map((m) => ({ value: String(m.v), label: m.label })),
+                ...(!MOMENTS_PRESETS.some((m) => m.v === p.momentsPerDay)
+                  ? [{ value: String(p.momentsPerDay), label: `自定义（${p.momentsPerDay}/天）` }]
+                  : []),
+              ]}
+              onChange={(v) => set('momentsPerDay', Number(v))}
+            />
           <div className="field field--divided">
             <span className="field__label">点赞倾向：{p.likeRate.toFixed(2)}</span>
-            <input
-              type="range"
+            <Slider
+              label="likeRate"
               min={0}
               max={1}
               step={0.05}
               value={p.likeRate}
-              onChange={(e) => set('likeRate', Number(e.target.value))}
+              onChange={(v) => set('likeRate', v)}
             />
           </div>
           <div className="field field--divided">
             <span className="field__label">评论倾向：{p.commentRate.toFixed(2)}</span>
-            <input
-              type="range"
+            <Slider
+              label="commentRate"
               min={0}
               max={1}
               step={0.05}
               value={p.commentRate}
-              onChange={(e) => set('commentRate', Number(e.target.value))}
+              onChange={(v) => set('commentRate', v)}
             />
           </div>
           <div className="field field--divided">
@@ -480,13 +468,13 @@ export function PersonaEditPage() {
             <span className="field__label">
               大方程度：{(p.generosity ?? 0.35).toFixed(2)}（她主动发红包/转账的意愿与金额）
             </span>
-            <input
-              type="range"
+            <Slider
+              label="generosity"
               min={0}
               max={1}
               step={0.05}
               value={p.generosity ?? 0.35}
-              onChange={(e) => set('generosity', Number(e.target.value))}
+              onChange={(v) => set('generosity', v)}
             />
           </div>
           {drifted.length > 0 && (
@@ -519,13 +507,13 @@ export function PersonaEditPage() {
           )}
           <div className="field">
             <span className="field__label">初始亲密度：{p.affinityInit}（影响赞评与嘘寒问暖）</span>
-            <input
-              type="range"
+            <Slider
+              label="affinityInit"
               min={0}
               max={100}
               step={5}
               value={p.affinityInit}
-              onChange={(e) => set('affinityInit', Number(e.target.value))}
+              onChange={(v) => set('affinityInit', v)}
             />
           </div>
         </div>
@@ -603,37 +591,23 @@ export function PersonaEditPage() {
 
         <div className="settings__group">
           <div className="settings__group-title">模型与语音</div>
-          <div className="field field--divided">
-            <span className="field__label">聊天模型（此智能体专属）</span>
-            <select
-              className="field__input"
+          <PickerRow
+              label="聊天模型（此智能体专属）"
               value={p.modelChat ?? ''}
-              onChange={(e) => set('modelChat', e.target.value || undefined)}
-            >
-              <option value="">跟随全局默认</option>
-              {providers.flatMap((prov) =>
-                prov.models.map((m) => (
-                  <option key={`${prov.id}:${m}`} value={`${prov.id}:${m}`}>
-                    {prov.label} · {m}
-                  </option>
-                )),
-              )}
-            </select>
-          </div>
-          <div className="field">
-            <span className="field__label">语音音色（MiniMax TTS）</span>
-            <select
-              className="field__input"
-              value={p.ttsVoice ?? DEFAULT_VOICE}
-              onChange={(e) => set('ttsVoice', e.target.value)}
-            >
-              {VOICE_OPTIONS.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
-          </div>
+              options={[
+                { value: '', label: '跟随全局默认' },
+                ...providers.flatMap((prov) =>
+                  prov.models.map((mm) => ({ value: `${prov.id}:${mm}`, label: `${prov.label} · ${mm}` })),
+                ),
+              ]}
+              onChange={(v) => set('modelChat', v || undefined)}
+            />
+          <PickerRow
+            label="语音音色（MiniMax TTS）"
+            value={p.ttsVoice ?? DEFAULT_VOICE}
+            options={VOICE_OPTIONS.map((v) => ({ value: v.id, label: v.label }))}
+            onChange={(v) => set('ttsVoice', v)}
+          />
         </div>
 
         <div className="settings__group">

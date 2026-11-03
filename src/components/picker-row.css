@@ -1,0 +1,30 @@
+/* 选择器行 (M-K6)：值在右侧，灰字，后跟一个 ›。 */
+.picker-row {
+  cursor: pointer;
+}
+.picker-row:active {
+  background: var(--color-cell-bg-pressed);
+}
+.picker-row__value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-cell-title);
+  color: var(--color-text-primary);
+}
+.picker-row__chevron {
+  color: var(--color-text-placeholder);
+  font-size: 20px;
+  line-height: 1;
+}
+.picker-row__check {
+  margin-left: auto;
+  display: flex;
+  color: var(--color-brand);
+}
+.picker-row__option {
+  cursor: pointer;
+}
+.picker-row__list {
+  padding-bottom: var(--safe-bottom);
+}

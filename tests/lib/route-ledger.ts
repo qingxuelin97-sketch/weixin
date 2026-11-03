@@ -70,14 +70,14 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/settings/battery': { golden: 'settings-battery', smoke: { path: '/settings/battery' } },
   // 深色模式 (M-K0)。pendingCast 旗已摘：CI regen 在 b9a2330 铸出了基线。
   '/settings/dark-mode': { golden: 'settings-dark-mode', smoke: { path: '/settings/dark-mode' } },
-  // 设置树分页 (M-K4)。pendingCast：spec 已接线，等 CI regen 铸基线后摘旗。
-  '/settings/ai': { golden: 'settings-ai', pendingCast: true, smoke: { path: '/settings/ai' } },
-  '/settings/notify': { golden: 'settings-notify', pendingCast: true, smoke: { path: '/settings/notify' } },
-  '/settings/chat': { golden: 'settings-chat', pendingCast: true, smoke: { path: '/settings/chat' } },
-  '/settings/general': { golden: 'settings-general', pendingCast: true, smoke: { path: '/settings/general' } },
-  // 字体大小 / 聊天背景 (M-K5)。pendingCast：spec 已接线，等 CI regen 铸基线后摘旗。
-  '/settings/font-size': { golden: 'settings-font-size', pendingCast: true, smoke: { path: '/settings/font-size' } },
-  '/settings/chat-bg': { golden: 'settings-chat-bg', pendingCast: true, smoke: { path: '/settings/chat-bg' } },
+  // 设置树分页 (M-K4)。pendingCast 旗已摘：CI regen（8c0fbc9）铸出了基线。
+  '/settings/ai': { golden: 'settings-ai', smoke: { path: '/settings/ai' } },
+  '/settings/notify': { golden: 'settings-notify', smoke: { path: '/settings/notify' } },
+  '/settings/chat': { golden: 'settings-chat', smoke: { path: '/settings/chat' } },
+  '/settings/general': { golden: 'settings-general', smoke: { path: '/settings/general' } },
+  // 字体大小 / 聊天背景 (M-K5)。pendingCast 旗已摘：CI regen（8c0fbc9）铸出了基线。
+  '/settings/font-size': { golden: 'settings-font-size', smoke: { path: '/settings/font-size' } },
+  '/settings/chat-bg': { golden: 'settings-chat-bg', smoke: { path: '/settings/chat-bg' } },
   '/settings/worldbook': { golden: 'settings-worldbook', smoke: { path: '/settings/worldbook' } },
   '/persona/:contactId': { golden: 'persona-edit', smoke: { path: '/persona/ai_lin' } },
   '/memory/:contactId': { golden: 'memory', smoke: { path: '/memory/ai_lin' } },

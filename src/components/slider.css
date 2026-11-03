@@ -1,0 +1,40 @@
+/* 连续滑杆 (M-K6)：微信的细轨道、绿色填充、白色圆钮。 */
+.slider {
+  padding: 10px 2px 4px;
+}
+.slider__track {
+  position: relative;
+  height: 32px;
+  touch-action: none;
+  outline: none;
+}
+.slider__line,
+.slider__fill {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 2px;
+}
+.slider__line {
+  right: 0;
+  background: var(--color-slider-track);
+}
+.slider__fill {
+  background: var(--color-brand);
+}
+.slider__thumb {
+  position: absolute;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  background: var(--color-slider-thumb);
+  box-shadow: 0 1px 4px var(--color-black-scrim);
+  pointer-events: none;
+}
+.slider__track:focus-visible .slider__thumb {
+  box-shadow: 0 0 0 3px var(--color-on-color-fill), 0 1px 4px var(--color-black-scrim);
+}

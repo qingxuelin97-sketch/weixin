@@ -13,6 +13,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Slider } from '../../components/Slider';
 import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { getRouter } from '../../llm/service';
@@ -344,13 +345,13 @@ export function GroupGeneratePage() {
           </div>
           <div className="field">
             <span className="field__label">群里有 {size} 个人（不含你）</span>
-            <input
-              type="range"
+            <Slider
+              label="群成员人数"
               min={MIN_MEMBERS}
               max={MAX_MEMBERS}
               step={1}
               value={size}
-              onChange={(e) => setSize(Number(e.target.value))}
+              onChange={setSize}
             />
             <div className="field__hint">
               约 {size + 2} 次模型调用（1 次群蓝图 + {size} 张人设卡 + 1 次聊天记录）。

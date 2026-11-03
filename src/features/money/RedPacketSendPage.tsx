@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { PickerRow } from '../../components/PickerRow';
 import { SubNav } from '../../components/SubNav';
 import { useAppStore } from '../../store/appStore';
 import { yuanToFen, fenToYuan } from '../../lib/money';
@@ -108,21 +109,15 @@ export function RedPacketSendPage() {
             </div>
           )}
           {exclusive && (
-            <div className="money-form__row">
-              <span className="money-form__label">给谁</span>
-              <select
-                className="money-form__input rp-mode__who"
+            <PickerRow
+                label="给谁"
                 value={exclusiveId}
-                onChange={(e) => setExclusiveId(e.target.value)}
-              >
-                <option value="">选择领取人</option>
-                {members.map((id) => (
-                  <option key={id} value={id}>
-                    {nameOf(id)}
-                  </option>
-                ))}
-              </select>
-            </div>
+                options={[
+                  { value: '', label: '选择领取人' },
+                  ...members.map((id) => ({ value: id, label: nameOf(id) })),
+                ]}
+                onChange={(v) => setExclusiveId(v)}
+              />
           )}
           <div className="money-form__row">
             <span className="money-form__label">总金额</span>
