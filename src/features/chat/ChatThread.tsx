@@ -49,6 +49,8 @@ export interface ChatThreadProps {
   bottomInset: number;
   selecting: boolean;
   selected: ReadonlySet<number>;
+  /** The message the long-press menu points at: its bubble stays pressed (M-K12). */
+  heldId?: number | null;
   onToggleSelect: (id: number) => void;
   /** The bubble for one message, wired by the page. */
   renderMessage: (msg: MessageVM) => ReactNode;
@@ -63,6 +65,7 @@ export function ChatThread({
   bottomInset,
   selecting,
   selected,
+  heldId = null,
   onToggleSelect,
   renderMessage,
 }: ChatThreadProps) {
@@ -233,7 +236,11 @@ export function ChatThread({
               key={row.msg.id}
               data-msg-id={row.msg.id}
               className={
-                [selecting && 'msg-selectable', flashId === row.msg.id && 'msg-anchor-flash']
+                [
+                  selecting && 'msg-selectable',
+                  flashId === row.msg.id && 'msg-anchor-flash',
+                  heldId === row.msg.id && 'msg-held',
+                ]
                   .filter(Boolean)
                   .join(' ') || undefined
               }

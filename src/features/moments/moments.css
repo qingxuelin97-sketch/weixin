@@ -196,6 +196,9 @@
   background: var(--color-moments-action-bg);
   cursor: pointer;
 }
+.moment__dots:active {
+  opacity: 0.6;
+}
 .moment__dots span {
   width: 3px;
   height: 3px;

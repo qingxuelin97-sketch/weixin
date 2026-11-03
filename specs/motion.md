@@ -74,3 +74,28 @@ M-H3 建层，M-I0 接返回语义，M-I8 补余量。这份 spec 主要是**约
 - 每个动画 CSS 文件都必须有 `prefers-reduced-motion` 分支；`@keyframes` 只许动
   transform/opacity（例外走带理由的 `KEYFRAME_EXEMPTIONS` 台账）
 - 新浮层必须在 dismiss 栈注册（components.test 的 dismiss registrations 断言）
+
+## M-K12：手感
+
+- **气泡按压**：手指按住时气泡深一档，长按菜单开着时保持（线程区给菜单指着的那一行加 `.msg-held`）。
+  `--color-bubble-self-pressed` / `--color-bubble-other-pressed` 从 M1 起就定义着、**全仓没人用过**。
+  按压色经 `--bubble-bg` 一个变量走：纯文字与语音气泡的底色和尾巴（伪元素继承变量）读它；卡片类
+  气泡（账单、位置、名片…）自己写死了底色与尾巴色，读不到它——按压不会把白卡片染成绿色。不加过渡：
+  微信的按压变色是即时的。
+- **长按触感**：长按菜单每打开一次轻震一下（`pressHaptic`，Light）。只在原生端，并且跟着「振动」开关
+  ——这个 App 发出的每一次震动都归同一个开关管，关掉就是真的安静。消息到达的那一下也改走它。
+- **按压反馈补齐**：会话列表长按的竖排菜单（消息菜单的网格早就有）、朋友圈「··」按钮。
+- **深色的开关圆钮**：曾借 `--color-cell-bg`（深色下 #191919）——绿轨上一颗黑扣子、关着的灰轨上几乎
+  看不见。独立 token `--color-switch-knob`，深浅都是白（WeUI 同款），登记进 THEME_INVARIANT；补了一张
+  带开关的深色基线 `dark-settings-notify`（此前没有一张深色基线里有开关，门禁看不见这个问题）。
+- **「定义了却没人用」的守卫**（J13 的另一半）：每个 `--color-*` 必须有人引用；运行时拼出来的前缀
+  （`--color-chatbg-${id}`）走有名有由的台账，台账自己也被复核（拼法还在那个文件里）。落地时它抓到的
+  正是上面那两个气泡 token。
+- 发送入场（`msg--enter`）、发送键形变（`btn-morph-in`）、tab 图标回弹（`tab-bounce`）、开关圆钮滑动
+  早已接好——这一期核对过调用方，不重做。
+
+### 验收（K12）
+- [x] `tests/unit/k12-feel.test.tsx`：token 使用台账、气泡按压与 held、长按触感（每开一次、跟振动开关、
+  网页端不震）、开关圆钮 token。三条变异验证。
+- [ ] 真机：按压色深浅与微信叠图；长按震感强弱（Light 是否太轻）。
+

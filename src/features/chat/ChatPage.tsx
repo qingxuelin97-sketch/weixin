@@ -1169,6 +1169,7 @@ export function ChatPage() {
         bottomInset={composer.bottomInset}
         selecting={selecting}
         selected={selected}
+        heldId={menu?.msg.id ?? null}
         onToggleSelect={toggleSelect}
         renderMessage={(msg) => (
           <MessageBubble

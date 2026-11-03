@@ -26,6 +26,9 @@ const DARK_SHOTS: Array<[name: string, path: string]> = [
   ['dark-moments-feed', '/moments'],
   ['dark-settings', '/settings'],
   ['dark-wallet', '/wallet'],
+  // 带开关的页 (M-K12)：深色下的开关圆钮曾借 cell 底色（#191919），是一颗黑扣子，
+  // 关着时几乎看不见——而上面没有一张深色基线里有开关，门禁看不见它。
+  ['dark-settings-notify', '/settings/notify'],
 ];
 
 for (const [name, path] of DARK_SHOTS) {

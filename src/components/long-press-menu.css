@@ -89,3 +89,8 @@
 .lp-menu--column button + button {
   border-top: 1px solid var(--color-on-color-divider);
 }
+/* The chat list's long-press capsule (M-K12): its rows acknowledge the finger
+   like the message menu's grid cells already did. */
+.lp-menu--column button:active {
+  background: var(--color-on-color-divider);
+}

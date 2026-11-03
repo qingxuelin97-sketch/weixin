@@ -183,7 +183,7 @@
   white-space: pre-wrap;
 }
 .bubble--other {
-  background: var(--color-bubble-other);
+  background: var(--bubble-bg, var(--color-bubble-other));
   color: var(--color-bubble-other-text);
 }
 .bubble--other::before {
@@ -192,11 +192,11 @@
   left: -5px;
   top: 12px;
   border: 5px solid transparent;
-  border-right-color: var(--color-bubble-other);
+  border-right-color: var(--bubble-bg, var(--color-bubble-other));
   border-left: 0;
 }
 .bubble--self {
-  background: var(--color-bubble-self);
+  background: var(--bubble-bg, var(--color-bubble-self));
   color: var(--color-bubble-self-text);
 }
 .bubble--self::before {
@@ -205,8 +205,21 @@
   right: -5px;
   top: 12px;
   border: 5px solid transparent;
-  border-left-color: var(--color-bubble-self);
+  border-left-color: var(--bubble-bg, var(--color-bubble-self));
   border-right: 0;
+}
+/* 气泡按压 (M-K12)：手指按住时变深一档，长按菜单开着时保持（.msg-held，线程区给
+   菜单指着的那一行）——微信同款。两个 pressed token 从 M1 起就定义好了，一直没人用。
+   经 --bubble-bg 这一个变量走：卡片类气泡（账单、位置、名片…）自己写死了底色与尾巴色，
+   读不到它，于是按压只染纯文字与语音气泡，不会把一张白卡片染成绿色。尾巴是伪元素，
+   继承同一个变量，跟着一起变。 */
+.bubble--other:active,
+.msg-held .bubble--other {
+  --bubble-bg: var(--color-bubble-other-pressed);
+}
+.bubble--self:active,
+.msg-held .bubble--self {
+  --bubble-bg: var(--color-bubble-self-pressed);
 }
 
 /* Voice bubble */

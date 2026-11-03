@@ -216,7 +216,10 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--color-cell-bg);
+  /* Its own token (M-K12): it used to borrow --color-cell-bg, which is #191919
+     in dark mode — a black disc on the green track, and next to invisible on
+     the off track. WeUI keeps the knob white in both themes. */
+  background: var(--color-switch-knob);
   transition: transform var(--dur-fast);
 }
 .switch--on .switch__knob {

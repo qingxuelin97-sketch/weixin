@@ -21,7 +21,9 @@
  *     the menu before it leaves the page;
  *   - choosing an item runs it and closes — no call site has to remember to.
  */
+import { useEffect } from 'react';
 import { useDismissable } from '../app/useDismissable';
+import { pressHaptic } from '../lib/sound';
 import { menuIcon } from './menu-icons';
 import './long-press-menu.css';
 
@@ -106,6 +108,11 @@ export function LongPressMenu({
   // Registered unconditionally: the component only exists while the menu is
   // open, so "mounted" IS "open".
   useDismissable(true, onClose);
+  // 长按触感 (M-K12): the tick that says "held long enough" — WeChat's long
+  // press is felt, not only seen. Once per opening, for the same reason.
+  useEffect(() => {
+    pressHaptic();
+  }, []);
 
   // An empty capsule reads as breakage; callers that can produce zero actions
   // are protected here rather than each guarding separately.

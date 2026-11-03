@@ -177,6 +177,17 @@ export function startRingback(): () => void {
 }
 
 /**
+ * One light haptic tick (M-K12): a long-press menu opening, a message landing.
+ * Native only, off when the user turned 振动 off — one switch for every buzz
+ * this app makes, so turning it off actually means quiet. Never throws.
+ */
+export function pressHaptic(): void {
+  if (Capacitor.isNativePlatform() && isVibrateEnabled()) {
+    void Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+  }
+}
+
+/**
  * Play the incoming-message notification sound (respects the enabled setting).
  *
  * @param at the message's timestamp: pass it so materialized HISTORY (offline
@@ -188,9 +199,7 @@ export function playMessageSound(at?: number): void {
 
   // Haptic tick alongside (or instead of) the chime — silent mode still gets
   // feedback, and it never throws the caller.
-  if (Capacitor.isNativePlatform() && isVibrateEnabled()) {
-    void Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
-  }
+  pressHaptic();
 
   if (!isMessageSoundEnabled()) return;
   // Prefer a user-supplied file if present.
