@@ -115,7 +115,14 @@ const MAIN_BUDGET_KB = 308;
  * engine tree moved here from main (main −6.68, lazy +7.63, total +0.95), and
  * a lazy budget that goes red on a migration punishes the fix.
  */
-const LAZY_BUDGET_KB = 96;
+/*
+ * 96 → 98 in M-K9: the first-run guide (WelcomePage + its stylesheet, ~2.7KB
+ * as its own chunk). It is seen once per install, so it is lazy ON PURPOSE —
+ * statically imported it measured main 308.33 against 308, i.e. every launch
+ * of every install paying 2KB for a screen shown once. A deliberate new
+ * deferred screen is exactly the "legitimately needs more room" case.
+ */
+const LAZY_BUDGET_KB = 98;
 
 const dir = 'dist/assets';
 let entries;

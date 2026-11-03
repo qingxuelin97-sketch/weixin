@@ -32,6 +32,12 @@ export const ROUTE_LEDGER: Record<string, RouteRow> = {
   '/chat/:convId': { golden: 'chat-single', smoke: { path: '/chat/conv_lin' } }, // + chat-group
   '/search': { golden: 'search-empty', smoke: { path: '/search' } }, // + search-results
   '/moments': { golden: 'moments-feed', smoke: { path: '/moments' } },
+  // 首次体验 (M-K9)：懒加载（一台设备只看一次，不该进冷启动主包），所以没有 golden——
+  // 懒页的首帧是 Suspense 兜底。三步与问候排期由 k9-welcome.test.tsx 在 jsdom 里逐步渲染断言。
+  '/welcome': {
+    exempt: 'lazy (seen once per install) — steps and greeting scheduling rendered in jsdom (k9-welcome)',
+    smoke: { path: '/welcome' },
+  },
   '/moments/publish': { golden: 'moments-publish', smoke: { path: '/moments/publish' } },
   '/moments/repost/:momentId': {
     exempt: 'needs a tapped source post; compose UI mirrors publish',

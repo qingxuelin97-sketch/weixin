@@ -70,6 +70,7 @@ import { useAppStore } from './store/appStore';
 import { useSchedulerBoot } from './app/useSchedulerBoot';
 import { useDeepLinks } from './app/useDeepLinks';
 import { MomentDetailPage } from './features/moments/MomentDetailPage';
+import { isOnboarded, shouldOnboard } from './features/welcome/welcome';
 
 /**
  * 冷路由懒加载 (M-J7)。
@@ -97,6 +98,8 @@ const GroupCreatePage = lazyPage(() => import('./features/contacts/GroupCreatePa
 const MomentRepostPage = lazyPage(() => import('./features/moments/MomentRepostPage'), 'MomentRepostPage');
 const MomentTopicPage = lazyPage(() => import('./features/moments/MomentTopicPage'), 'MomentTopicPage');
 const MomentMessagesPage = lazyPage(() => import('./features/moments/MomentMessagesPage'), 'MomentMessagesPage');
+// 首次体验 (M-K9)：一台设备一辈子只看一次，没有理由让每一次冷启动都为它付费。
+const WelcomePage = lazyPage(() => import('./features/welcome/WelcomePage'), 'WelcomePage');
 const StoragePage = lazyPage(() => import('./features/settings/StoragePage'), 'StoragePage');
 const CallPage = lazyPage(() => import('./features/call/CallPage'), 'CallPage');
 const GroupCallPage = lazyPage(() => import('./features/call/GroupCallPage'), 'GroupCallPage');
@@ -127,6 +130,17 @@ function Push({ children }: { children: ReactNode }) {
       <Suspense fallback={null}>{children}</Suspense>
     </div>
   );
+}
+
+/**
+ * 根路由 (M-K9)：全新安装、这台设备还没走过引导 → 首次体验；否则 → 会话列表。
+ *
+ * 只在根上拦：真机每次启动都从 index.html 的根进来，而深链、测试、手输的 hash 路由
+ * 都是指名进来的，不该被引导页截走（specs/onboarding.md）。
+ */
+function RootRedirect() {
+  const freshInstall = useAppStore((s) => s.freshInstall);
+  return <Navigate to={shouldOnboard(freshInstall, isOnboarded()) ? '/welcome' : '/chats'} replace />;
 }
 
 /**
@@ -187,7 +201,7 @@ export function App() {
               {(loc) => (
             <Routes location={loc}>
               <Route element={<TabScaffold />}>
-                <Route path="/" element={<Navigate to="/chats" replace />} />
+                <Route path="/" element={<RootRedirect />} />
                 <Route path="/chats" element={<ChatListPage />} />
                 <Route path="/contacts" element={<ContactsPage />} />
                 <Route path="/discover" element={<DiscoverPage />} />
@@ -195,6 +209,8 @@ export function App() {
               </Route>
               <Route path="/chat/:convId" element={<Push><ChatPage /></Push>} />
               <Route path="/search" element={<Push><SearchPage /></Push>} />
+              {/* 首次体验 (M-K9)：只有根路由会把全新安装送来这里。 */}
+              <Route path="/welcome" element={<Push><WelcomePage /></Push>} />
               <Route path="/moments" element={<Push><MomentsPage /></Push>} />
               <Route path="/moments/publish" element={<Push><MomentPublishPage /></Push>} />
               <Route path="/moments/repost/:momentId" element={<Push><MomentRepostPage /></Push>} />

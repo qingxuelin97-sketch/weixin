@@ -67,6 +67,12 @@ async function relEventForLike(momentId: string, likerId: string, now: number): 
 
 interface AppState {
   hydrated: boolean;
+  /**
+   * This hydrate found an EMPTY repo and wrote the seed (M-K9): a brand-new
+   * install. The only thing that may show the first-run guide — an install
+   * that already has data (every existing user) never sees it.
+   */
+  freshInstall: boolean;
   /** Set when hydrate() failed — the shell shows a retry screen, not white. */
   hydrateError: string | null;
   contacts: ContactVM[];
@@ -246,7 +252,8 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
   // everywhere else it is a no-op and IndexedDB stays. Never throws.
   await initStorageDriver();
   // First run: write seed into the Repo so the app has believable friends.
-  if (await repo.isEmpty()) {
+  const freshInstall = await repo.isEmpty();
+  if (freshInstall) {
     const seedMsgs = seedConversations.flatMap((conv) =>
       (seedMessages[conv.id] ?? []).map(({ id: _drop, ...rest }) => rest),
     );
@@ -321,6 +328,7 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
   ]);
   set({
     hydrated: true,
+    freshInstall,
     contacts,
     conversations,
     messages,
@@ -333,6 +341,7 @@ async function doHydrate(set: Set, _get: Get): Promise<void> {
 
 export const useAppStore = create<AppState>((set, get) => ({
   hydrated: false,
+  freshInstall: false,
   hydrateError: null,
   friendPerms: NO_FRIEND_PERMS,
   contactTags: NO_TAGS,

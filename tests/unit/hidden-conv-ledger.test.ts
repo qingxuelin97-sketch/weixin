@@ -99,6 +99,10 @@ const HIDDEN_CONV_LEDGER: Record<string, Entry> = {
     via: 'filters',
     why: '按 id 直达面（URL 可伪造），isHidden 行渲染「不存在」兜底。',
   },
+  'features/welcome/WelcomePage.tsx': {
+    via: 'filters',
+    why: '首次引导（M-K9）：按会话列表排朋友顺序、给问候找单聊——两处都 filter !isHidden。',
+  },
   'features/chat/send-pipeline.ts': {
     via: 'not-ui',
     why:
